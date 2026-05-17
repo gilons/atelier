@@ -6,6 +6,15 @@ import {
 } from "../http-transport.js";
 import { classifyDoc } from "../classify.js";
 import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
+import {
+  resolveSharePointLink,
+  InvalidSharePointUrlError,
+  type SharePointLinkResolution,
+} from "./sharepoint-resolve.js";
+import {
+  searchSharePointSites,
+  searchSharePointFiles,
+} from "./sharepoint-search.js";
 import type {
   AdapterAvailability,
   FetchedDoc,
@@ -48,33 +57,65 @@ export interface SharePointAdapterOptions {
   fetchImpl?: FetchLike;
 }
 
+/**
+ * One pinned target within a SharePoint source. Each pin says
+ * "from this site, look at this place." A source can have many
+ * pins — different sites, different folders, individual files —
+ * all syncing together under a single source id.
+ *
+ * The three pin shapes (folder / file / driveItem) cover every
+ * way the onboarding wizard discovers a target:
+ *
+ *   - **folder** — comes from "paste a URL pointing at a folder"
+ *     or from the manual-entry path. Atelier walks the folder.
+ *   - **file** — comes from "paste a URL pointing at a single
+ *     file." Atelier emits exactly that file.
+ *   - **driveItem** — comes from search results or from resolving
+ *     an opaque share URL. Identified by driveId + itemId; Atelier
+ *     doesn't need to resolve a site path to use it.
+ */
+export type SharePointPin =
+  | {
+      kind: "folder";
+      sitePath: string;
+      driveName?: string;
+      /** Empty string means the drive root. */
+      folderPath: string;
+      recursive?: boolean;
+    }
+  | {
+      kind: "file";
+      sitePath: string;
+      driveName?: string;
+      /** Path inside the drive, with leading slash. */
+      itemPath: string;
+    }
+  | {
+      kind: "driveItem";
+      driveId: string;
+      itemId: string;
+      /** Optional human label kept around for the doc-map summary. */
+      name?: string;
+    };
+
 export interface SharePointScope {
   /**
    * SharePoint hostname (e.g. `contoso.sharepoint.com`). Required —
-   * Graph addresses sites by hostname plus path.
+   * Graph addresses sites by hostname plus path. All pins in a
+   * single source must live on this hostname.
    */
   hostname: string;
   /**
-   * Site path within the hostname, with leading slash (e.g.
-   * `/sites/marketing`). Use `/` for the root site.
+   * One or more pinned targets. A pin can be a folder (walked),
+   * a single file, or a driveItem reference. See {@link SharePointPin}.
+   *
+   * The schema also accepts the LEGACY single-target form via the
+   * fields below (`sitePath`/`folderPath`/etc.). On load the
+   * adapter normalizes the legacy fields into a one-element
+   * `pins` array so the runtime path is unified.
    */
-  sitePath: string;
-  /**
-   * Optional drive (document library) name within the site.
-   * When omitted, the site's default drive is used.
-   */
-  driveName?: string;
-  /**
-   * Optional folder path inside the drive (e.g. `/Recordings`).
-   * When omitted, the drive root is the indexing starting point.
-   */
-  folderPath?: string;
-  /**
-   * Recurse into subfolders. Defaults to true. Set false when you
-   * want to index just one folder's children.
-   */
-  recursive?: boolean;
-  /** Hard cap on items to index. Defaults to 1000. */
+  pins?: SharePointPin[];
+  /** Hard cap on items to index across all pins. Defaults to 1000. */
   maxItems?: number;
   /**
    * File extensions to include (without the leading dot).
@@ -82,6 +123,21 @@ export interface SharePointScope {
    * Graph's plain-text conversion; .vtt is post-processed.
    */
   extensions?: string[];
+
+  // ============================================================
+  // Legacy single-target fields. Still accepted on load (and
+  // normalized into pins[0]) so existing sources don't break.
+  // The wizard writes the multi-pin shape from now on.
+  // ============================================================
+
+  /** @deprecated Use `pins`. */
+  sitePath?: string;
+  /** @deprecated Use `pins`. */
+  driveName?: string;
+  /** @deprecated Use `pins`. */
+  folderPath?: string;
+  /** @deprecated Use `pins`. */
+  recursive?: boolean;
 }
 
 const DEFAULT_EXTENSIONS = ["docx", "doc", "txt", "md", "vtt", "pdf"];
@@ -117,8 +173,12 @@ interface GraphList<T> {
 export class SharePointAdapter implements SourceAdapter {
   readonly kind = "sharepoint";
   private readonly client: HttpClient;
-  private cachedSiteId: string | null = null;
-  private cachedDriveId: string | null = null;
+  // Per-pin cache: siteId + driveId resolved on demand. Keyed by
+  // `${sitePath}::${driveName ?? "<default>"}` for folder/file
+  // pins; driveItem pins skip this entirely.
+  private readonly siteIdCache = new Map<string, string>();
+  private readonly driveIdCache = new Map<string, string>();
+  private readonly pins: SharePointPin[];
 
   constructor(private readonly opts: SharePointAdapterOptions) {
     if (!opts.token || opts.token.length === 0) {
@@ -126,9 +186,16 @@ export class SharePointAdapter implements SourceAdapter {
         "SharePointAdapter requires a token. Pass --token or set the env var pointed at by source.credentials.envVar."
       );
     }
-    if (!opts.scope.hostname || !opts.scope.sitePath) {
+    if (!opts.scope.hostname) {
       throw new Error(
-        "SharePointAdapter requires scope.hostname and scope.sitePath (e.g. {hostname: 'contoso.sharepoint.com', sitePath: '/sites/marketing'})."
+        "SharePointAdapter requires scope.hostname (e.g. {hostname: 'contoso.sharepoint.com', pins: [...]})."
+      );
+    }
+    this.pins = normalizePins(opts.scope);
+    if (this.pins.length === 0) {
+      throw new Error(
+        "SharePointAdapter requires at least one pin (or legacy sitePath). Got: " +
+          JSON.stringify(opts.scope)
       );
     }
     this.client = new HttpClient({
@@ -140,8 +207,11 @@ export class SharePointAdapter implements SourceAdapter {
   }
 
   async checkAvailability(): Promise<AdapterAvailability> {
+    // Resolve the FIRST pin to surface auth / hostname errors early.
+    // We don't loop every pin here — sync will surface per-pin
+    // problems when it walks them.
     try {
-      await this.resolveSiteId();
+      await this.resolveDriveIdForPin(this.pins[0]);
       return { available: true };
     } catch (err) {
       const e = err as Error;
@@ -154,7 +224,7 @@ export class SharePointAdapter implements SourceAdapter {
       if (e instanceof HttpError && e.status === 404) {
         return {
           available: false,
-          reason: `SharePoint site not found at ${this.opts.scope.hostname}${this.opts.scope.sitePath}. Check the hostname and site path.`,
+          reason: `SharePoint pin not found on ${this.opts.scope.hostname}: ${describePin(this.pins[0])}. Check the URL and that the app has read access.`,
         };
       }
       return { available: false, reason: e.message };
@@ -162,69 +232,39 @@ export class SharePointAdapter implements SourceAdapter {
   }
 
   async listDocs(): Promise<RemoteDocMetadata[]> {
-    const driveId = await this.resolveDriveId();
     const exts = (this.opts.scope.extensions ?? DEFAULT_EXTENSIONS).map((e) =>
       e.startsWith(".") ? e.slice(1).toLowerCase() : e.toLowerCase()
     );
     const max = this.opts.scope.maxItems ?? 1000;
-    const recursive = this.opts.scope.recursive ?? true;
-
-    const startPath = this.opts.scope.folderPath ?? "";
-    const collected: { item: GraphItem; parentPath: string }[] = [];
-
-    const queue: string[] = [normalizeFolderPath(startPath)];
-    while (queue.length > 0 && collected.length < max) {
-      const path = queue.shift()!;
-      const items = await this.listChildren(driveId, path);
-      for (const item of items) {
-        if (collected.length >= max) break;
-        if (item.folder) {
-          if (recursive) {
-            queue.push(joinDrivePath(path, item.name));
-          }
-          continue;
-        }
-        if (!item.file) continue;
-        const ext = item.name.split(".").pop()?.toLowerCase() ?? "";
-        if (!exts.includes(ext)) continue;
-        collected.push({ item, parentPath: path });
-      }
+    const collected: RemoteDocMetadata[] = [];
+    for (const pin of this.pins) {
+      if (collected.length >= max) break;
+      const remaining = max - collected.length;
+      const items = await this.listForPin(pin, exts, remaining);
+      collected.push(...items);
     }
-
-    return collected.map(({ item, parentPath }) => ({
-      docId: item.id,
-      title: stripExtension(item.name),
-      url: item.webUrl,
-      lastModified: item.lastModifiedDateTime,
-      classification: classifyDoc({
-        kind: "sharepoint",
-        title: item.name,
-        filename: item.name,
-      }),
-      // Stash the relative path on the metadata for the renderer.
-      // It's not part of the contract but adapters can attach arbitrary
-      // extra fields; downstream code reads only the canonical ones.
-      summary: parentPath ? `In: ${parentPath}` : undefined,
-    }));
+    return collected;
   }
 
   async fetchDoc(docId: string): Promise<FetchedDoc> {
-    const driveId = await this.resolveDriveId();
-    // Fetch metadata first so we have title/url.
+    // docId is encoded as `{driveId}::{itemId}` (see listForPin).
+    // Decoding here keeps fetchDoc fully self-contained — no need
+    // to recompute drive resolution.
+    const { driveId, itemId } = decodeDocId(docId);
     const meta = await this.client.request<GraphItem>({
-      path: `/drives/${driveId}/items/${docId}`,
+      path: `/drives/${driveId}/items/${itemId}`,
     });
     const ext = meta.name.split(".").pop()?.toLowerCase() ?? "";
 
     let body: string;
     if (ext === "vtt") {
-      const raw = await this.fetchRawText(driveId, docId);
+      const raw = await this.fetchRawText(driveId, itemId);
       body = renderVttAsMarkdown(raw, meta.name);
     } else if (ext === "md" || ext === "txt") {
-      body = await this.fetchRawText(driveId, docId);
+      body = await this.fetchRawText(driveId, itemId);
     } else {
       // Word docs, PDFs, etc. — ask Graph to convert to plain text.
-      body = await this.fetchAsPlainText(driveId, docId);
+      body = await this.fetchAsPlainText(driveId, itemId);
     }
 
     return {
@@ -241,45 +281,133 @@ export class SharePointAdapter implements SourceAdapter {
     };
   }
 
+  /** Walk one pin and emit metadata for every matching file under it. */
+  private async listForPin(
+    pin: SharePointPin,
+    exts: string[],
+    cap: number
+  ): Promise<RemoteDocMetadata[]> {
+    if (pin.kind === "driveItem") {
+      // Pinned single item — emit it directly without walking.
+      const meta = await this.client.request<GraphItem>({
+        path: `/drives/${pin.driveId}/items/${pin.itemId}`,
+      });
+      if (!meta.file) return [];
+      return [
+        {
+          docId: encodeDocId(pin.driveId, meta.id),
+          title: stripExtension(meta.name),
+          url: meta.webUrl,
+          lastModified: meta.lastModifiedDateTime,
+          classification: classifyDoc({
+            kind: "sharepoint",
+            title: meta.name,
+            filename: meta.name,
+          }),
+        },
+      ];
+    }
+    const driveId = await this.resolveDriveIdForPin(pin);
+    if (pin.kind === "file") {
+      // Resolve the itemPath to an item first, then emit.
+      const itemPath = pin.itemPath.startsWith("/")
+        ? pin.itemPath
+        : `/${pin.itemPath}`;
+      const meta = await this.client.request<GraphItem>({
+        path: `/drives/${driveId}/root:${itemPath}`,
+      });
+      if (!meta.file) return [];
+      return [
+        {
+          docId: encodeDocId(driveId, meta.id),
+          title: stripExtension(meta.name),
+          url: meta.webUrl,
+          lastModified: meta.lastModifiedDateTime,
+          classification: classifyDoc({
+            kind: "sharepoint",
+            title: meta.name,
+            filename: meta.name,
+          }),
+        },
+      ];
+    }
+    // folder pin — walk it.
+    const recursive = pin.recursive ?? true;
+    const startPath = normalizeFolderPath(pin.folderPath);
+    const queue: string[] = [startPath];
+    const out: RemoteDocMetadata[] = [];
+    while (queue.length > 0 && out.length < cap) {
+      const path = queue.shift()!;
+      const items = await this.listChildren(driveId, path);
+      for (const item of items) {
+        if (out.length >= cap) break;
+        if (item.folder) {
+          if (recursive) queue.push(joinDrivePath(path, item.name));
+          continue;
+        }
+        if (!item.file) continue;
+        const ext = item.name.split(".").pop()?.toLowerCase() ?? "";
+        if (!exts.includes(ext)) continue;
+        out.push({
+          docId: encodeDocId(driveId, item.id),
+          title: stripExtension(item.name),
+          url: item.webUrl,
+          lastModified: item.lastModifiedDateTime,
+          classification: classifyDoc({
+            kind: "sharepoint",
+            title: item.name,
+            filename: item.name,
+          }),
+          summary: path ? `In: ${path}` : undefined,
+        });
+      }
+    }
+    return out;
+  }
+
   // ============================================================
   // Graph plumbing
   // ============================================================
 
-  private async resolveSiteId(): Promise<string> {
-    if (this.cachedSiteId) return this.cachedSiteId;
+  private async resolveSiteIdForPath(sitePath: string): Promise<string> {
+    const key = sitePath;
+    const cached = this.siteIdCache.get(key);
+    if (cached) return cached;
     // Graph addresses sites by `{hostname}:{path}:` (the trailing colon
     // ends the colon-syntax segment). Path with leading slash is fine.
-    const cleanPath = this.opts.scope.sitePath.startsWith("/")
-      ? this.opts.scope.sitePath
-      : `/${this.opts.scope.sitePath}`;
+    const cleanPath = sitePath.startsWith("/") ? sitePath : `/${sitePath}`;
     const idPath = `/sites/${this.opts.scope.hostname}:${cleanPath}`;
     const site = await this.client.request<GraphSite>({ path: idPath });
-    this.cachedSiteId = site.id;
+    this.siteIdCache.set(key, site.id);
     return site.id;
   }
 
-  private async resolveDriveId(): Promise<string> {
-    if (this.cachedDriveId) return this.cachedDriveId;
-    const siteId = await this.resolveSiteId();
-    if (!this.opts.scope.driveName) {
-      // Default drive is the site's primary document library.
+  private async resolveDriveIdForPin(pin: SharePointPin): Promise<string> {
+    if (pin.kind === "driveItem") return pin.driveId;
+    const cacheKey = `${pin.sitePath}::${pin.driveName ?? "<default>"}`;
+    const cached = this.driveIdCache.get(cacheKey);
+    if (cached) return cached;
+    const siteId = await this.resolveSiteIdForPath(pin.sitePath);
+    let driveId: string;
+    if (!pin.driveName) {
       const drive = await this.client.request<GraphDrive>({
         path: `/sites/${siteId}/drive`,
       });
-      this.cachedDriveId = drive.id;
-      return drive.id;
+      driveId = drive.id;
+    } else {
+      const drives = await this.client.request<GraphList<GraphDrive>>({
+        path: `/sites/${siteId}/drives`,
+      });
+      const match = drives.value.find((d) => d.name === pin.driveName);
+      if (!match) {
+        throw new Error(
+          `SharePoint drive "${pin.driveName}" not found on site ${this.opts.scope.hostname}${pin.sitePath}. Available: ${drives.value.map((d) => d.name).join(", ")}`
+        );
+      }
+      driveId = match.id;
     }
-    const drives = await this.client.request<GraphList<GraphDrive>>({
-      path: `/sites/${siteId}/drives`,
-    });
-    const match = drives.value.find((d) => d.name === this.opts.scope.driveName);
-    if (!match) {
-      throw new Error(
-        `SharePoint drive "${this.opts.scope.driveName}" not found on site ${this.opts.scope.hostname}${this.opts.scope.sitePath}. Available: ${drives.value.map((d) => d.name).join(", ")}`
-      );
-    }
-    this.cachedDriveId = match.id;
-    return match.id;
+    this.driveIdCache.set(cacheKey, driveId);
+    return driveId;
   }
 
   private async listChildren(driveId: string, folderPath: string): Promise<GraphItem[]> {
@@ -430,6 +558,61 @@ function joinDrivePath(parent: string, name: string): string {
   return `${parent}/${name}`;
 }
 
+/**
+ * Coerce a scope into a normalized {@link SharePointPin}[] —
+ * folding the legacy single-target fields into a synthetic pin so
+ * the runtime path is unified and old sources don't break.
+ */
+function normalizePins(scope: SharePointScope): SharePointPin[] {
+  const pins = Array.isArray(scope.pins) ? scope.pins.slice() : [];
+  // Legacy form: sitePath + folderPath at the top level.
+  if (pins.length === 0 && scope.sitePath) {
+    pins.push({
+      kind: "folder",
+      sitePath: scope.sitePath,
+      driveName: scope.driveName,
+      folderPath: scope.folderPath ?? "",
+      recursive: scope.recursive,
+    });
+  }
+  return pins;
+}
+
+/**
+ * Encode a stable docId from `(driveId, itemId)`. Atelier persists
+ * this id in the doc-map; the adapter needs to be able to decode it
+ * during sync to fetch the file. We use `driveId::itemId` because
+ * Graph item ids are unique only within a drive, and a single
+ * SharePoint source can span multiple drives.
+ */
+function encodeDocId(driveId: string, itemId: string): string {
+  return `${driveId}::${itemId}`;
+}
+
+function decodeDocId(docId: string): { driveId: string; itemId: string } {
+  const idx = docId.indexOf("::");
+  if (idx === -1) {
+    // Legacy docs were stored as bare itemIds. Surface a clear error
+    // — the sync engine catches this and skips the doc with a hint
+    // pointing at the migration path.
+    throw new Error(
+      `SharePoint docId "${docId}" is in the legacy bare-itemId form. ` +
+        `Re-run /source onboard to regenerate scope.pins, then sync again.`
+    );
+  }
+  return { driveId: docId.slice(0, idx), itemId: docId.slice(idx + 2) };
+}
+
+/** Human-readable summary of a pin for error messages. */
+function describePin(pin: SharePointPin): string {
+  if (pin.kind === "driveItem") return `driveItem ${pin.driveId}/${pin.itemId}`;
+  const lib = pin.driveName ?? "Documents";
+  if (pin.kind === "folder") {
+    return `${pin.sitePath} → ${lib}${pin.folderPath || ""}`;
+  }
+  return `${pin.sitePath} → ${lib}${pin.itemPath} (file)`;
+}
+
 // ============================================================
 // Onboarding flow + registration
 // ============================================================
@@ -486,40 +669,107 @@ const sharepointOnboarding: OnboardingFlow = {
         prompt: "Source id (slug)",
         default: "sharepoint",
         validate: /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
-      },
-      { key: "name", prompt: "Display name", default: "SharePoint" },
-      {
-        key: "hostname",
-        prompt: "SharePoint hostname (e.g. contoso.sharepoint.com)",
-        validate: /^[a-z0-9.-]+\.[a-z]{2,}$/i,
+        auto: true,
       },
       {
-        key: "sitePath",
-        prompt: "Site path (e.g. /sites/marketing — or / for the root site)",
-        default: "/",
-        validate: /^\/.*$/,
-      },
-      {
-        key: "driveName",
-        prompt: "Drive name (leave blank for the default document library)",
-        default: "",
-      },
-      {
-        key: "folderPath",
-        prompt: "Folder path inside the drive (leave blank for the drive root)",
-        default: "",
+        key: "name",
+        prompt: "Display name",
+        default: "SharePoint",
+        auto: true,
       },
       {
         key: "envVar",
         prompt: "Env var holding the Graph bearer token",
         default: "SHAREPOINT_TOKEN",
         validate: /^[A-Z_][A-Z0-9_]*$/,
+        auto: true,
       },
       {
         key: "token",
-        prompt: "Paste your Graph bearer token (will be exported, not stored)",
+        prompt: "Paste your Graph bearer token",
         secret: true,
-        help: "Token is shown back to you at the end so you can add it to your shell rc.",
+        help:
+          "Needed for verification and (in search mode) for hitting Graph. " +
+          "Get a fresh one with `az account get-access-token --resource https://graph.microsoft.com` " +
+          "or mint one from the app's client_credentials.",
+      },
+      {
+        key: "mode",
+        prompt: "How do you want to add this SharePoint source?",
+        help:
+          "Pick the most natural for you. Most users paste a URL; search " +
+          "is useful when you don't have the URL handy; manual entry is the " +
+          "escape hatch.",
+        choices: [
+          {
+            label: "link",
+            value: "link",
+            description: "Paste a SharePoint URL (site, library, folder, or single file).",
+          },
+          {
+            label: "search",
+            value: "search",
+            description: "Type a query — Atelier asks Graph to find matching sites / docs.",
+          },
+          {
+            label: "manual",
+            value: "manual",
+            description: "Type the hostname / site path / folder path by hand.",
+          },
+        ],
+      },
+      // ----- link mode -----
+      {
+        key: "linkUrl",
+        prompt:
+          "Paste a SharePoint URL (e.g. https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3-Plans)",
+        applies: (a) => a.values.mode === "link",
+        validate: /^https?:\/\//,
+      },
+      // ----- search mode -----
+      {
+        key: "searchQuery",
+        prompt: "Search SharePoint by name (2+ chars)",
+        applies: (a) => a.values.mode === "search",
+        validate: /.{2,}/,
+      },
+      {
+        key: "searchPins",
+        prompt: "Pick one or more results to onboard",
+        applies: (a) => a.values.mode === "search",
+        multiSelect: true,
+        validate: /.+/,
+        discoverChoices: async (_ctx, answers) =>
+          searchAndShape(
+            answers.values.token,
+            answers.values.searchQuery
+          ),
+      },
+      // ----- manual mode (legacy) -----
+      {
+        key: "hostname",
+        prompt: "SharePoint hostname (e.g. contoso.sharepoint.com)",
+        applies: (a) => a.values.mode === "manual",
+        validate: /^[a-z0-9.-]+\.[a-z]{2,}$/i,
+      },
+      {
+        key: "sitePath",
+        prompt: "Site path (e.g. /sites/marketing — or / for the root site)",
+        applies: (a) => a.values.mode === "manual",
+        default: "/",
+        validate: /^\/.*$/,
+      },
+      {
+        key: "driveName",
+        prompt: "Drive name (leave blank for the default document library)",
+        applies: (a) => a.values.mode === "manual",
+        default: "",
+      },
+      {
+        key: "folderPath",
+        prompt: "Folder path inside the drive (leave blank for the drive root)",
+        applies: (a) => a.values.mode === "manual",
+        default: "",
       },
     ];
   },
@@ -528,28 +778,24 @@ const sharepointOnboarding: OnboardingFlow = {
       return { ok: true, message: "MCP transport — verification deferred to `atelier sync`." };
     }
     const token = answers.values.token;
-    const hostname = answers.values.hostname;
-    const sitePath = answers.values.sitePath;
-    if (!token || !hostname || !sitePath) {
-      return { ok: false, error: "Missing token / hostname / sitePath." };
+    if (!token) return { ok: false, error: "Missing token." };
+    let scope: SharePointScope;
+    try {
+      scope = scopeFromAnswers(answers.values);
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
     }
     try {
       const adapter = new SharePointAdapter({
         token,
-        scope: {
-          hostname,
-          sitePath,
-          driveName: answers.values.driveName || undefined,
-          folderPath: answers.values.folderPath || undefined,
-          maxItems: 5,
-        },
+        scope: { ...scope, maxItems: 5 },
       });
       const a = await adapter.checkAvailability();
       if (!a.available) return { ok: false, error: a.reason };
       const docs = await adapter.listDocs();
       return {
         ok: true,
-        message: `Found ${docs.length} file(s) (capped at 5 for the probe). Sync uses scope.maxItems.`,
+        message: `Found ${docs.length} file(s) across ${scope.pins?.length ?? 0} pin(s) (probe capped at 5). Sync uses scope.maxItems.`,
       };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
@@ -570,12 +816,7 @@ const sharepointOnboarding: OnboardingFlow = {
       };
     }
     const envVar = answers.values.envVar || "SHAREPOINT_TOKEN";
-    const scope: Record<string, unknown> = {
-      hostname: answers.values.hostname,
-      sitePath: answers.values.sitePath,
-    };
-    if (answers.values.driveName) scope.driveName = answers.values.driveName;
-    if (answers.values.folderPath) scope.folderPath = answers.values.folderPath;
+    const scope = scopeFromAnswers(answers.values);
     return {
       source: {
         id,
@@ -583,7 +824,7 @@ const sharepointOnboarding: OnboardingFlow = {
         name,
         transport: "rest",
         credentials: { envVar },
-        scope,
+        scope: scope as unknown as Record<string, unknown>,
       },
       envVarsToSet: answers.values.token
         ? [
@@ -596,7 +837,251 @@ const sharepointOnboarding: OnboardingFlow = {
         : undefined,
     };
   },
+  merge(existing, answers) {
+    const incoming = sharepointOnboarding.toRegistryEntry(answers);
+    const exScope = (existing.scope ?? {}) as Partial<SharePointScope>;
+    const inScope = (incoming.source.scope ?? {}) as Partial<SharePointScope>;
+    // Existing source may still be in the legacy shape — normalize
+    // it through the adapter's helper so the merge sees a uniform
+    // list of pins on both sides.
+    const exPins = normalizePins({
+      hostname: exScope.hostname ?? "",
+      pins: exScope.pins,
+      sitePath: exScope.sitePath,
+      driveName: exScope.driveName,
+      folderPath: exScope.folderPath,
+      recursive: exScope.recursive,
+    });
+    const inPins = inScope.pins ?? [];
+    // De-dupe by a stable key per pin kind.
+    const seen = new Set<string>(exPins.map(pinKey));
+    const merged = exPins.slice();
+    for (const p of inPins) {
+      const k = pinKey(p);
+      if (!seen.has(k)) {
+        seen.add(k);
+        merged.push(p);
+      }
+    }
+    const mergedScope: Record<string, unknown> = {
+      hostname: inScope.hostname ?? exScope.hostname,
+      pins: merged,
+    };
+    if (inScope.maxItems ?? exScope.maxItems) {
+      mergedScope.maxItems = Math.max(
+        exScope.maxItems ?? 0,
+        inScope.maxItems ?? 0
+      );
+    }
+    if (inScope.extensions ?? exScope.extensions) {
+      mergedScope.extensions = unique([
+        ...(exScope.extensions ?? []),
+        ...(inScope.extensions ?? []),
+      ]);
+    }
+    return {
+      source: {
+        id: existing.id,
+        kind: "sharepoint",
+        name: existing.name,
+        transport: existing.transport ?? "rest",
+        credentials: existing.credentials,
+        scope: mergedScope,
+      },
+    };
+  },
 };
+
+/**
+ * Build a {@link SharePointScope} from the wizard's collected
+ * answers — branching on `mode`. Each branch produces at least one
+ * pin; the multi-select in search mode can produce many.
+ *
+ * Throws when the URL parser can't resolve a pasted link (we want
+ * the wizard's confirm step to see the failure as a clear error,
+ * not a silent fallthrough).
+ */
+function scopeFromAnswers(
+  values: Record<string, string>
+): SharePointScope {
+  const mode = values.mode || "manual";
+  if (mode === "link") {
+    return scopeFromLink(values.linkUrl);
+  }
+  if (mode === "search") {
+    return scopeFromSearchPicks(values.searchPins);
+  }
+  // Manual / legacy.
+  if (!values.hostname) {
+    throw new Error("Manual mode: hostname is required.");
+  }
+  return {
+    hostname: values.hostname,
+    pins: [
+      {
+        kind: "folder",
+        sitePath: values.sitePath || "/",
+        driveName: values.driveName || undefined,
+        folderPath: values.folderPath || "",
+      },
+    ],
+  };
+}
+
+function scopeFromLink(url: string | undefined): SharePointScope {
+  if (!url) throw new Error("Link mode: linkUrl is required.");
+  let r: SharePointLinkResolution;
+  try {
+    r = resolveSharePointLink(url);
+  } catch (err) {
+    if (err instanceof InvalidSharePointUrlError) {
+      throw new Error(`Couldn't parse "${url}": ${err.message}`);
+    }
+    throw err;
+  }
+  if (r.kind === "opaqueShare") {
+    // Could be resolved via Graph /shares — that's a follow-up.
+    throw new Error(
+      `That URL is a tokenized share link (/:f:/s/...). Atelier can't resolve it locally yet — paste the canonical URL from the file's "Open in browser" link instead, or use search mode.`
+    );
+  }
+  if (r.kind === "site" || r.kind === "library") {
+    // Treat as "the default library's root folder."
+    return {
+      hostname: r.hostname,
+      pins: [
+        {
+          kind: "folder",
+          sitePath: r.sitePath,
+          driveName: r.kind === "library" ? r.driveName : undefined,
+          folderPath: "",
+        },
+      ],
+    };
+  }
+  if (r.kind === "folder") {
+    return {
+      hostname: r.hostname,
+      pins: [
+        {
+          kind: "folder",
+          sitePath: r.sitePath,
+          driveName: r.driveName,
+          folderPath: r.folderPath,
+        },
+      ],
+    };
+  }
+  // file
+  return {
+    hostname: r.hostname,
+    pins: [
+      {
+        kind: "file",
+        sitePath: r.sitePath,
+        driveName: r.driveName,
+        itemPath: r.itemPath,
+      },
+    ],
+  };
+}
+
+function scopeFromSearchPicks(csv: string | undefined): SharePointScope {
+  if (!csv) throw new Error("Search mode: at least one result must be picked.");
+  // Each picked value is a JSON-encoded pin produced by
+  // `searchAndShape` below. Decode and aggregate.
+  const pins: SharePointPin[] = [];
+  let hostname = "";
+  for (const part of csv.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    let decoded: { hostname: string; pin: SharePointPin };
+    try {
+      decoded = JSON.parse(trimmed);
+    } catch {
+      throw new Error(
+        `Search mode: couldn't decode a picked result: ${trimmed.slice(0, 80)}`
+      );
+    }
+    if (!hostname) hostname = decoded.hostname;
+    if (hostname !== decoded.hostname) {
+      throw new Error(
+        `Search picks span multiple hostnames (${hostname} + ${decoded.hostname}). A single source can only target one hostname — split into separate sources.`
+      );
+    }
+    pins.push(decoded.pin);
+  }
+  return { hostname, pins };
+}
+
+/**
+ * Run a Graph search for the user's query and shape the results
+ * into picker choices. Each choice's `value` is a JSON-encoded
+ * `{hostname, pin}` blob — the picker round-trips it through
+ * `scopeFromSearchPicks`. (We could store an integer index and a
+ * side map, but JSON-in-value keeps the discoverChoices return
+ * type pure and stateless.)
+ */
+async function searchAndShape(
+  token: string | undefined,
+  query: string | undefined
+): Promise<Array<{ label: string; value: string; note?: string }>> {
+  if (!token || !query || query.length < 2) return [];
+  const out: Array<{ label: string; value: string; note?: string }> = [];
+  // Sites first, then files, capped to a reasonable picker size.
+  try {
+    const sites = await searchSharePointSites(token, query, { limit: 10 });
+    for (const s of sites) {
+      const pin: SharePointPin = {
+        kind: "folder",
+        sitePath: s.sitePath,
+        folderPath: "",
+      };
+      out.push({
+        label: `[site] ${s.displayName}`,
+        value: JSON.stringify({ hostname: s.hostname, pin }),
+        note: s.webUrl,
+      });
+    }
+  } catch {
+    /* surface a "no site results" silently — file search may still work */
+  }
+  try {
+    const files = await searchSharePointFiles(token, query, { limit: 15 });
+    for (const f of files) {
+      if (!f.driveId || !f.itemId) continue;
+      const pin: SharePointPin = {
+        kind: "driveItem",
+        driveId: f.driveId,
+        itemId: f.itemId,
+        name: f.name,
+      };
+      out.push({
+        label: `[file] ${f.name}`,
+        value: JSON.stringify({
+          hostname: f.hostname ?? "",
+          pin,
+        }),
+        note: f.webUrl ?? "",
+      });
+    }
+  } catch {
+    /* same — both being empty just yields an empty picker */
+  }
+  return out;
+}
+
+function pinKey(p: SharePointPin): string {
+  if (p.kind === "driveItem") return `di:${p.driveId}:${p.itemId}`;
+  if (p.kind === "file") {
+    return `f:${p.sitePath}:${p.driveName ?? ""}:${p.itemPath}`;
+  }
+  return `fo:${p.sitePath}:${p.driveName ?? ""}:${p.folderPath}`;
+}
+
+function unique<T>(xs: T[]): T[] {
+  return [...new Set(xs)];
+}
 
 registerAdapter({
   kind: "sharepoint",

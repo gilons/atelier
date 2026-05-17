@@ -108,8 +108,10 @@ test("SharePointAdapter.listDocs walks the drive root and filters by extension",
   const docs = await adapter.listDocs();
   // .vtt and .docx kept; .jpg dropped (not in default extensions).
   assert.equal(docs.length, 2);
-  const vtt = docs.find((d) => d.docId === "item-vtt");
-  const docx = docs.find((d) => d.docId === "item-docx");
+  // docId is now `${driveId}::${itemId}` so the adapter can fetch
+  // by item even when a source spans multiple drives.
+  const vtt = docs.find((d) => d.docId === `${DRIVE_ID}::item-vtt`);
+  const docx = docs.find((d) => d.docId === `${DRIVE_ID}::item-docx`);
   assert.equal(vtt.title, "standup");
   assert.equal(vtt.classification, "transcript");
   assert.equal(docx.title, "Strategy");
@@ -144,7 +146,7 @@ test("SharePointAdapter.listDocs honors scope.folderPath", async () => {
   });
   const docs = await adapter.listDocs();
   assert.equal(docs.length, 1);
-  assert.equal(docs[0].docId, "rec-1");
+  assert.equal(docs[0].docId, `${DRIVE_ID}::rec-1`);
 });
 
 test("SharePointAdapter.listDocs paginates via @odata.nextLink", async () => {
@@ -257,7 +259,7 @@ test("SharePointAdapter.fetchDoc decodes .vtt content into speaker-grouped markd
     scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
     fetchImpl,
   });
-  const fetched = await adapter.fetchDoc("item-vtt");
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-vtt`);
   assert.equal(fetched.title, "standup");
   assert.equal(fetched.classification, "transcript");
   assert.match(fetched.body, /^# standup/);
@@ -289,7 +291,7 @@ test("SharePointAdapter.fetchDoc requests plain-text conversion for Office files
     scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
     fetchImpl,
   });
-  const fetched = await adapter.fetchDoc("item-docx");
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-docx`);
   assert.equal(fetched.body, "Plain text rendering of the doc.");
   assert.equal(convertHit, true);
 });
@@ -315,7 +317,7 @@ test("SharePointAdapter.fetchDoc reads .md raw without conversion", async () => 
     scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
     fetchImpl,
   });
-  const fetched = await adapter.fetchDoc("item-md");
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-md`);
   assert.equal(fetched.body, "# Notes\n\nDirect markdown.");
   assert.equal(convertHit, false);
 });
@@ -353,15 +355,42 @@ test("SharePointAdapter.checkAvailability surfaces 401 with a refresh hint", asy
   assert.match(a.reason, /az account get-access-token/);
 });
 
-test("SharePointAdapter constructor rejects missing scope fields", () => {
+test("SharePointAdapter constructor rejects missing hostname", () => {
   assert.throws(
     () =>
       new SharePointAdapter({
         token: "t",
-        scope: { hostname: "", sitePath: "" },
+        scope: { hostname: "" },
       }),
-    /hostname and scope.sitePath/
+    /scope\.hostname/
   );
+});
+
+test("SharePointAdapter constructor rejects scope with no pins (and no legacy sitePath)", () => {
+  assert.throws(
+    () =>
+      new SharePointAdapter({
+        token: "t",
+        scope: { hostname: "contoso.sharepoint.com" },
+      }),
+    /at least one pin/
+  );
+});
+
+test("SharePointAdapter accepts the legacy single-target scope shape", () => {
+  // Sources written by older versions of the wizard have
+  // sitePath at the top level. They should still load: the
+  // adapter normalizes them into a synthetic one-element pins[].
+  const adapter = new SharePointAdapter({
+    token: "t",
+    scope: {
+      hostname: "contoso.sharepoint.com",
+      sitePath: "/sites/Old",
+      folderPath: "/Things",
+    },
+  });
+  // No throw → legacy form accepted.
+  assert.equal(adapter.kind, "sharepoint");
 });
 
 // ============================================================
@@ -411,12 +440,13 @@ test("sharepointOnboarding lists rest + mcp transports", async () => {
   assert.deepEqual(t, ["mcp", "rest"]);
 });
 
-test("sharepointOnboarding.toRegistryEntry packs scope and credentials", () => {
+test("sharepointOnboarding.toRegistryEntry (manual mode) packs scope as pins[]", () => {
   const entry = sharepointOnboarding.toRegistryEntry({
     transport: "rest",
     values: {
       id: "marketing",
       name: "Marketing SP",
+      mode: "manual",
       hostname: "contoso.sharepoint.com",
       sitePath: "/sites/marketing",
       driveName: "Documents",
@@ -428,11 +458,61 @@ test("sharepointOnboarding.toRegistryEntry packs scope and credentials", () => {
   assert.equal(entry.source.kind, "sharepoint");
   assert.equal(entry.source.transport, "rest");
   assert.deepEqual(entry.source.credentials, { envVar: "SHAREPOINT_TOKEN" });
+  // Multi-pin shape: one folder pin describes what manual mode used
+  // to flatten across four top-level scope fields.
   assert.deepEqual(entry.source.scope, {
     hostname: "contoso.sharepoint.com",
-    sitePath: "/sites/marketing",
-    driveName: "Documents",
-    folderPath: "/Recordings",
+    pins: [
+      {
+        kind: "folder",
+        sitePath: "/sites/marketing",
+        driveName: "Documents",
+        folderPath: "/Recordings",
+      },
+    ],
   });
   assert.equal(entry.envVarsToSet[0].name, "SHAREPOINT_TOKEN");
+});
+
+test("sharepointOnboarding.toRegistryEntry (link mode) resolves a folder URL into a pin", () => {
+  const entry = sharepointOnboarding.toRegistryEntry({
+    transport: "rest",
+    values: {
+      id: "marketing",
+      name: "Marketing SP",
+      mode: "link",
+      linkUrl:
+        "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3-Plans",
+      envVar: "SHAREPOINT_TOKEN",
+      token: "eyJ...",
+    },
+  });
+  assert.deepEqual(entry.source.scope, {
+    hostname: "contoso.sharepoint.com",
+    pins: [
+      {
+        kind: "folder",
+        sitePath: "/sites/Marketing",
+        driveName: undefined,
+        folderPath: "/Q3-Plans",
+      },
+    ],
+  });
+});
+
+test("sharepointOnboarding.toRegistryEntry (link mode) refuses an opaque /:f:/s/ share URL", () => {
+  assert.throws(
+    () =>
+      sharepointOnboarding.toRegistryEntry({
+        transport: "rest",
+        values: {
+          mode: "link",
+          linkUrl:
+            "https://contoso.sharepoint.com/:f:/s/Marketing/Eabc123?e=xyz",
+          envVar: "SHAREPOINT_TOKEN",
+          token: "x",
+        },
+      }),
+    /tokenized share link/
+  );
 });

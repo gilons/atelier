@@ -36,6 +36,19 @@ export {
   type SharePointScope,
 } from "./adapters/sharepoint.js";
 export {
+  resolveSharePointLink,
+  encodeShareUrlForGraph,
+  InvalidSharePointUrlError,
+  type SharePointLinkResolution,
+} from "./adapters/sharepoint-resolve.js";
+export {
+  searchSharePointSites,
+  searchSharePointFiles,
+  resolveOpaqueShareUrl,
+  type SiteSearchResult,
+  type FileSearchResult,
+} from "./adapters/sharepoint-search.js";
+export {
   GitHubDiscussionsAdapter,
   githubDiscussionsOnboarding,
   type GitHubDiscussionsScope,
