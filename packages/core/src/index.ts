@@ -49,6 +49,13 @@ export {
   type FileSearchResult,
 } from "./adapters/sharepoint-search.js";
 export {
+  BearerTokenProvider,
+  AzureClientCredentialsProvider,
+  buildTokenProviderFromCredentials,
+  type TokenProvider,
+  type AzureClientCredentialsOptions,
+} from "./adapters/sharepoint-auth.js";
+export {
   GitHubDiscussionsAdapter,
   githubDiscussionsOnboarding,
   type GitHubDiscussionsScope,

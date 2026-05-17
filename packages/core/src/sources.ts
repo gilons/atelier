@@ -84,8 +84,16 @@ export interface AddSourceOptions {
   /** How Atelier reaches this source (mcp / rest / cli / external). */
   transport?: import("./types.js").SourceTransport;
   mcpServer?: string;
-  /** Credential reference (env var holding the secret). */
-  credentials?: { envVar: string };
+  /** Credential reference. See {@link Source.credentials}. */
+  credentials?:
+    | { envVar: string }
+    | {
+        kind: "azureClientCredentials";
+        tenantId: string;
+        clientId: string;
+        clientSecretEnvVar: string;
+        scope?: string;
+      };
   /** For `external` transport: npm module name that exports the adapter. */
   adapterModule?: string;
   /** Free-form per-kind metadata (workspace ids, paths, etc.). */

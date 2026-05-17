@@ -15,6 +15,12 @@ import {
   searchSharePointSites,
   searchSharePointFiles,
 } from "./sharepoint-search.js";
+import {
+  AzureClientCredentialsProvider,
+  BearerTokenProvider,
+  buildTokenProviderFromCredentials,
+  type TokenProvider,
+} from "./sharepoint-auth.js";
 import type {
   AdapterAvailability,
   FetchedDoc,
@@ -49,8 +55,20 @@ import type { Source } from "../types.js";
 const GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 
 export interface SharePointAdapterOptions {
-  /** Bearer access token for Microsoft Graph. */
-  token: string;
+  /**
+   * Static bearer token. Provided for tests and the legacy
+   * onboarding path; production code should pass a
+   * {@link tokenProvider} instead so tokens auto-refresh.
+   * Exactly one of `token` / `tokenProvider` must be set.
+   */
+  token?: string;
+  /**
+   * Token provider — preferred input. The adapter calls
+   * `tokenProvider.getToken()` before every Graph request, so
+   * `AzureClientCredentialsProvider` instances refresh seamlessly
+   * once the underlying token expires.
+   */
+  tokenProvider?: TokenProvider;
   /** Site identifier — see {@link SharePointScope}. */
   scope: SharePointScope;
   /** Optional fetch override for tests. */
@@ -173,6 +191,7 @@ interface GraphList<T> {
 export class SharePointAdapter implements SourceAdapter {
   readonly kind = "sharepoint";
   private readonly client: HttpClient;
+  private readonly tokenProvider: TokenProvider;
   // Per-pin cache: siteId + driveId resolved on demand. Keyed by
   // `${sitePath}::${driveName ?? "<default>"}` for folder/file
   // pins; driveItem pins skip this entirely.
@@ -181,11 +200,18 @@ export class SharePointAdapter implements SourceAdapter {
   private readonly pins: SharePointPin[];
 
   constructor(private readonly opts: SharePointAdapterOptions) {
-    if (!opts.token || opts.token.length === 0) {
+    if (!opts.token && !opts.tokenProvider) {
       throw new Error(
-        "SharePointAdapter requires a token. Pass --token or set the env var pointed at by source.credentials.envVar."
+        "SharePointAdapter requires `token` or `tokenProvider`. Production code should use a tokenProvider so refresh is automatic."
       );
     }
+    if (opts.token && opts.tokenProvider) {
+      throw new Error(
+        "SharePointAdapter: pass either `token` or `tokenProvider`, not both."
+      );
+    }
+    this.tokenProvider =
+      opts.tokenProvider ?? new BearerTokenProvider(opts.token!);
     if (!opts.scope.hostname) {
       throw new Error(
         "SharePointAdapter requires scope.hostname (e.g. {hostname: 'contoso.sharepoint.com', pins: [...]})."
@@ -201,7 +227,14 @@ export class SharePointAdapter implements SourceAdapter {
     this.client = new HttpClient({
       baseUrl: GRAPH_API_BASE,
       userAgent: "atelier",
-      authHeaders: () => ({ Authorization: `Bearer ${opts.token}` }),
+      // Async authHeaders so a long-running listDocs can survive
+      // a token rolling over — the provider's TTL cache means
+      // most calls are zero-cost, but `getToken()` mints fresh
+      // when needed.
+      authHeaders: async () => {
+        const token = await this.tokenProvider.getToken();
+        return { Authorization: `Bearer ${token}` };
+      },
       fetchImpl: opts.fetchImpl,
     });
   }
@@ -440,8 +473,9 @@ export class SharePointAdapter implements SourceAdapter {
   private async fetchRawText(driveId: string, itemId: string): Promise<string> {
     const url = `${GRAPH_API_BASE}/drives/${driveId}/items/${itemId}/content`;
     const fetchImpl = (this.opts.fetchImpl ?? (globalThis.fetch as FetchLike));
+    const token = await this.tokenProvider.getToken();
     const response = await fetchImpl(url, {
-      headers: { Authorization: `Bearer ${this.opts.token}` },
+      headers: { Authorization: `Bearer ${token}` },
       // Graph redirects content requests; let fetch follow them.
       redirect: "follow",
     });
@@ -455,8 +489,9 @@ export class SharePointAdapter implements SourceAdapter {
   private async fetchAsPlainText(driveId: string, itemId: string): Promise<string> {
     const url = `${GRAPH_API_BASE}/drives/${driveId}/items/${itemId}/content?format=text/plain`;
     const fetchImpl = (this.opts.fetchImpl ?? (globalThis.fetch as FetchLike));
+    const token = await this.tokenProvider.getToken();
     const response = await fetchImpl(url, {
-      headers: { Authorization: `Bearer ${this.opts.token}` },
+      headers: { Authorization: `Bearer ${token}` },
       redirect: "follow",
     });
     if (!response.ok) {
@@ -678,20 +713,81 @@ const sharepointOnboarding: OnboardingFlow = {
         auto: true,
       },
       {
+        key: "authType",
+        prompt: "How should Atelier authenticate to Microsoft Graph?",
+        help:
+          "Azure AD app (client_credentials) is recommended — Atelier mints + " +
+          "auto-refreshes tokens from your tenant/client id + secret, so you " +
+          "never have to paste a bearer again. Pasting a bearer token is the " +
+          "quick path: works once but the token expires every ~1h.",
+        choices: [
+          {
+            label: "azure-app",
+            value: "azure-app",
+            description: "Azure AD app (auto-refresh). Recommended.",
+          },
+          {
+            label: "bearer",
+            value: "bearer",
+            description: "Paste a bearer token from `az` or similar. Expires hourly.",
+          },
+        ],
+      },
+      // ----- bearer auth -----
+      {
         key: "envVar",
         prompt: "Env var holding the Graph bearer token",
         default: "SHAREPOINT_TOKEN",
         validate: /^[A-Z_][A-Z0-9_]*$/,
+        applies: (a) => (a.values.authType ?? "bearer") === "bearer",
         auto: true,
       },
       {
         key: "token",
         prompt: "Paste your Graph bearer token",
         secret: true,
+        applies: (a) => (a.values.authType ?? "bearer") === "bearer",
         help:
-          "Needed for verification and (in search mode) for hitting Graph. " +
-          "Get a fresh one with `az account get-access-token --resource https://graph.microsoft.com` " +
-          "or mint one from the app's client_credentials.",
+          "Get one with `az account get-access-token --resource https://graph.microsoft.com`. " +
+          "Expires in ~1 hour.",
+      },
+      // ----- azure-app auth (client_credentials) -----
+      {
+        key: "azureTenantId",
+        prompt: "Microsoft Entra tenant id (GUID)",
+        applies: (a) => a.values.authType === "azure-app",
+        validate: /^[0-9a-f-]{36}$/i,
+        help:
+          "Microsoft Entra ID → Overview → Tenant ID. Or it's the GUID in " +
+          "your portal URL right after `tenants/`.",
+      },
+      {
+        key: "azureClientId",
+        prompt: "App (client) id",
+        applies: (a) => a.values.authType === "azure-app",
+        validate: /^[0-9a-f-]{36}$/i,
+        help:
+          "App registrations → your-app → Overview → Application (client) ID.",
+      },
+      {
+        key: "azureClientSecretEnvVar",
+        prompt: "Env var holding the client secret VALUE",
+        default: "SHAREPOINT_CLIENT_SECRET",
+        applies: (a) => a.values.authType === "azure-app",
+        validate: /^[A-Z_][A-Z0-9_]*$/,
+        help:
+          "Atelier reads the secret from this env var at sync time — the " +
+          "value itself is never written to sources.yaml.",
+        auto: true,
+      },
+      {
+        key: "azureClientSecret",
+        prompt: "Paste the client secret VALUE",
+        secret: true,
+        applies: (a) => a.values.authType === "azure-app",
+        help:
+          "Used for verification + the env-var hint shown at the end. " +
+          "Atelier doesn't persist this value in sources.yaml.",
       },
       {
         key: "mode",
@@ -777,8 +873,12 @@ const sharepointOnboarding: OnboardingFlow = {
     if (answers.transport !== "rest") {
       return { ok: true, message: "MCP transport — verification deferred to `atelier sync`." };
     }
-    const token = answers.values.token;
-    if (!token) return { ok: false, error: "Missing token." };
+    let tokenProvider: TokenProvider;
+    try {
+      tokenProvider = providerFromAnswers(answers.values);
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
     let scope: SharePointScope;
     try {
       scope = scopeFromAnswers(answers.values);
@@ -787,15 +887,19 @@ const sharepointOnboarding: OnboardingFlow = {
     }
     try {
       const adapter = new SharePointAdapter({
-        token,
+        tokenProvider,
         scope: { ...scope, maxItems: 5 },
       });
       const a = await adapter.checkAvailability();
       if (!a.available) return { ok: false, error: a.reason };
       const docs = await adapter.listDocs();
+      const authMsg =
+        answers.values.authType === "azure-app"
+          ? "(token auto-minted from Azure AD app — refreshes on expiry)"
+          : "(static bearer token — expires hourly)";
       return {
         ok: true,
-        message: `Found ${docs.length} file(s) across ${scope.pins?.length ?? 0} pin(s) (probe capped at 5). Sync uses scope.maxItems.`,
+        message: `Found ${docs.length} file(s) across ${scope.pins?.length ?? 0} pin(s) (probe capped at 5). ${authMsg}`,
       };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
@@ -815,8 +919,40 @@ const sharepointOnboarding: OnboardingFlow = {
         },
       };
     }
-    const envVar = answers.values.envVar || "SHAREPOINT_TOKEN";
     const scope = scopeFromAnswers(answers.values);
+    // Auth branching: azure-app produces a structured credentials
+    // record + a hint to export the secret; bearer keeps the
+    // existing envVar reference shape.
+    if (answers.values.authType === "azure-app") {
+      const secretEnvVar =
+        answers.values.azureClientSecretEnvVar || "SHAREPOINT_CLIENT_SECRET";
+      return {
+        source: {
+          id,
+          kind: "sharepoint",
+          name,
+          transport: "rest",
+          credentials: {
+            kind: "azureClientCredentials",
+            tenantId: answers.values.azureTenantId,
+            clientId: answers.values.azureClientId,
+            clientSecretEnvVar: secretEnvVar,
+          },
+          scope: scope as unknown as Record<string, unknown>,
+        },
+        envVarsToSet: answers.values.azureClientSecret
+          ? [
+              {
+                name: secretEnvVar,
+                value: answers.values.azureClientSecret,
+                description:
+                  "Azure AD app client secret — Atelier mints fresh Graph tokens from it on every sync.",
+              },
+            ]
+          : undefined,
+      };
+    }
+    const envVar = answers.values.envVar || "SHAREPOINT_TOKEN";
     return {
       source: {
         id,
@@ -901,6 +1037,33 @@ const sharepointOnboarding: OnboardingFlow = {
  * the wizard's confirm step to see the failure as a clear error,
  * not a silent fallthrough).
  */
+/**
+ * Build a {@link TokenProvider} from the wizard's answers — used
+ * during the verify step so the live probe goes through the same
+ * auth path the persisted source will use after onboarding
+ * completes. azure-app branch builds the auto-refresh provider;
+ * bearer branch wraps the static token in BearerTokenProvider.
+ */
+function providerFromAnswers(values: Record<string, string>): TokenProvider {
+  const authType = values.authType || "bearer";
+  if (authType === "azure-app") {
+    if (!values.azureTenantId || !values.azureClientId || !values.azureClientSecret) {
+      throw new Error(
+        "Azure auth: tenantId, clientId, and clientSecret are all required."
+      );
+    }
+    return new AzureClientCredentialsProvider({
+      tenantId: values.azureTenantId,
+      clientId: values.azureClientId,
+      clientSecret: values.azureClientSecret,
+    });
+  }
+  if (!values.token) {
+    throw new Error("Bearer auth: token is required.");
+  }
+  return new BearerTokenProvider(values.token);
+}
+
 function scopeFromAnswers(
   values: Record<string, string>
 ): SharePointScope {
@@ -1088,9 +1251,17 @@ registerAdapter({
   onboarding: sharepointOnboarding,
   async build(source: Source) {
     if (source.transport === "rest" || !source.transport) {
-      const token = await resolveCredential(source.credentials, { sourceId: source.id });
+      // The new credentials shape (`{kind: "azureClientCredentials"}`)
+      // builds an AzureClientCredentialsProvider that mints + caches
+      // tokens for the lifetime of this adapter instance. Legacy
+      // `{envVar}` credentials produce a BearerTokenProvider — same
+      // behavior as before, just routed through the abstraction.
+      const tokenProvider = buildTokenProviderFromCredentials(
+        source.credentials,
+        { sourceId: source.id }
+      );
       const scope = (source.scope ?? {}) as unknown as SharePointScope;
-      return new SharePointAdapter({ token, scope });
+      return new SharePointAdapter({ tokenProvider, scope });
     }
     throw new Error(
       `SharePointAdapter.build: transport "${source.transport}" not handled by the REST adapter (the sync factory should have dispatched elsewhere).`

@@ -67,12 +67,33 @@ export interface Source {
   /** The MCP server identifier providing this source's tools, if any. */
   mcpServer?: string;
   /**
-   * Credential reference for REST/CLI transports. Today the only
-   * supported shape is `{ "envVar": "NOTION_TOKEN" }` — Atelier never
-   * stores secrets in source.yaml; it reads them from the user's
-   * environment at sync time.
+   * Credential reference for REST/CLI transports. Two shapes:
+   *
+   *   - `{ envVar: "NOTION_TOKEN" }` — Atelier reads a static
+   *     bearer token from the named env var at sync time. Used
+   *     for Notion API tokens and (legacy) SharePoint bearer
+   *     tokens.
+   *
+   *   - `{ kind: "azureClientCredentials", tenantId, clientId,
+   *     clientSecretEnvVar }` — Atelier mints fresh Graph tokens
+   *     via the OAuth client_credentials flow. Tenant + client
+   *     IDs sit in source.yaml (they're not secrets — they
+   *     identify the app, not authenticate it); the secret is
+   *     read from `$clientSecretEnvVar` at sync time. Used by
+   *     SharePoint to avoid hourly token re-paste.
+   *
+   * Atelier never stores secret values in source.yaml; secrets
+   * always come from the user's environment at sync time.
    */
-  credentials?: { envVar: string };
+  credentials?:
+    | { envVar: string }
+    | {
+        kind: "azureClientCredentials";
+        tenantId: string;
+        clientId: string;
+        clientSecretEnvVar: string;
+        scope?: string;
+      };
   /**
    * For `external` transport: the npm module name that exports the
    * adapter. Module must default-export

@@ -602,7 +602,20 @@ function printSummary(entry: OnboardingResult): void {
   ui.field("kind", s.kind, 14);
   if (s.transport) ui.field("transport", s.transport, 14);
   if (s.mcpServer) ui.field("mcpServer", s.mcpServer, 14);
-  if (s.credentials) ui.field("credentials", `$${s.credentials.envVar}`, 14);
+  if (s.credentials) {
+    // Two shapes: `{envVar}` (bearer) or `{kind: "azureClientCredentials", ...}`.
+    // Render the env-var reference for the bearer case and the
+    // structural summary for the azure case — never the secret itself.
+    if ("envVar" in s.credentials) {
+      ui.field("credentials", `$${s.credentials.envVar}`, 14);
+    } else {
+      ui.field(
+        "credentials",
+        `azure app ${s.credentials.clientId} (secret in $${s.credentials.clientSecretEnvVar})`,
+        14
+      );
+    }
+  }
   if (s.adapterModule) ui.field("adapterModule", s.adapterModule, 14);
   if (s.scope && Object.keys(s.scope).length > 0) {
     ui.field("scope", JSON.stringify(s.scope), 14);

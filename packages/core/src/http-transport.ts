@@ -220,13 +220,20 @@ function extractByPath(obj: unknown, keys: string[]): unknown {
 // ============================================================
 
 /**
- * Resolve a credential reference from `Source.credentials` to a live
- * secret string. Today only `{ envVar: "..." }` is supported. The
- * function is async to leave room for OS keychain integration later
- * (`{ keychain: "..." }`) without breaking callers.
+ * Resolve a credential reference from `Source.credentials` to a
+ * live secret string. Handles the simple `{envVar: "..."}` shape
+ * — adapters that need richer auth (e.g. SharePoint's Azure
+ * client_credentials with on-the-fly token minting) should resolve
+ * their own provider instead of going through this helper.
+ *
+ * The function is async to leave room for OS keychain integration
+ * later (`{ keychain: "..." }`) without breaking callers.
  */
 export async function resolveCredential(
-  ref: { envVar: string } | undefined,
+  ref:
+    | { envVar: string }
+    | { kind: "azureClientCredentials"; [k: string]: unknown }
+    | undefined,
   context: { sourceId: string }
 ): Promise<string> {
   if (!ref) {
@@ -234,16 +241,28 @@ export async function resolveCredential(
       `Source "${context.sourceId}" is missing credentials. Add \`credentials: { envVar: "..." }\` in sources.yaml or re-run \`atelier source onboard\`.`
     );
   }
-  if (ref.envVar) {
-    const value = process.env[ref.envVar];
+  // Hand-narrowed against the discriminated union. `kind` only
+  // exists on the azure shape; envVar only exists on the bearer
+  // shape. Walking via property access avoids the TS narrowing
+  // limitation around `"key" in union` when the property types
+  // are themselves different.
+  const asAny = ref as Record<string, unknown>;
+  if (asAny.kind === "azureClientCredentials") {
+    throw new Error(
+      `Source "${context.sourceId}" uses Azure client_credentials, which this adapter doesn't support. Use \`credentials: { envVar: "..." }\` instead.`
+    );
+  }
+  if (typeof asAny.envVar === "string" && asAny.envVar.length > 0) {
+    const envVar = asAny.envVar;
+    const value = process.env[envVar];
     if (!value || value.length === 0) {
       throw new Error(
-        `Source "${context.sourceId}" expected credential in $${ref.envVar} but the env var is empty.`
+        `Source "${context.sourceId}" expected credential in $${envVar} but the env var is empty.`
       );
     }
     return value;
   }
   throw new Error(
-    `Source "${context.sourceId}" has an unsupported credential reference (only \`envVar\` is supported today).`
+    `Source "${context.sourceId}" has an unsupported credential reference.`
   );
 }
