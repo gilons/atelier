@@ -369,11 +369,21 @@ async function runOnboardingInner(
             );
             continue;
           }
+          // Required step with no default: the user saw the
+          // picker, declined to choose anything, and we have no
+          // sensible fallback. Forcing them into a text prompt
+          // that won't accept empty just traps them in a loop —
+          // bail out cleanly instead. They can re-run /source
+          // onboard, or pre-fill via --answer to skip the picker
+          // altogether.
+          ui.blank();
           ui.print(
-            `  ${ui.dim("(nothing selected — falling back to manual entry)")}`
+            `  ${ui.dim(`Aborted — nothing was selected for "${step.key}".`)}`
           );
-          answers.values[step.key] = await askStep(session!, step);
-          continue;
+          ui.print(
+            `  ${ui.dim(`Re-run \`/source onboard ${flow.kind}\` and pick at least one, or pass --answer ${step.key}=<value>.`)}`
+          );
+          return 0;
         }
         const joined = picked.join(",");
         if (step.validate && !step.validate.test(joined)) {
