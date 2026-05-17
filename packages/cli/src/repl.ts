@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { spawn } from "node:child_process";
 import {
   ATELIER_VERSION,
   loadWorkspace,
@@ -416,7 +417,14 @@ async function handleLine(line: string, ctx: ReplContext): Promise<void> {
     process.stdout.write("\x1b[2J\x1b[H");
     return;
   }
-  if (lower === "repo" && rest.length === 0) {
+  // `/repo` (no args) and `/repo discover` both route to the
+  // interactive wizard in REPL mode. The non-REPL `atelier repo
+  // discover` keeps its old wall-of-text listing because that form
+  // is grep-friendly for scripts.
+  if (
+    lower === "repo" &&
+    (rest.length === 0 || (rest.length === 1 && rest[0] === "discover"))
+  ) {
     return interactiveRepoFlow(ctx);
   }
 
@@ -560,42 +568,50 @@ interface CombinedCandidate {
   registered: boolean;
 }
 
+/**
+ * Per-org bucket the wizard works through: which repos in this org
+ * are locally cloned but unregistered, which are only on GitHub.
+ */
+interface OrgGroup {
+  org: string;
+  /** Cloned-but-unregistered candidates. The wizard's primary target. */
+  cloned: CombinedCandidate[];
+  /** Live on GitHub, not cloned anywhere locally. */
+  remoteOnly: CombinedCandidate[];
+  /** Cloned + already registered. Just for the summary. */
+  registered: CombinedCandidate[];
+}
+
 async function interactiveRepoFlow(ctx: ReplContext): Promise<void> {
   if (!ctx.workspaceRoot) {
     ui.error("No workspace here. Run /init first.");
     return;
   }
-  ui.heading("Repo registration");
+  ui.heading("Repo discovery");
   ui.blank();
 
-  // 1. Local scan — children + siblings + workspace's siblings.
-  //    Cheap, no network.
+  // ---- 1. Scan local + query gh in parallel-ish ----
   const local = await ui.spinner("Scanning local directories", () =>
     discoverLocal(ctx.cwd, ctx.workspaceRoot)
   );
-
-  // 2. Multi-org gh discovery. We combine the workspace's configured
-  //    org (if any) with every distinct org we found in local
-  //    remotes — important when the dir spans multiple orgs.
   const { organization } = await listRepos(ctx.workspaceRoot);
   const allOrgs = unique([
     ...(organization ? [organization] : []),
     ...local.orgs,
   ]);
-  let remoteRepos: DiscoveredRepo[] = [];
+
   let remoteByOrg: Map<string, DiscoveryResult> = new Map();
   if (allOrgs.length > 0) {
     const gh = new GhAdapter();
     const avail = await gh.checkAvailability();
     if (avail.available) {
       try {
-        const { byOrg, errors } = await ui.spinner(
+        const result = await ui.spinner(
           `Querying GitHub for ${allOrgs.length} org(s): ${allOrgs.join(", ")}`,
           () => discoverManyOrgs(ctx.workspaceRoot!, allOrgs, gh)
         );
-        remoteByOrg = byOrg;
-        for (const r of byOrg.values()) remoteRepos.push(...r.repos);
-        for (const [org, msg] of errors) {
+        remoteByOrg = result.byOrg;
+        for (const [org, msg] of result.errors) {
           ui.warn(`gh listing for ${org} failed: ${msg}`);
         }
       } catch (err) {
@@ -604,73 +620,323 @@ async function interactiveRepoFlow(ctx: ReplContext): Promise<void> {
     } else {
       ui.print(`  ${ui.dim(avail.reason)}`);
     }
+  }
+
+  // ---- 2. Bucket candidates by org ----
+  const groups = bucketByOrg(local.localRepos, remoteByOrg);
+  const interesting = groups.filter(
+    (g) => g.cloned.length > 0 || g.remoteOnly.length > 0
+  );
+  if (interesting.length === 0) {
+    ui.print(`  ${ui.dim("Nothing new to register — everything nearby is already in the workspace.")}`);
+    return;
+  }
+
+  // ---- 3. Render the summary ----
+  ui.blank();
+  ui.print(`  ${ui.bold("Found:")}`);
+  for (const g of interesting) {
+    const parts: string[] = [];
+    if (g.registered.length > 0) parts.push(`${g.registered.length} already registered`);
+    if (g.cloned.length > 0) parts.push(`${g.cloned.length} cloned, not registered`);
+    if (g.remoteOnly.length > 0) parts.push(`${g.remoteOnly.length} on GitHub, not cloned`);
+    ui.print(`    ${ui.green("·")} ${ui.bold(g.org).padEnd(20)} ${ui.dim(parts.join("  ·  "))}`);
+  }
+  ui.blank();
+
+  // ---- 4. Which orgs to engage with? ----
+  let chosenOrgs: OrgGroup[];
+  if (interesting.length === 1) {
+    chosenOrgs = interesting;
   } else {
-    ui.print(
-      `  ${ui.dim("No GitHub org yet — registering the first repo will set one automatically.")}`
+    const picked = await withSession(ctx.fallbackSession, (session) =>
+      session.pickMany(
+        "Which orgs are relevant to this workspace?",
+        interesting.map((g) => ({
+          label: g.org,
+          value: g,
+          note: orgNote(g),
+        }))
+      )
     );
+    if (!picked || picked.length === 0) {
+      ui.print(`  ${ui.dim("Nothing selected. Skipping.")}`);
+      return;
+    }
+    chosenOrgs = picked;
   }
 
-  // 3. Merge local + remote into one list keyed by repo name.
-  const merged = mergeCandidates(local.localRepos, remoteRepos);
-  if (merged.length === 0) {
-    ui.print(`  ${ui.dim("No candidates found near")} ${ctx.workspaceRoot}.`);
-    return;
+  // ---- 5. Per-org wizard ----
+  let totalAdded = 0;
+  let totalFailed = 0;
+  let totalCloned = 0;
+  for (const group of chosenOrgs) {
+    const result = await runOrgWizard(ctx, group);
+    totalAdded += result.added;
+    totalFailed += result.failed;
+    totalCloned += result.cloned;
   }
 
-  // 4. Show summary, then multi-select.
-  const orgSummary =
-    remoteByOrg.size === 0
-      ? ""
-      : ` ${ui.dim(`(${[...remoteByOrg.keys()].join(", ")})`)}`;
-  ui.print(
-    `  Found ${ui.bold(String(merged.length))} candidate(s)${orgSummary}`
-  );
+  // ---- 6. Recap ----
+  ui.blank();
+  ui.heading("Summary");
+  ui.print(`  ${ui.dim("Registered:")} ${totalAdded}`);
+  if (totalCloned > 0) ui.print(`  ${ui.dim("Cloned:")}     ${totalCloned}`);
+  if (totalFailed > 0) ui.print(`  ${ui.dim("Failed:")}     ${totalFailed}`);
+  ui.blank();
+}
+
+function orgNote(g: OrgGroup): string {
+  const parts: string[] = [];
+  if (g.cloned.length > 0) parts.push(`${g.cloned.length} cloned`);
+  if (g.remoteOnly.length > 0) parts.push(`${g.remoteOnly.length} on GitHub`);
+  return parts.join(" · ");
+}
+
+interface OrgWizardResult {
+  added: number;
+  failed: number;
+  cloned: number;
+}
+
+async function runOrgWizard(
+  ctx: ReplContext,
+  group: OrgGroup
+): Promise<OrgWizardResult> {
+  ui.blank();
+  ui.print(`${ui.bold(group.org)}`);
   ui.blank();
 
-  const choice = await withSession(ctx.fallbackSession, (session) =>
-    session.pickMany(
-      "Pick repos to register (registered ones are marked with —):",
-      merged.map((c) => ({
-        label: c.label,
-        value: c,
-        note: c.note,
-        preselected: false,
-        disabled: c.registered,
-      }))
-    )
-  );
-  if (!choice || choice.length === 0) {
-    ui.print(`  ${ui.dim("Nothing selected.")}`);
-    return;
-  }
-
-  // 5. Register each.
-  ui.blank();
   let added = 0;
   let failed = 0;
-  for (const c of choice) {
+  let cloned = 0;
+
+  // ---- A. Register the locally-cloned repos ----
+  if (group.cloned.length > 0) {
+    const result = await registerClonedRepos(ctx, group);
+    added += result.added;
+    failed += result.failed;
+  }
+
+  // ---- B. Optionally clone + register remote-only repos ----
+  if (group.remoteOnly.length > 0) {
+    const wantsMore = await withSession(ctx.fallbackSession, (session) =>
+      session.confirm(
+        `  Pull more from ${group.org} on GitHub? (${group.remoteOnly.length} available)`,
+        { default: false }
+      )
+    );
+    if (wantsMore) {
+      const result = await cloneAndRegisterRemoteRepos(ctx, group);
+      added += result.added;
+      failed += result.failed;
+      cloned += result.cloned;
+    }
+  }
+
+  return { added, failed, cloned };
+}
+
+async function registerClonedRepos(
+  ctx: ReplContext,
+  group: OrgGroup
+): Promise<{ added: number; failed: number }> {
+  // For ≤ 3 cloned repos, ask a single yes/no. For more, give a
+  // multi-select so the user can drop noise (e.g. an experimental
+  // repo they don't want indexed).
+  let toRegister: CombinedCandidate[] = [];
+  if (group.cloned.length <= 3) {
+    const names = group.cloned.map((c) => c.label).join(", ");
+    const ok = await withSession(ctx.fallbackSession, (session) =>
+      session.confirm(
+        `  Register ${group.cloned.length} locally-cloned repo(s) — ${names}?`,
+        { default: true }
+      )
+    );
+    if (ok) toRegister = group.cloned;
+  } else {
+    ui.print(
+      `  ${ui.dim(`Pick which of the ${group.cloned.length} locally-cloned repos to register:`)}`
+    );
+    const picked = await withSession(ctx.fallbackSession, (session) =>
+      session.pickMany(
+        `Locally cloned in ${group.org}`,
+        group.cloned.map((c) => ({
+          label: c.label,
+          value: c,
+          note: c.note,
+        }))
+      )
+    );
+    if (picked) toRegister = picked;
+  }
+
+  let added = 0;
+  let failed = 0;
+  for (const c of toRegister) {
     try {
-      if (c.localPath) {
-        const rel = path.relative(ctx.workspaceRoot, c.localPath);
-        await addRepo(ctx.workspaceRoot, {
-          pathInput: rel === "" ? "." : rel.split(path.sep).join("/"),
-          cwd: ctx.workspaceRoot,
-        });
-        ui.success(`Registered ${c.label}`);
-        added++;
-      } else {
-        // Remote-only — can't register without a clone.
-        ui.warn(
-          `${c.label}: not cloned locally. Run \`gh repo clone ${c.remote?.name}\` first, then retry.`
-        );
-      }
+      const rel = path.relative(ctx.workspaceRoot!, c.localPath!);
+      await addRepo(ctx.workspaceRoot!, {
+        pathInput: rel === "" ? "." : rel.split(path.sep).join("/"),
+        cwd: ctx.workspaceRoot!,
+      });
+      ui.success(`  Registered ${c.label}`);
+      added++;
     } catch (err) {
-      ui.error(`${c.label}: ${(err as Error).message}`);
+      ui.error(`  ${c.label}: ${(err as Error).message}`);
       failed++;
     }
   }
-  ui.blank();
-  ui.print(`  ${ui.dim("Added:")} ${added}  ${ui.dim("Failed:")} ${failed}`);
+  return { added, failed };
+}
+
+async function cloneAndRegisterRemoteRepos(
+  ctx: ReplContext,
+  group: OrgGroup
+): Promise<{ added: number; failed: number; cloned: number }> {
+  // For long lists, the multi-select with filter is the right tool —
+  // 56 gilons repos shouldn't all be in the user's face.
+  ui.print(
+    `  ${ui.dim(`Pick which of the ${group.remoteOnly.length} GitHub-only ${group.org} repos to clone & register:`)}`
+  );
+  const picked = await withSession(ctx.fallbackSession, (session) =>
+    session.pickMany(
+      `${group.org} on GitHub`,
+      group.remoteOnly.map((c) => ({
+        label: c.label,
+        value: c,
+        note: c.note,
+      }))
+    )
+  );
+  if (!picked || picked.length === 0) return { added: 0, failed: 0, cloned: 0 };
+
+  // Clone into the workspace's parent so repos land alongside it
+  // (the canonical sibling layout). If the user's workspace is at
+  // the umbrella level (atypical), they'll land as workspace children.
+  const cloneInto = path.dirname(ctx.workspaceRoot!);
+  let added = 0;
+  let failed = 0;
+  let cloned = 0;
+  for (const c of picked) {
+    const fullName = `${group.org}/${c.label}`;
+    const dest = path.join(cloneInto, c.label);
+    try {
+      await ui.spinner(`Cloning ${fullName}`, () =>
+        runGhClone(fullName, dest)
+      );
+      cloned++;
+    } catch (err) {
+      ui.error(`  ${fullName}: ${(err as Error).message}`);
+      failed++;
+      continue;
+    }
+    try {
+      const rel = path.relative(ctx.workspaceRoot!, dest);
+      await addRepo(ctx.workspaceRoot!, {
+        pathInput: rel === "" ? "." : rel.split(path.sep).join("/"),
+        cwd: ctx.workspaceRoot!,
+      });
+      ui.success(`  Registered ${c.label}`);
+      added++;
+    } catch (err) {
+      ui.error(`  ${c.label}: ${(err as Error).message}`);
+      failed++;
+    }
+  }
+  return { added, failed, cloned };
+}
+
+/**
+ * Shell out to `gh repo clone <full-name> <dest>`. We don't reuse
+ * the existing `gh` adapter because that's wrapped around `gh repo
+ * list` JSON output; the clone call is plain.
+ */
+function runGhClone(fullName: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("gh", ["repo", "clone", fullName, dest], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (d) => {
+      stderr += d.toString("utf8");
+    });
+    child.on("error", (err) => {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        reject(new Error("`gh` not installed (https://cli.github.com/)"));
+      } else {
+        reject(err);
+      }
+    });
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `gh repo clone exited with code ${code}`));
+    });
+  });
+}
+
+/**
+ * Reshape the merged candidate list into per-org buckets, tagging
+ * each candidate as already-registered / cloned-not-registered /
+ * remote-only.
+ */
+function bucketByOrg(
+  local: LocalRepoCandidate[],
+  remoteByOrg: Map<string, DiscoveryResult>
+): OrgGroup[] {
+  const groups = new Map<string, OrgGroup>();
+  const ensure = (org: string): OrgGroup => {
+    let g = groups.get(org);
+    if (!g) {
+      g = { org, cloned: [], remoteOnly: [], registered: [] };
+      groups.set(org, g);
+    }
+    return g;
+  };
+
+  // Start from gh's view (org → its repos) so we have a definitive
+  // list per org, then layer local-only candidates on top.
+  for (const [org, result] of remoteByOrg) {
+    for (const r of result.repos) {
+      const candidate: CombinedCandidate = {
+        key: r.remote.name,
+        label: r.remote.name,
+        note: r.remote.httpsUrl || r.remote.sshUrl,
+        source: r.localPath ? "both" : "remote",
+        localPath: r.localPath ?? undefined,
+        remote: {
+          name: r.remote.name,
+          sshUrl: r.remote.sshUrl,
+          httpsUrl: r.remote.httpsUrl,
+        },
+        registered: r.registered,
+      };
+      const g = ensure(org);
+      if (candidate.registered) g.registered.push(candidate);
+      else if (candidate.localPath) g.cloned.push(candidate);
+      else g.remoteOnly.push(candidate);
+    }
+  }
+
+  // Local repos whose org isn't in remoteByOrg (gh unavailable, or
+  // org not queried) still belong somewhere — group them under
+  // their inferred org or "(unknown)".
+  const orgsWithRemotes = new Set(remoteByOrg.keys());
+  for (const l of local) {
+    const orgKey = l.org ?? "(unknown)";
+    if (orgsWithRemotes.has(orgKey)) continue; // already accounted for via gh
+    const candidate: CombinedCandidate = {
+      key: l.repoName,
+      label: l.dirName,
+      note: l.remote ?? l.absPath,
+      source: "local",
+      localPath: l.absPath,
+      registered: false,
+    };
+    ensure(orgKey).cloned.push(candidate);
+  }
+
+  return [...groups.values()].sort((a, b) => a.org.localeCompare(b.org));
 }
 
 function mergeCandidates(
