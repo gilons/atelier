@@ -108,6 +108,40 @@ async function findLocalCloneFor(
 }
 
 /**
+ * Run discovery for several orgs at once.
+ *
+ * Used by the REPL welcome banner so that a working directory which
+ * spans multiple GitHub orgs (e.g. an umbrella with repos under
+ * `acme` and `acme-frontend`) gets a single, complete picture rather
+ * than only the majority org's listing.
+ *
+ * Errors are returned per-org rather than thrown — a `gh` outage on
+ * one org shouldn't block the user from registering repos from
+ * another.
+ */
+export async function discoverManyOrgs(
+  workspaceRoot: string,
+  organizations: string[],
+  host: GitHostAdapter
+): Promise<{
+  byOrg: Map<string, DiscoveryResult>;
+  errors: Map<string, string>;
+}> {
+  const byOrg = new Map<string, DiscoveryResult>();
+  const errors = new Map<string, string>();
+  await Promise.all(
+    organizations.map(async (org) => {
+      try {
+        byOrg.set(org, await discoverRepos(workspaceRoot, org, host));
+      } catch (err) {
+        errors.set(org, (err as Error).message);
+      }
+    })
+  );
+  return { byOrg, errors };
+}
+
+/**
  * Run discovery against the host and the workspace.
  */
 export async function discoverRepos(

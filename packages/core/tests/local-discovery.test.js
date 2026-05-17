@@ -9,6 +9,8 @@ import {
   inferRepoContext,
   findNearbyWorkspace,
   inferOrg,
+  extractDistinctOrgs,
+  discoverLocal,
   initWorkspace,
 } from "../dist/index.js";
 
@@ -186,4 +188,128 @@ test("inferOrg returns null when no org information", () => {
 
 test("inferOrg handles an empty list", () => {
   assert.equal(inferOrg([]), null);
+});
+
+// ============================================================
+// extractDistinctOrgs
+// ============================================================
+
+test("extractDistinctOrgs returns every org sorted by frequency", () => {
+  const orgs = extractDistinctOrgs([
+    { absPath: "a", dirName: "a", remote: null, repoName: "a", org: "acme" },
+    { absPath: "b", dirName: "b", remote: null, repoName: "b", org: "acme" },
+    { absPath: "c", dirName: "c", remote: null, repoName: "c", org: "other" },
+    { absPath: "d", dirName: "d", remote: null, repoName: "d", org: "acme" },
+    { absPath: "e", dirName: "e", remote: null, repoName: "e", org: "other" },
+  ]);
+  // acme appears 3x, other 2x — acme first.
+  assert.deepEqual(orgs, ["acme", "other"]);
+});
+
+test("extractDistinctOrgs ignores repos without orgs", () => {
+  const orgs = extractDistinctOrgs([
+    { absPath: "a", dirName: "a", remote: null, repoName: "a", org: null },
+    { absPath: "b", dirName: "b", remote: "url", repoName: "b", org: "acme" },
+  ]);
+  assert.deepEqual(orgs, ["acme"]);
+});
+
+// ============================================================
+// findNearbyWorkspace — child-lookup case
+// ============================================================
+
+test("findNearbyWorkspace finds a workspace that is a child of cwd", async () => {
+  // User runs atelier in `~/workspace/myorg/`; workspace is at
+  // `myorg/planning/`. The old implementation missed this; the new
+  // one looks one level into children.
+  const dir = await umbrella();
+  try {
+    const myorg = path.join(dir, "myorg");
+    await fs.mkdir(myorg);
+    const planning = path.join(myorg, "planning");
+    await fs.mkdir(planning);
+    await initWorkspace(planning, { name: "MyOrg" });
+    const result = await findNearbyWorkspace(myorg);
+    assert.equal(result, planning);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ============================================================
+// discoverLocal
+// ============================================================
+
+test("discoverLocal finds repos in cwd's children AND in cwd's parent", async () => {
+  // Layout (depth ≤ 1 from each scan point):
+  //   umbrella/
+  //     repo-sibling/    ← lives next to cwd, scanned via cwd-parent
+  //     myorg/           ← cwd
+  //       api/           (cwd-child)
+  //       web/           (cwd-child)
+  const dir = await umbrella();
+  try {
+    const myorg = path.join(dir, "myorg");
+    await fs.mkdir(myorg);
+    await makeRepo(myorg, "api", "git@github.com:myorg/api.git");
+    await makeRepo(myorg, "web", "git@github.com:myorg/web.git");
+    // A sibling of cwd at the umbrella level — discoverLocal also
+    // scans children of cwd's parent.
+    await makeRepo(dir, "repo-sibling", "git@github.com:myorg/repo-sibling.git");
+
+    const result = await discoverLocal(myorg, null);
+    assert.equal(result.localRepos.length, 3);
+    const names = result.localRepos.map((r) => r.dirName).sort();
+    assert.deepEqual(names, ["api", "repo-sibling", "web"]);
+    assert.deepEqual(result.orgs, ["myorg"]);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("discoverLocal dedupes when the same repo is reached via two scan paths", async () => {
+  // umbrella/
+  //   workspace/   ← workspaceRoot
+  //     (nothing)
+  //   api/
+  // discoverLocal scans cwd children + cwd-parent children + workspace-parent children.
+  // umbrella/workspace/ and cwd both yield siblings under umbrella/.
+  const dir = await umbrella();
+  try {
+    const ws = path.join(dir, "workspace");
+    await fs.mkdir(ws);
+    await initWorkspace(ws, { name: "Test" });
+    await makeRepo(dir, "api", "git@github.com:acme/api.git");
+    const result = await discoverLocal(ws, ws);
+    assert.equal(result.localRepos.length, 1);
+    assert.equal(result.localRepos[0].dirName, "api");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("discoverLocal surfaces multi-org context", async () => {
+  const dir = await umbrella();
+  try {
+    await makeRepo(dir, "api", "git@github.com:acme/api.git");
+    await makeRepo(dir, "web", "git@github.com:acme/web.git");
+    await makeRepo(dir, "front", "git@github.com:acme-frontend/front.git");
+    const result = await discoverLocal(dir, null);
+    assert.deepEqual(result.orgs, ["acme", "acme-frontend"]);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("discoverLocal returns empty when nothing nearby", async () => {
+  const outer = await umbrella();
+  try {
+    const isolated = path.join(outer, "isolated", "deep");
+    await fs.mkdir(isolated, { recursive: true });
+    const result = await discoverLocal(isolated, null);
+    assert.equal(result.localRepos.length, 0);
+    assert.deepEqual(result.orgs, []);
+  } finally {
+    await fs.rm(outer, { recursive: true, force: true });
+  }
 });

@@ -6,16 +6,16 @@ import {
   listSources,
   listFeatures,
   listDocs,
-  scanSiblings,
-  scanChildren,
   inferRepoContext,
-  inferOrg,
   findNearbyWorkspace,
+  discoverLocal,
+  discoverManyOrgs,
   addRepo,
   GhAdapter,
-  discoverRepos,
   type LocalRepoCandidate,
   type DiscoveredRepo,
+  type DiscoveryResult,
+  type LocalDiscovery,
 } from "@atelier/core";
 import { ui } from "./ui.js";
 import { PromptSession } from "./prompt.js";
@@ -143,11 +143,18 @@ function isExitCommand(line: string): boolean {
 async function renderWelcome(ctx: ReplContext): Promise<void> {
   renderBanner(ATELIER_VERSION, "a planning companion for the spec-driven era");
 
+  // Local scan is cheap (no network) so we always do it eagerly. The
+  // gh-org listing is run lazily — synchronously when there's no
+  // workspace yet (so the first impression is rich), deferred to
+  // /repo otherwise (so opening atelier in a known workspace doesn't
+  // block for 1-2s of gh calls).
+  const local = await discoverLocal(ctx.cwd, ctx.workspaceRoot);
+
   if (ctx.workspaceRoot) {
-    await renderWorkspaceStatus(ctx);
+    await renderWorkspaceStatus(ctx, local);
     await maybeOfferAutoRegister(ctx);
   } else {
-    await renderNoWorkspaceContext(ctx);
+    await renderNoWorkspaceContext(ctx, local);
   }
 
   ui.blank();
@@ -157,7 +164,10 @@ async function renderWelcome(ctx: ReplContext): Promise<void> {
   ui.blank();
 }
 
-async function renderWorkspaceStatus(ctx: ReplContext): Promise<void> {
+async function renderWorkspaceStatus(
+  ctx: ReplContext,
+  local: LocalDiscovery
+): Promise<void> {
   try {
     const { workspace } = await loadWorkspace(ctx.workspaceRoot!);
     const [{ organization, repos }, sources, { features }, { docs }] = await Promise.all([
@@ -172,39 +182,121 @@ async function renderWorkspaceStatus(ctx: ReplContext): Promise<void> {
     ui.print(
       `  ${ui.dim("Inventory:")} ${repos.length} repo(s) · ${sources.length} source(s) · ${features.length} feature(s) · ${docs.length} doc(s)`
     );
+
+    // Discovery hint: how many local-but-unregistered candidates do
+    // we see near here? The answer is cheap (no gh call) and tells
+    // the user there's something to do with /repo.
+    const registeredRemotes = new Set(
+      repos.map((r) => normalizeRemoteForCompare(r.repo.remote))
+    );
+    const unregisteredLocal = local.localRepos.filter(
+      (r) => r.remote && !registeredRemotes.has(normalizeRemoteForCompare(r.remote))
+    );
+    const extraOrgs = local.orgs.filter((o) => o !== organization);
+
+    if (unregisteredLocal.length > 0 || extraOrgs.length > 0) {
+      ui.blank();
+      ui.print(`  ${ui.dim("Discovered nearby:")}`);
+      if (unregisteredLocal.length > 0) {
+        ui.print(
+          `    ${ui.green("·")} ${unregisteredLocal.length} local repo(s) not yet registered: ${ui.dim(unregisteredLocal.slice(0, 4).map((r) => r.dirName).join(", "))}${unregisteredLocal.length > 4 ? ui.dim(`, …`) : ""}`
+        );
+      }
+      if (extraOrgs.length > 0) {
+        ui.print(
+          `    ${ui.green("·")} repos from other org(s): ${ui.dim(extraOrgs.join(", "))}`
+        );
+      }
+      ui.print(`    ${ui.dim("→ Type")} ${ui.cyan("/repo")} ${ui.dim("to register them.")}`);
+    }
   } catch (err) {
     ui.warn(`Workspace at ${ctx.workspaceRoot} is malformed: ${(err as Error).message}`);
   }
 }
 
-async function renderNoWorkspaceContext(ctx: ReplContext): Promise<void> {
+async function renderNoWorkspaceContext(
+  ctx: ReplContext,
+  local: LocalDiscovery
+): Promise<void> {
   ui.print(`  ${ui.dim("No workspace found at")} ${ctx.cwd}`);
-  // Look for a nearby workspace (ancestor or sibling).
-  const nearby = await findNearbyWorkspace(ctx.cwd);
-  if (nearby && nearby !== ctx.cwd) {
-    ui.print(`  ${ui.dim("Nearby workspace:")} ${nearby}`);
-    ui.print(
-      `  ${ui.dim("→ cd into it and re-run, or type")} ${ui.cyan("/init")} ${ui.dim("to start a new one here.")}`
-    );
+
+  // Nothing local either — the simplest "go init" hint.
+  if (local.localRepos.length === 0) {
+    ui.blank();
+    ui.print(`  ${ui.dim("→ Type")} ${ui.cyan("/init")} ${ui.dim("to start a workspace, or cd into a directory of repos.")}`);
     return;
   }
-  // No workspace anywhere — show repo candidates so the user knows
-  // what they'd be working with.
-  const siblings = await scanChildren(ctx.cwd);
-  if (siblings.length > 0) {
-    const org = inferOrg(siblings);
-    ui.print(
-      `  ${ui.dim("Detected")} ${siblings.length} git repo(s) ${ui.dim("in this directory")}` +
-        (org ? ` ${ui.dim("(org:")} ${ui.bold(org)}${ui.dim(")")}` : "")
-    );
-    for (const s of siblings.slice(0, 5)) {
-      ui.print(`    ${ui.dim("·")} ${s.dirName}`);
+
+  // We found local repos. Show what's here, infer orgs, then try
+  // gh (best-effort, soft-fail) for a richer picture.
+  const orgsLabel =
+    local.orgs.length === 0
+      ? "(no GitHub orgs inferred)"
+      : local.orgs.length === 1
+        ? `org: ${ui.bold(local.orgs[0])}`
+        : `${local.orgs.length} orgs: ${local.orgs.map((o) => ui.bold(o)).join(", ")}`;
+  ui.print(
+    `  ${ui.dim("Detected")} ${ui.bold(String(local.localRepos.length))} ${ui.dim("git repo(s) — ")}${orgsLabel}`
+  );
+  for (const repo of local.localRepos.slice(0, 5)) {
+    const tail = repo.org ? ui.dim(`  (${repo.org})`) : "";
+    ui.print(`    ${ui.dim("·")} ${repo.dirName}${tail}`);
+  }
+  if (local.localRepos.length > 5) {
+    ui.print(`    ${ui.dim(`… and ${local.localRepos.length - 5} more`)}`);
+  }
+
+  // gh discovery (multi-org). Wrapped in a spinner because each call
+  // is ~1s. We do this on a no-workspace start because the user
+  // hasn't told us anything yet — they need to see the full picture
+  // to make the first decision (/init here, cd elsewhere, etc.).
+  if (local.orgs.length > 0) {
+    const gh = new GhAdapter();
+    const availability = await gh.checkAvailability();
+    if (availability.available) {
+      // We need a "fake" workspaceRoot for discoverRepos's signature
+      // (it diffs against registered repos). With no workspace, we
+      // pass the cwd; the registered set will be empty.
+      const { byOrg, errors } = await ui.spinner(
+        `Querying GitHub for ${local.orgs.length} org(s)`,
+        () => discoverManyOrgs(ctx.cwd, local.orgs, gh)
+      );
+      const totals = [...byOrg.entries()].map(
+        ([org, r]) => `${org}: ${r.repos.length}`
+      );
+      ui.blank();
+      if (totals.length > 0) {
+        ui.print(`  ${ui.dim("Found on GitHub:")} ${totals.join(", ")}`);
+      }
+      for (const [org, msg] of errors) {
+        ui.warn(`  gh listing for ${org} failed: ${msg}`);
+      }
+    } else {
+      ui.blank();
+      ui.print(`  ${ui.dim(availability.reason)}`);
     }
-    if (siblings.length > 5) ui.print(`    ${ui.dim(`… and ${siblings.length - 5} more`)}`);
-    ui.print(`  ${ui.dim("→ Type")} ${ui.cyan("/init")} ${ui.dim("to scaffold a workspace here.")}`);
-    return;
   }
-  ui.print(`  ${ui.dim("→ Type")} ${ui.cyan("/init")} ${ui.dim("to start a new workspace.")}`);
+
+  ui.blank();
+  ui.print(
+    `  ${ui.dim("→ Type")} ${ui.cyan("/init")} ${ui.dim("to scaffold a workspace here, then")} ${ui.cyan("/repo")} ${ui.dim("to register repos.")}`
+  );
+}
+
+/**
+ * Normalize a remote URL the same way `discovery.ts` does — strip
+ * trailing `.git` and `/` — so comparisons match across ssh / https
+ * variants and the `gh` API's no-`.git` form.
+ */
+function normalizeRemoteForCompare(url: string): string {
+  let s = url.trim();
+  if (s.endsWith("/")) s = s.slice(0, -1);
+  if (s.endsWith(".git")) s = s.slice(0, -4);
+  return s;
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
 }
 
 /**
@@ -372,7 +464,8 @@ async function showStatus(ctx: ReplContext): Promise<void> {
     ui.print(`  ${ui.dim("No workspace at")} ${ctx.cwd}.`);
     return;
   }
-  await renderWorkspaceStatus(ctx);
+  const local = await discoverLocal(ctx.cwd, ctx.workspaceRoot);
+  await renderWorkspaceStatus(ctx, local);
 }
 
 // ============================================================
@@ -400,24 +493,36 @@ async function interactiveRepoFlow(ctx: ReplContext): Promise<void> {
   ui.heading("Repo registration");
   ui.blank();
 
-  // 1. Gather candidates from local disk.
-  const local = await ui.spinner("Scanning sibling directories", () =>
-    scanSiblings(ctx.workspaceRoot!)
+  // 1. Local scan — children + siblings + workspace's siblings.
+  //    Cheap, no network.
+  const local = await ui.spinner("Scanning local directories", () =>
+    discoverLocal(ctx.cwd, ctx.workspaceRoot)
   );
 
-  // 2. Try gh discovery if an org is configured (or can be inferred).
-  let remoteRepos: DiscoveredRepo[] = [];
+  // 2. Multi-org gh discovery. We combine the workspace's configured
+  //    org (if any) with every distinct org we found in local
+  //    remotes — important when the dir spans multiple orgs.
   const { organization } = await listRepos(ctx.workspaceRoot);
-  const org = organization ?? inferOrg(local);
-  if (org) {
+  const allOrgs = unique([
+    ...(organization ? [organization] : []),
+    ...local.orgs,
+  ]);
+  let remoteRepos: DiscoveredRepo[] = [];
+  let remoteByOrg: Map<string, DiscoveryResult> = new Map();
+  if (allOrgs.length > 0) {
     const gh = new GhAdapter();
     const avail = await gh.checkAvailability();
     if (avail.available) {
       try {
-        const discovery = await ui.spinner(`Querying GitHub for repos in ${org}`, () =>
-          discoverRepos(ctx.workspaceRoot!, org, gh)
+        const { byOrg, errors } = await ui.spinner(
+          `Querying GitHub for ${allOrgs.length} org(s): ${allOrgs.join(", ")}`,
+          () => discoverManyOrgs(ctx.workspaceRoot!, allOrgs, gh)
         );
-        remoteRepos = discovery.repos;
+        remoteByOrg = byOrg;
+        for (const r of byOrg.values()) remoteRepos.push(...r.repos);
+        for (const [org, msg] of errors) {
+          ui.warn(`gh listing for ${org} failed: ${msg}`);
+        }
       } catch (err) {
         ui.warn(`GitHub discovery failed: ${(err as Error).message}`);
       }
@@ -431,16 +536,19 @@ async function interactiveRepoFlow(ctx: ReplContext): Promise<void> {
   }
 
   // 3. Merge local + remote into one list keyed by repo name.
-  const merged = mergeCandidates(local, remoteRepos);
+  const merged = mergeCandidates(local.localRepos, remoteRepos);
   if (merged.length === 0) {
     ui.print(`  ${ui.dim("No candidates found near")} ${ctx.workspaceRoot}.`);
     return;
   }
 
   // 4. Show summary, then multi-select.
+  const orgSummary =
+    remoteByOrg.size === 0
+      ? ""
+      : ` ${ui.dim(`(${[...remoteByOrg.keys()].join(", ")})`)}`;
   ui.print(
-    `  Found ${ui.bold(String(merged.length))} candidate(s)` +
-      (org ? ` ${ui.dim(`(org: ${org})`)}` : "")
+    `  Found ${ui.bold(String(merged.length))} candidate(s)${orgSummary}`
   );
   ui.blank();
 
