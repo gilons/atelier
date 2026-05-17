@@ -21,6 +21,7 @@ import { ui } from "./ui.js";
 import { PromptSession } from "./prompt.js";
 import { dispatch, type CommandRegistry } from "./command.js";
 import { renderBanner } from "./banner.js";
+import { buildReplCompleter } from "./repl-completer.js";
 
 /**
  * Atelier REPL — `atelier` with no args drops the user into a
@@ -51,7 +52,9 @@ export async function runRepl(
   cwd: string,
   registry: CommandRegistry
 ): Promise<number> {
-  const session = new PromptSession();
+  const session = new PromptSession({
+    completer: buildReplCompleter(registry),
+  });
   const ctx: ReplContext = {
     cwd,
     registry,

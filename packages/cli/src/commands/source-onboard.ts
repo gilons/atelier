@@ -370,6 +370,20 @@ export const sourceOnboardCommand: Command = {
     "dry-run": { type: "boolean" },
     "list-kinds": { type: "boolean" },
   },
+  /**
+   * The first positional is <kind>. Enumerate every registered
+   * adapter so the user can tab-complete it. Once <kind> is supplied
+   * the positionals are exhausted and we return [] — the REPL's
+   * completer falls through to option-flag suggestions.
+   */
+  complete(priorArgs: string[], partial: string): string[] {
+    if (priorArgs.length === 0) {
+      return listAdapters()
+        .map((a) => a.kind)
+        .filter((k) => k.toLowerCase().startsWith(partial.toLowerCase()));
+    }
+    return [];
+  },
   async run({ positionals, values, cwd }) {
     if (values["list-kinds"] === true) {
       ui.heading("Supported source kinds");

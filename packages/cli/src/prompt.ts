@@ -20,6 +20,23 @@ export interface PromptIO {
   output: NodeJS.WritableStream;
 }
 
+/**
+ * Tab-completion callback. Same shape as Node's readline `completer`
+ * option: takes the current line up to the cursor, returns a tuple of
+ * `[completion candidates, substring being completed]`.
+ */
+export type CompleterFn = (line: string) => [string[], string];
+
+export interface PromptSessionOptions {
+  io?: PromptIO;
+  /**
+   * Optional tab-completion callback. Only meaningful when stdin is
+   * a TTY (readline runs in terminal mode then and dispatches tab).
+   * In piped/non-TTY contexts the completer is ignored.
+   */
+  completer?: CompleterFn;
+}
+
 interface QueuedResolver {
   resolve: (value: string) => void;
   reject: (err: Error) => void;
@@ -28,19 +45,26 @@ interface QueuedResolver {
 export class PromptSession {
   readonly io: PromptIO;
   private readonly rl: readline.Interface;
+  /** Is stdin actually interactive? Drives terminal-mode + completion. */
+  private readonly isTty: boolean;
   private readonly buffered: string[] = [];
   private readonly waiters: QueuedResolver[] = [];
   private closed = false;
   private streamEnded = false;
 
-  constructor(io: PromptIO = { input: process.stdin, output: process.stdout }) {
-    this.io = io;
+  constructor(opts: PromptSessionOptions = {}) {
+    this.io = opts.io ?? { input: process.stdin, output: process.stdout };
+    this.isTty = (this.io.input as NodeJS.ReadStream).isTTY === true;
+    // Terminal mode unlocks history (arrow keys), line editing, and
+    // tab completion. We only enable it on a real TTY — non-TTY input
+    // (piped scripts, tests) flows through our line-event queue.
     this.rl = readline.createInterface({
-      input: io.input,
-      output: io.output,
-      // We never want readline to echo / move the cursor itself —
-      // our prompts already print the question line.
-      terminal: false,
+      input: this.io.input,
+      output: this.io.output,
+      terminal: this.isTty,
+      completer: this.isTty && opts.completer
+        ? wrapCompleterForReadline(opts.completer)
+        : undefined,
     });
     this.rl.on("line", (line) => {
       const w = this.waiters.shift();
@@ -78,15 +102,25 @@ export class PromptSession {
   /** Ask a free-text question. Returns the user's input (trimmed). */
   async ask(question: string, opts: { default?: string } = {}): Promise<string> {
     const suffix = opts.default ? ` [${opts.default}]` : "";
-    this.io.output.write(`${question}${suffix}: `);
+    const promptText = `${question}${suffix}: `;
+    if (this.isTty) {
+      // In terminal mode, hand the prompt to readline so it owns line
+      // redraw, history navigation (↑/↓), and tab completion. Calling
+      // setPrompt+prompt here is required — manually writing the prompt
+      // breaks the redraw cycle.
+      this.rl.setPrompt(promptText);
+      this.rl.prompt();
+    } else {
+      this.io.output.write(promptText);
+    }
     const line = await this.nextLine();
     // When stdin is piped (no terminal echo), the user's typed
     // newline doesn't appear in our output, so subsequent prompts
     // run on the same visible line. Add the newline ourselves when
     // stdout is non-TTY (matches the visual effect of an interactive
     // session) — TTY users get the same visual either way.
-    const isTty = (this.io.output as NodeJS.WriteStream).isTTY === true;
-    if (!isTty) this.io.output.write("\n");
+    const isTtyOut = (this.io.output as NodeJS.WriteStream).isTTY === true;
+    if (!isTtyOut) this.io.output.write("\n");
     const trimmed = line.trim();
     return trimmed.length === 0 && opts.default ? opts.default : trimmed;
   }
@@ -289,6 +323,29 @@ export class PromptSession {
 
 function pad(s: string): string {
   return s.padEnd(14) + " ";
+}
+
+/**
+ * Adapter from our `CompleterFn` shape to Node's readline-internal
+ * completer signature.
+ *
+ * Node calls the completer synchronously with the line up to the
+ * cursor, and expects back `[matches, substring]` where:
+ *
+ *   - `matches` is a list of full strings that could replace
+ *     `substring`. If empty, readline does nothing.
+ *   - If `matches.length === 1`, readline auto-completes by
+ *     replacing `substring` with the single match.
+ *   - If many, readline shows the list and waits for the user.
+ *
+ * Our `CompleterFn` returns exactly that tuple; this wrapper is
+ * just an explicit boundary so the rest of the codebase doesn't
+ * import readline types.
+ */
+function wrapCompleterForReadline(
+  completer: CompleterFn
+): (line: string) => [string[], string] {
+  return (line: string) => completer(line);
 }
 
 function matchesFilter(label: string, filter: string): boolean {

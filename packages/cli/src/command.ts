@@ -28,6 +28,19 @@ export interface Command {
   subcommands?: Command[];
   /** Handler. Leaf commands only. */
   run?(ctx: CommandContext): Exitable;
+  /**
+   * Optional tab-completion hook for the REPL. Called when the user
+   * has reached this command and is typing a positional argument.
+   *
+   * @param priorArgs  Positional arguments already supplied to this command.
+   * @param partial    The token currently being typed (may be empty).
+   * @returns          Candidate completion strings (full token forms).
+   *
+   * Example: `source onboard <kind>` enumerates registered adapter
+   * kinds so the user gets `notion`, `sharepoint`,
+   * `github-discussions` on tab.
+   */
+  complete?(priorArgs: string[], partial: string): string[];
 }
 
 export interface CommandContext {
