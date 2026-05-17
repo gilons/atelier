@@ -163,16 +163,27 @@ async function askPrompt(
       // Use the raw-mode picker (arrow + Enter). In non-TTY mode it
       // falls back to PromptSession.pickOne — so the line-based test
       // flows still work, but humans get arrow-key navigation.
-      const picked = await interactivePickOne(
-        `  ${prompt.question}`,
-        choices.map((c) => ({
-          label: c.label,
-          value: c.value,
-          note: c.description,
-        })),
-        session
-      );
-      return picked;
+      //
+      // Suspend the session's readline.Interface while the picker
+      // runs: otherwise readline keeps its stdin handlers attached
+      // and steals keystrokes the picker is waiting for. (Without
+      // this the picker can submit empty immediately, before the
+      // user even sees it render.)
+      session.suspend();
+      try {
+        const picked = await interactivePickOne(
+          `  ${prompt.question}`,
+          choices.map((c) => ({
+            label: c.label,
+            value: c.value,
+            note: c.description,
+          })),
+          session
+        );
+        return picked;
+      } finally {
+        session.resume();
+      }
     }
     return prompt.secret
       ? await session.askSecret(`  ${prompt.question}`)

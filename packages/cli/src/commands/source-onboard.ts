@@ -65,6 +65,12 @@ function parseAnswerFlags(raw: unknown): ParsedAnswers {
  * chosen `value` strings. `null` means the user cancelled (Esc /
  * Ctrl-C); `[]` means they confirmed without selecting anything
  * (the caller falls back to manual entry).
+ *
+ * We suspend the session's readline.Interface for the picker's
+ * lifetime — otherwise readline's stdin handlers eat keystrokes
+ * the raw-mode picker is waiting for. (Symptom of the bug: picker
+ * submits empty immediately because readline forwarded a stale
+ * newline before the picker ever rendered.)
  */
 async function runChoicePicker(
   step: OnboardingStep,
@@ -72,21 +78,25 @@ async function runChoicePicker(
   session: PromptSession
 ): Promise<string[] | null> {
   if (step.help) ui.print(`  ${ui.dim(step.help)}`);
-  if (step.multiSelect) {
-    const picked = await interactivePickMany(
+  session.suspend();
+  try {
+    if (step.multiSelect) {
+      return await interactivePickMany(
+        `  ${step.prompt}`,
+        choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
+        session
+      );
+    }
+    const one = await interactivePickOne(
       `  ${step.prompt}`,
       choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
       session
     );
-    return picked;
+    if (one === null) return null;
+    return [one];
+  } finally {
+    session.resume();
   }
-  const one = await interactivePickOne(
-    `  ${step.prompt}`,
-    choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
-    session
-  );
-  if (one === null) return null;
-  return [one];
 }
 
 /** Ask a single onboarding step. Honors `secret`, `default`, `validate`. */
@@ -225,16 +235,25 @@ async function runOnboardingInner(
     ui.blank();
   } else if (interactive) {
     // Raw-mode picker on a TTY, line-based fallback otherwise.
-    const picked = await interactivePickOne(
-      "How would you like to connect?",
-      detected.map((t) => ({
-        label: t.label,
-        value: t,
-        note: t.note,
-        recommended: t.recommended,
-      })),
-      session
-    );
+    // session.suspend() pauses readline so the picker has stdin to
+    // itself; otherwise readline keeps eating keystrokes the
+    // picker is waiting for.
+    session!.suspend();
+    let picked: TransportOption | null;
+    try {
+      picked = await interactivePickOne(
+        "How would you like to connect?",
+        detected.map((t) => ({
+          label: t.label,
+          value: t,
+          note: t.note,
+          recommended: t.recommended,
+        })),
+        session
+      );
+    } finally {
+      session!.resume();
+    }
     if (!picked) {
       ui.print(`  ${ui.dim("Aborted.")}`);
       return 0;
@@ -298,11 +317,6 @@ async function runOnboardingInner(
     // multi- or single-select picker. On empty/failed discovery we
     // fall through to the regular text prompt so the user can still
     // type the value manually.
-    if (process.env.ATELIER_DEBUG) {
-      ui.print(
-        `  ${ui.dim(`[debug] step=${step.key} discoverChoices=${typeof step.discoverChoices} multiSelect=${step.multiSelect ?? false} interactive=${interactive}`)}`
-      );
-    }
     if (step.discoverChoices) {
       const ctx = await getCtx();
       let choices = [] as Awaited<ReturnType<NonNullable<OnboardingStep["discoverChoices"]>>>;
@@ -323,6 +337,19 @@ async function runOnboardingInner(
           return 0;
         }
         if (picked.length === 0) {
+          // Optional step: if the adapter declared a default (even
+          // empty string), respect it instead of forcing manual
+          // entry. The discussionIds drill-down uses this so an
+          // empty selection means "sync everything".
+          if (step.default !== undefined) {
+            answers.values[step.key] = step.default;
+            ui.print(
+              step.default.length > 0
+                ? `  ${ui.dim("·")} ${step.prompt}: ${ui.bold(step.default)} ${ui.dim("(default)")}`
+                : `  ${ui.dim("(no selection — using default)")}`
+            );
+            continue;
+          }
           ui.print(
             `  ${ui.dim("(nothing selected — falling back to manual entry)")}`
           );

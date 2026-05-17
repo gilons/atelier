@@ -72,6 +72,27 @@ export class PromptSession {
     this.rl.close();
   }
 
+  /**
+   * Pause the underlying readline.Interface so raw-mode consumers
+   * (the multi/single-select pickers) can take exclusive control of
+   * stdin without contending with readline's keypress handlers.
+   *
+   * Without this, readline keeps its `data` listeners attached and
+   * eats bytes the picker expects to see — symptoms include the
+   * picker submitting an empty selection immediately because
+   * readline forwarded a stale newline. Pair every `suspend()` with
+   * a `resume()` in a `finally` block.
+   */
+  suspend(): void {
+    this.rl.pause();
+  }
+
+  /** Counterpart to {@link suspend}. Safe to call repeatedly. */
+  resume(): void {
+    if (this.closed) return;
+    this.rl.resume();
+  }
+
   private nextLine(): Promise<string> {
     if (this.buffered.length > 0) {
       return Promise.resolve(this.buffered.shift()!);

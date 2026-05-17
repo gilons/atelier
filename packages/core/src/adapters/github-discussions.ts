@@ -52,6 +52,14 @@ export interface GitHubDiscussionsScope {
   maxPerRepo?: number;
   /** Include closed discussions. Defaults to true. */
   includeClosed?: boolean;
+  /**
+   * Optional whitelist of specific discussion docIds (in the
+   * `owner/name#number` form). When present, sync ignores
+   * everything else even if it would normally match the scope.
+   * Empty/undefined means "every discussion that matches the
+   * other scope rules".
+   */
+  discussionIds?: string[];
 }
 
 interface DiscussionGraphQL {
@@ -125,12 +133,17 @@ export class GitHubDiscussionsAdapter implements SourceAdapter {
   }
 
   async listDocs(): Promise<RemoteDocMetadata[]> {
+    const whitelist = this.opts.scope.discussionIds
+      ? new Set(this.opts.scope.discussionIds)
+      : null;
     const out: RemoteDocMetadata[] = [];
     for (const repo of this.opts.scope.repos) {
       const items = await this.listForRepo(repo);
       for (const d of items) {
+        const docId = encodeDiscussionDocId(repo, d.number);
+        if (whitelist && !whitelist.has(docId)) continue;
         out.push({
-          docId: encodeDiscussionDocId(repo, d.number),
+          docId,
           title: d.title,
           url: d.url,
           lastModified: d.updatedAt,
@@ -346,6 +359,23 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
         discoverChoices: async (ctx) => discoverDiscussionRepos(ctx.orgs),
       },
       {
+        key: "discussionIds",
+        prompt: "Which discussions should I sync? (leave empty for ALL in the chosen repos)",
+        help:
+          "Optional. Pick specific threads you care about, or skip this step (Enter without selecting anything) to sync every discussion in the repos you chose.",
+        // `default: ""` signals to the CLI's empty-picker fallback
+        // that no selection is fine — it stores the empty string
+        // and moves on. (toRegistryEntry treats empty as "sync all".)
+        default: "",
+        multiSelect: true,
+        // Skip the drill-down when the user typed repos manually
+        // and we have no easy way to enumerate the discussions, OR
+        // when no repos were chosen at all.
+        applies: (answers) => parseRepoList(answers.values.repos).length > 0,
+        discoverChoices: async (_ctx, answers) =>
+          listDiscussionsForRepos(parseRepoList(answers.values.repos)),
+      },
+      {
         key: "categories",
         prompt:
           "Optional comma-separated category names to restrict to (leave blank for all — e.g. Ideas, Q&A)",
@@ -389,9 +419,15 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
     const repos = parseRepoList(answers.values.repos);
     const categories = parseCsv(answers.values.categories);
     const maxPerRepo = parseInt(answers.values.maxPerRepo || "200", 10);
+    const discussionIds = parseRepoList(answers.values.discussionIds);
     const scope: Record<string, unknown> = { repos };
     if (categories.length > 0) scope.categories = categories;
     if (Number.isFinite(maxPerRepo) && maxPerRepo > 0) scope.maxPerRepo = maxPerRepo;
+    // Only persist the docId whitelist when the user actually
+    // narrowed it down. An empty/skipped step means "sync all" —
+    // we leave it off so future discussions added in the repo
+    // are picked up automatically.
+    if (discussionIds.length > 0) scope.discussionIds = discussionIds;
     return {
       source: {
         id,
@@ -531,6 +567,101 @@ export async function discoverDiscussionRepos(
       }
     } catch {
       // Per-org failure shouldn't sink the others.
+      continue;
+    }
+  }
+  return out;
+}
+
+// ============================================================
+// Per-repo discussion listing (used by the drill-down step)
+// ============================================================
+
+const REPO_DISCUSSIONS_QUERY = `
+  query($owner: String!, $name: String!, $first: Int!) {
+    repository(owner: $owner, name: $name) {
+      discussions(first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        nodes {
+          number
+          title
+          updatedAt
+          category { name }
+        }
+      }
+    }
+  }
+`;
+
+interface RepoDiscussionsPage {
+  repository: {
+    discussions: {
+      nodes: Array<{
+        number: number;
+        title: string;
+        updatedAt: string;
+        category: { name: string };
+      }>;
+    } | null;
+  } | null;
+}
+
+/**
+ * Given a list of `owner/name` repos, fetch the most-recent
+ * discussions in each and return them as a flat picker list keyed
+ * by docId (`owner/name#number`). The wizard uses this for the
+ * "drill into specific discussions" step that follows the repo
+ * multi-select.
+ *
+ * `perRepoLimit` defaults to 50 — large enough to cover most
+ * active repos but bounded so we don't make the picker unusable.
+ * Anyone with more discussions than that probably wants the
+ * default ("sync everything") path anyway.
+ */
+export async function listDiscussionsForRepos(
+  repos: string[],
+  opts: { spawnImpl?: SpawnLike; perRepoLimit?: number } = {}
+): Promise<OnboardingChoice[]> {
+  if (repos.length === 0) return [];
+  const runner = new CliRunner({ command: "gh", spawnImpl: opts.spawnImpl });
+  const probe = await runner.checkAvailable();
+  if (!probe.available) return [];
+  try {
+    await runner.run(["auth", "status"]);
+  } catch {
+    return [];
+  }
+  const perRepoLimit = opts.perRepoLimit ?? 50;
+  const out: OnboardingChoice[] = [];
+  for (const repo of repos) {
+    const [owner, name] = repo.split("/");
+    if (!owner || !name) continue;
+    try {
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${REPO_DISCUSSIONS_QUERY}`,
+        "-f",
+        `owner=${owner}`,
+        "-f",
+        `name=${name}`,
+        "-F",
+        `first=${perRepoLimit}`,
+      ];
+      const result = await runner.json<{ data?: RepoDiscussionsPage; errors?: Array<{ message: string }> }>(args);
+      if (result.errors && result.errors.length > 0) continue;
+      const repository = result.data?.repository;
+      if (!repository || !repository.discussions) continue;
+      for (const d of repository.discussions.nodes) {
+        const docId = `${repo}#${d.number}`;
+        const updated = d.updatedAt.slice(0, 10); // YYYY-MM-DD
+        out.push({
+          label: `${repo}#${d.number}  ${d.title}`,
+          value: docId,
+          note: `${d.category.name} · updated ${updated}`,
+        });
+      }
+    } catch {
       continue;
     }
   }
