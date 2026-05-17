@@ -5,6 +5,7 @@ import {
   PLANNING_DIR,
 } from "@atelier/core";
 import type { Command } from "../command.js";
+import { hint } from "../command.js";
 import { ui } from "../ui.js";
 
 export const initCommand: Command = {
@@ -35,7 +36,8 @@ export const initCommand: Command = {
       validate: /\S/,
     },
   ],
-  async run({ values, cwd }) {
+  async run(ctx) {
+    const { values, cwd } = ctx;
     const name = (values.name as string | undefined) ?? path.basename(cwd);
     const description = values.description as string | undefined;
     const force = (values.force as boolean | undefined) ?? false;
@@ -56,8 +58,16 @@ export const initCommand: Command = {
       }
       ui.blank();
       ui.print("  Next:");
-      ui.print(`    ${ui.gray("→")} register sibling repos:  ${ui.cyan("atelier repo add ../<repo>")}`);
-      ui.print(`    ${ui.gray("→")} add a doc source:        ${ui.cyan("atelier source add notion")}`);
+      // In REPL mode show slash commands; in shell mode show full
+      // `atelier ...` invocations. The wizard makes the bare verb
+      // sufficient — `/repo` opens the interactive registration
+      // flow, `/source onboard` walks through source setup.
+      ui.print(
+        `    ${ui.gray("→")} register repos:     ${ui.cyan(hint(ctx, "repo"))}`
+      );
+      ui.print(
+        `    ${ui.gray("→")} onboard a source:   ${ui.cyan(hint(ctx, "source onboard"))}`
+      );
       ui.blank();
       return 0;
     } catch (err) {

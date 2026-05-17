@@ -120,7 +120,7 @@ const listCmd: Command = {
     source: { type: "string", short: "s" },
     classification: { type: "string", short: "c" },
   },
-  async run({ values, cwd }) {
+  async run({ values, cwd, mode }) {
     const sourceFilter = values.source as string | undefined;
     const classFilter = values.classification as string | undefined;
     if (classFilter !== undefined && !validClassification(classFilter)) {
@@ -150,9 +150,10 @@ const listCmd: Command = {
       if (sourceFilter || classFilter) {
         ui.info("No docs match the filter.");
       } else {
+        const syncHint = mode === "repl" ? "/sync" : "atelier sync";
         ui.info("No docs indexed yet.");
         ui.print(
-          `  ${ui.dim('Use `atelier doc add --source <id> --doc-id <id> --title "..."` to add one.')}`
+          `  ${ui.dim(`Run \`${syncHint}\` to pull from registered sources.`)}`
         );
       }
       return 0;

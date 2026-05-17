@@ -119,7 +119,7 @@ const addCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List registered documentation sources.",
-  async run({ cwd }) {
+  async run({ cwd, mode }) {
     let workspaceRoot: string;
     try {
       workspaceRoot = await requireWorkspaceRoot(cwd);
@@ -132,9 +132,9 @@ const listCmd: Command = {
     }
     const sources = await listSources(workspaceRoot);
     if (sources.length === 0) {
+      const onboardHint = mode === "repl" ? "/source onboard" : "atelier source onboard";
       ui.info("No documentation sources registered yet.");
-      ui.print(`  ${ui.dim("Use `atelier source add <kind> --name \"...\"` to register one.")}`);
-      ui.print(`  ${ui.dim("Valid kinds: " + SOURCE_KINDS_LIST.join(", "))}`);
+      ui.print(`  ${ui.dim(`Run \`${onboardHint}\` to walk through setup.`)}`);
       return 0;
     }
     const idWidth = Math.max("ID".length, ...sources.map((s) => s.id.length));

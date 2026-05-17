@@ -181,7 +181,7 @@ const listCmd: Command = {
   options: {
     status: { type: "string", short: "s" },
   },
-  async run({ values, cwd }) {
+  async run({ values, cwd, mode }) {
     const filter = values.status as FeatureStatus | undefined;
     if (filter !== undefined && !FEATURE_STATUSES.includes(filter)) {
       ui.error(`Invalid --status "${filter}". Valid: ${FEATURE_STATUSES.join(", ")}.`);
@@ -201,8 +201,9 @@ const listCmd: Command = {
 
     const { features, errors } = await listFeatures(workspaceRoot);
     if (features.length === 0 && errors.length === 0) {
+      const addHint = mode === "repl" ? "/feature add" : "atelier feature add";
       ui.info("No features yet.");
-      ui.print(`  ${ui.dim('Use `atelier feature add "<name>"` to create one.')}`);
+      ui.print(`  ${ui.dim(`Use \`${addHint}\` to create one.`)}`);
       return 0;
     }
 

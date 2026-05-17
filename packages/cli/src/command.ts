@@ -113,22 +113,57 @@ export interface Command {
   prompts?: CommandPrompt[];
 }
 
+/**
+ * Where the user invoked this command from. Lets a command tailor
+ * its "Next steps" hints to the right syntax — `atelier <verb>`
+ * for shell users, `/<verb>` for REPL users — instead of always
+ * printing the shell form regardless of context.
+ */
+export type InvocationMode = "cli" | "repl";
+
 export interface CommandContext {
   values: Record<string, unknown>;
   positionals: string[];
   cwd: string;
+  /**
+   * Where this invocation came from. Defaults to "cli" when not
+   * supplied (back-compat for direct test calls).
+   */
+  mode: InvocationMode;
+}
+
+/**
+ * Render a command-line hint in the right form for the current
+ * invocation. Helper used by every command that prints "Next:" or
+ * "Usage:" hints so the syntax matches the context the user is in.
+ *
+ * Example:
+ *   hint(ctx, "repo add ../api")
+ *     → "atelier repo add ../api"   (CLI mode)
+ *     → "/repo add ../api"          (REPL mode)
+ */
+export function hint(ctx: CommandContext, commandTail: string): string {
+  return ctx.mode === "repl" ? `/${commandTail}` : `atelier ${commandTail}`;
 }
 
 export interface CommandRegistry {
   commands: Command[];
 }
 
-/** Dispatch argv against the top-level registry. Returns exit code. */
+/**
+ * Dispatch argv against the top-level registry. Returns exit code.
+ *
+ * `mode` defaults to "cli" so the shell entry doesn't need to pass
+ * anything. The REPL passes "repl" so commands can render hints in
+ * slash-command form (`/repo`) rather than shell form (`atelier
+ * repo`).
+ */
 export async function dispatch(
   registry: CommandRegistry,
   argv: string[],
   cwd: string,
-  versionString: string
+  versionString: string,
+  mode: InvocationMode = "cli"
 ): Promise<number> {
   const [first, ...rest] = argv;
 
@@ -148,7 +183,7 @@ export async function dispatch(
     return 1;
   }
 
-  return dispatchCommand(cmd, rest, cwd, [first]);
+  return dispatchCommand(cmd, rest, cwd, [first], mode);
 }
 
 /** Recursively walk into subcommands until reaching a leaf, then run it. */
@@ -156,7 +191,8 @@ async function dispatchCommand(
   cmd: Command,
   args: string[],
   cwd: string,
-  trail: string[]
+  trail: string[],
+  mode: InvocationMode
 ): Promise<number> {
   // Help short-circuits — at any level.
   if (args[0] === "--help" || args[0] === "-h") {
@@ -168,7 +204,7 @@ async function dispatchCommand(
   if (cmd.subcommands && cmd.subcommands.length > 0) {
     const sub = args[0] ? cmd.subcommands.find((s) => s.name === args[0]) : undefined;
     if (sub) {
-      return dispatchCommand(sub, args.slice(1), cwd, [...trail, sub.name]);
+      return dispatchCommand(sub, args.slice(1), cwd, [...trail, sub.name], mode);
     }
     if (args[0]) {
       process.stderr.write(`Unknown subcommand: ${args[0]}\n`);
@@ -205,6 +241,7 @@ async function dispatchCommand(
       values: parsed.values,
       positionals: parsed.positionals,
       cwd,
+      mode,
     });
     return typeof code === "number" ? code : 0;
   } catch (err) {

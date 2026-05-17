@@ -109,7 +109,7 @@ const listCmd: Command = {
     "Shows every entry in .planning/repos.yaml. Repos whose local\n" +
     "directories don't currently exist are flagged — useful after\n" +
     "cloning the planning repo onto a new machine.",
-  async run({ cwd }) {
+  async run({ cwd, mode }) {
     let workspaceRoot: string;
     try {
       workspaceRoot = await requireWorkspaceRoot(cwd);
@@ -124,7 +124,7 @@ const listCmd: Command = {
 
     if (repos.length === 0) {
       ui.info("No repositories registered yet.");
-      ui.print(`  ${ui.dim("Use `atelier repo add <path>` to register one.")}`);
+      ui.print(`  ${ui.dim(`Use \`${mode === "repl" ? "/" : "atelier "}repo add <path>\` to register one.`)}`);
       return 0;
     }
 

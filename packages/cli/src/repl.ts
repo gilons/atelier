@@ -434,13 +434,14 @@ async function handleLine(line: string, ctx: ReplContext): Promise<void> {
       ui.print(`  ${ui.dim("Aborted.")}`);
       return;
     }
-    await dispatch(ctx.registry, argv, ctx.cwd, ATELIER_VERSION);
+    await dispatch(ctx.registry, argv, ctx.cwd, ATELIER_VERSION, "repl");
     return;
   }
 
   // Bridge to the underlying CLI dispatcher. The same code path that
-  // powers `atelier <verb> …` from the shell.
-  await dispatch(ctx.registry, [cmd, ...rest], ctx.cwd, ATELIER_VERSION);
+  // powers `atelier <verb> …` from the shell. Pass mode="repl" so
+  // commands can render hints in slash-command form.
+  await dispatch(ctx.registry, [cmd, ...rest], ctx.cwd, ATELIER_VERSION, "repl");
 }
 
 function tokenize(s: string): string[] {

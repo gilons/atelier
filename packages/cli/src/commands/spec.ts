@@ -191,7 +191,7 @@ const listCmd: Command = {
     status: { type: "string", short: "s" },
     type: { type: "string" },
   },
-  async run({ values, cwd }) {
+  async run({ values, cwd, mode }) {
     const status = values.status as string | undefined;
     if (status !== undefined && !validStatus(status)) {
       ui.error(`Invalid --status "${status}".`);
@@ -222,9 +222,8 @@ const listCmd: Command = {
     if (filtered.length === 0 && errors.length === 0) {
       ui.info(specs.length === 0 ? "No specs yet." : "No specs match the filter.");
       if (specs.length === 0) {
-        ui.print(
-          `  ${ui.dim('Use `atelier spec new "Describe the change" --type <type>`.')}`
-        );
+        const newHint = mode === "repl" ? "/spec new" : "atelier spec new";
+        ui.print(`  ${ui.dim(`Use \`${newHint}\` to scaffold the first one.`)}`);
       }
       return 0;
     }

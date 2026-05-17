@@ -89,6 +89,8 @@ interface OnboardOptions {
    * scripted answers — `readline.question()` works for both.
    */
   nonInteractive: boolean;
+  /** REPL vs. shell — controls the form of next-steps hints. */
+  mode: "cli" | "repl";
 }
 
 async function runOnboarding(
@@ -241,7 +243,7 @@ async function runOnboardingInner(
 
   if (opts.dryRun) {
     ui.print(`  ${ui.dim("--dry-run: skipping writes.")}`);
-    printNextSteps(entry, true);
+    printNextSteps(entry, true, opts.mode);
     return 0;
   }
 
@@ -272,7 +274,7 @@ async function runOnboardingInner(
 
   ui.success(`Source registered.`);
   ui.blank();
-  printNextSteps(entry, false);
+  printNextSteps(entry, false, opts.mode);
   return 0;
 }
 
@@ -318,8 +320,13 @@ function printSummary(entry: OnboardingResult): void {
   ui.blank();
 }
 
-function printNextSteps(entry: OnboardingResult, isDryRun: boolean): void {
+function printNextSteps(
+  entry: OnboardingResult,
+  isDryRun: boolean,
+  mode: "cli" | "repl"
+): void {
   const sourceId = entry.source.id ?? "<source-id>";
+  const prefix = mode === "repl" ? "/" : "atelier ";
   ui.heading("Next steps");
   ui.blank();
   let stepNum = 1;
@@ -338,12 +345,12 @@ function printNextSteps(entry: OnboardingResult, isDryRun: boolean): void {
   if (!isDryRun) {
     ui.print(`  ${stepNum++}. Try a sync:`);
     ui.blank();
-    ui.print(`       ${ui.cyan(`atelier sync --source ${sourceId} --dry-run`)}`);
-    ui.print(`       ${ui.cyan(`atelier sync --source ${sourceId}`)}`);
+    ui.print(`       ${ui.cyan(`${prefix}sync --source ${sourceId} --dry-run`)}`);
+    ui.print(`       ${ui.cyan(`${prefix}sync --source ${sourceId}`)}`);
     ui.blank();
     ui.print(`  ${stepNum++}. Inspect what landed:`);
     ui.blank();
-    ui.print(`       ${ui.cyan(`atelier doc list --source ${sourceId}`)}`);
+    ui.print(`       ${ui.cyan(`${prefix}doc list --source ${sourceId}`)}`);
     ui.blank();
   }
 }
@@ -414,7 +421,7 @@ export const sourceOnboardCommand: Command = {
         })),
     },
   ],
-  async run({ positionals, values, cwd }) {
+  async run({ positionals, values, cwd, mode }) {
     if (values["list-kinds"] === true) {
       ui.heading("Supported source kinds");
       ui.blank();
@@ -474,6 +481,7 @@ export const sourceOnboardCommand: Command = {
       skipVerify: values["skip-verify"] === true,
       dryRun: values["dry-run"] === true,
       nonInteractive: values["non-interactive"] === true,
+      mode,
     });
   },
 };
