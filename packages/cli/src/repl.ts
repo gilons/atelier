@@ -20,6 +20,7 @@ import {
 import { ui } from "./ui.js";
 import { PromptSession } from "./prompt.js";
 import { dispatch, type CommandRegistry } from "./command.js";
+import { renderBanner } from "./banner.js";
 
 /**
  * Atelier REPL — `atelier` with no args drops the user into a
@@ -108,8 +109,7 @@ function isExitCommand(line: string): boolean {
 // ============================================================
 
 async function renderWelcome(ctx: ReplContext): Promise<void> {
-  ui.heading(`Atelier ${ui.dim(`v${ATELIER_VERSION}`)} — a planning companion`);
-  ui.print("");
+  renderBanner(ATELIER_VERSION, "a planning companion for the spec-driven era");
 
   if (ctx.workspaceRoot) {
     await renderWorkspaceStatus(ctx);

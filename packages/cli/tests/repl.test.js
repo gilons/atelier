@@ -47,7 +47,10 @@ test("atelier --repl shows the REPL banner with workspace context", async () => 
   try {
     const result = runRepl("/quit\n", ws);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Atelier v\d/);
+    // ASCII logo: pick a unique fragment of the figlet "A" + tagline.
+    assert.match(result.stdout, /\/_\/   \\_\\/);
+    assert.match(result.stdout, /planning companion/);
+    assert.match(result.stdout, /v\d+\.\d+\.\d+/);
     assert.match(result.stdout, /Workspace: My Workspace/);
     assert.match(result.stdout, /Inventory: 0 repo/);
   } finally {
