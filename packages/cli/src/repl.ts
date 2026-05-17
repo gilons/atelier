@@ -25,6 +25,7 @@ import { renderBanner } from "./banner.js";
 import { buildReplCompleter } from "./repl-completer.js";
 import { InputReader } from "./input-reader.js";
 import { resolveLeaf, runCommandPrompts } from "./wizard.js";
+import { pickMany as interactivePickMany } from "./picker.js";
 
 /**
  * Atelier REPL — `atelier` with no args drops the user into a
@@ -649,15 +650,14 @@ async function interactiveRepoFlow(ctx: ReplContext): Promise<void> {
   if (interesting.length === 1) {
     chosenOrgs = interesting;
   } else {
-    const picked = await withSession(ctx.fallbackSession, (session) =>
-      session.pickMany(
-        "Which orgs are relevant to this workspace?",
-        interesting.map((g) => ({
-          label: g.org,
-          value: g,
-          note: orgNote(g),
-        }))
-      )
+    const picked = await interactivePickMany(
+      "Which orgs are relevant to this workspace?",
+      interesting.map((g) => ({
+        label: g.org,
+        value: g,
+        note: orgNote(g),
+      })),
+      ctx.fallbackSession
     );
     if (!picked || picked.length === 0) {
       ui.print(`  ${ui.dim("Nothing selected. Skipping.")}`);
@@ -755,18 +755,14 @@ async function registerClonedRepos(
     );
     if (ok) toRegister = group.cloned;
   } else {
-    ui.print(
-      `  ${ui.dim(`Pick which of the ${group.cloned.length} locally-cloned repos to register:`)}`
-    );
-    const picked = await withSession(ctx.fallbackSession, (session) =>
-      session.pickMany(
-        `Locally cloned in ${group.org}`,
-        group.cloned.map((c) => ({
-          label: c.label,
-          value: c,
-          note: c.note,
-        }))
-      )
+    const picked = await interactivePickMany(
+      `Locally cloned in ${group.org}`,
+      group.cloned.map((c) => ({
+        label: c.label,
+        value: c,
+        note: c.note,
+      })),
+      ctx.fallbackSession
     );
     if (picked) toRegister = picked;
   }
@@ -795,19 +791,16 @@ async function cloneAndRegisterRemoteRepos(
   group: OrgGroup
 ): Promise<{ added: number; failed: number; cloned: number }> {
   // For long lists, the multi-select with filter is the right tool —
-  // 56 gilons repos shouldn't all be in the user's face.
-  ui.print(
-    `  ${ui.dim(`Pick which of the ${group.remoteOnly.length} GitHub-only ${group.org} repos to clone & register:`)}`
-  );
-  const picked = await withSession(ctx.fallbackSession, (session) =>
-    session.pickMany(
-      `${group.org} on GitHub`,
-      group.remoteOnly.map((c) => ({
-        label: c.label,
-        value: c,
-        note: c.note,
-      }))
-    )
+  // 56 gilons repos shouldn't all be in the user's face. The picker's
+  // `/` filter mode is the natural way to narrow it down.
+  const picked = await interactivePickMany(
+    `${group.org} on GitHub — pick repos to clone & register`,
+    group.remoteOnly.map((c) => ({
+      label: c.label,
+      value: c,
+      note: c.note,
+    })),
+    ctx.fallbackSession
   );
   if (!picked || picked.length === 0) return { added: 0, failed: 0, cloned: 0 };
 
