@@ -138,16 +138,19 @@ export class InputReader {
         return this.refresh();
 
       case "enter": {
-        // If a suggestion is highlighted, accept it first.
-        if (this.highlight >= 0 && this.highlight < this.suggestions.length) {
+        // When the menu is visible, Enter "picks" the highlighted
+        // row (auto-highlighted to index 0 in refresh()) AND submits
+        // in one step. This matches the user's mental model: "I see
+        // an option, Enter picks it" — anything else either creates
+        // an orphan prompt line (submit literal `/`) or a confusing
+        // two-keystroke flow (accept, then submit).
+        if (this.suggestions.length > 0) {
+          const idx = this.highlight < 0 ? 0 : this.highlight;
           this.state = acceptSuggestion(
             this.state,
             this.span,
-            this.suggestions[this.highlight].value
+            this.suggestions[idx].value
           );
-          this.highlight = -1;
-          this.refresh();
-          return;
         }
         this.clearRender();
         // Echo the final line so the scrollback shows what was run.
@@ -251,13 +254,23 @@ export class InputReader {
 
   /**
    * Re-run the completer, then clear and redraw the prompt + menu.
+   *
+   * Auto-highlights the first suggestion whenever the menu opens or
+   * its contents change. This makes the "Enter picks what I see"
+   * UX consistent — the user always has a clear target for Enter
+   * without having to arrow first, and can still arrow up/down to
+   * change which row is the target.
    */
   private refresh(opts: { skipCompleter?: boolean } = {}): void {
     if (!opts.skipCompleter) {
       const result = this.completer(this.state.buffer, this.state.cursor);
       this.span = result.span;
       this.suggestions = result.items;
-      if (this.highlight >= this.suggestions.length) this.highlight = -1;
+      if (this.suggestions.length === 0) {
+        this.highlight = -1;
+      } else if (this.highlight < 0 || this.highlight >= this.suggestions.length) {
+        this.highlight = 0;
+      }
     }
     this.clearRender();
     this.render();
@@ -343,7 +356,8 @@ export class InputReader {
       //    handle that; the inline help is below the 60-col floor
       //    we already use for the welcome banner.
       this.output.write(
-        "\n  " + dim("↑↓ navigate · ⇥/→ accept · ↵ submit · esc dismiss")
+        "\n  " +
+          dim("↑↓ navigate · ⇥/→ accept (keep typing) · ↵ pick & run · esc dismiss")
       );
 
       // Walk the cursor back up to the prompt line. We wrote exactly
