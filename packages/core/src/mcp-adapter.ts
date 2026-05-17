@@ -549,12 +549,15 @@ function unwrapToolResult(name: string, result: ToolCallResult): unknown {
       (c) => c.type === "text" && typeof c.text === "string"
     );
     if (textBlock?.text !== undefined) {
+      // Try JSON first (the common case — tools that wrap structured
+      // payloads in a single text block). When the body is plain
+      // text (Markdown / CSV / source code returned by a "read file"
+      // tool), JSON.parse will throw — fall back to the raw string
+      // so the downstream mapping can pick it up via `body: "$"`.
       try {
         return JSON.parse(textBlock.text);
-      } catch (err) {
-        throw new Error(
-          `MCP tool "${name}" returned a text block that isn't valid JSON: ${(err as Error).message}`
-        );
+      } catch {
+        return textBlock.text;
       }
     }
   }
