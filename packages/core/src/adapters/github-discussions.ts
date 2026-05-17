@@ -366,7 +366,10 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
         // the rest of the pipeline (verify, toRegistryEntry) stays
         // unchanged.
         validate: /^[^,]+\/[^,]+(?:\s*,\s*[^,]+\/[^,]+)*$/,
-        discoverChoices: async (ctx) => discoverDiscussionRepos(ctx.orgs),
+        discoverChoices: async (ctx) =>
+          discoverDiscussionRepos(ctx.orgs, {
+            excludeRepos: collectLinkedRepos(ctx.existingSources),
+          }),
       },
       {
         key: "discussionIds",
@@ -382,8 +385,10 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
         // and we have no easy way to enumerate the discussions, OR
         // when no repos were chosen at all.
         applies: (answers) => parseRepoList(answers.values.repos).length > 0,
-        discoverChoices: async (_ctx, answers) =>
-          listDiscussionsForRepos(parseRepoList(answers.values.repos)),
+        discoverChoices: async (ctx, answers) =>
+          listDiscussionsForRepos(parseRepoList(answers.values.repos), {
+            excludeDocIds: collectLinkedDiscussionIds(ctx.existingSources),
+          }),
       },
       {
         key: "categories",
@@ -459,6 +464,63 @@ function parseRepoList(raw: string | undefined): string[] {
 }
 
 // ============================================================
+// Exclusion helpers — derive "already-linked" sets from the
+// workspace's existing sources so the onboarding picker doesn't
+// re-offer items the user has already onboarded somewhere.
+// ============================================================
+
+/**
+ * Repos already covered by another github-discussions source.
+ * Pulled from every existing source of this kind's `scope.repos`
+ * — regardless of whether the source also pins specific
+ * discussionIds. A pinned subset still means "this repo is being
+ * watched"; offering it again in the repo picker would create
+ * confusing parallel sources for the same repo.
+ *
+ * If the user genuinely wants two sources covering the same repo
+ * (different categories, different transports), they can type
+ * the repo manually or pass --answer repos=… to bypass the
+ * picker entirely.
+ */
+function collectLinkedRepos(existingSources: Source[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of existingSources) {
+    if (s.kind !== "github-discussions") continue;
+    const scope = (s.scope ?? {}) as Partial<GitHubDiscussionsScope>;
+    for (const repo of scope.repos ?? []) {
+      out.add(repo);
+    }
+  }
+  return out;
+}
+
+/**
+ * Discussion docIds already linked by another source. Two paths:
+ *
+ *   1. An explicit pin: `scope.discussionIds` lists the docId.
+ *   2. A blanket repo subscription: `scope.repos` contains the
+ *      repo and `scope.discussionIds` is empty/undefined (means
+ *      "sync every discussion in that repo"). For this case we
+ *      can't enumerate the docIds upfront — the listing step will
+ *      surface them at scan time. We return the explicit set
+ *      only; the picker also filters by repo presence below.
+ *
+ * We track both so the drill-down picker hides what's already
+ * covered, by repo or by pin.
+ */
+function collectLinkedDiscussionIds(existingSources: Source[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of existingSources) {
+    if (s.kind !== "github-discussions") continue;
+    const scope = (s.scope ?? {}) as Partial<GitHubDiscussionsScope>;
+    for (const docId of scope.discussionIds ?? []) {
+      out.add(docId);
+    }
+  }
+  return out;
+}
+
+// ============================================================
 // Workspace-aware repo discovery (used by the onboarding wizard)
 // ============================================================
 
@@ -517,10 +579,14 @@ const OWNER_REPOS_QUERY = `
  * a convenience for the wizard, not a hard requirement. If gh blows
  * up we want the user to fall through to manual entry, not see a
  * crash mid-onboarding.
+ *
+ * `excludeRepos` lets the wizard skip `owner/name` entries the user
+ * already covered in another source — keeps the picker from
+ * offering duplicates of work that's already onboarded.
  */
 export async function discoverDiscussionRepos(
   orgs: string[],
-  opts: { spawnImpl?: SpawnLike; perOrgLimit?: number } = {}
+  opts: { spawnImpl?: SpawnLike; perOrgLimit?: number; excludeRepos?: Set<string> } = {}
 ): Promise<OnboardingChoice[]> {
   if (orgs.length === 0) return [];
   const runner = new CliRunner({ command: "gh", spawnImpl: opts.spawnImpl });
@@ -534,6 +600,7 @@ export async function discoverDiscussionRepos(
   }
 
   const perOrgLimit = opts.perOrgLimit ?? 100;
+  const excludeRepos = opts.excludeRepos ?? new Set<string>();
   const seen = new Set<string>();
   const out: OnboardingChoice[] = [];
   // `repositoryOwner` resolves to either a User or an Organization
@@ -563,6 +630,7 @@ export async function discoverDiscussionRepos(
       for (const node of owner.repositories.nodes) {
         if (!node.hasDiscussionsEnabled) continue;
         if (seen.has(node.nameWithOwner)) continue;
+        if (excludeRepos.has(node.nameWithOwner)) continue;
         seen.add(node.nameWithOwner);
         const count = node.discussions.totalCount;
         const desc = node.description?.trim();
@@ -626,10 +694,15 @@ interface RepoDiscussionsPage {
  * active repos but bounded so we don't make the picker unusable.
  * Anyone with more discussions than that probably wants the
  * default ("sync everything") path anyway.
+ *
+ * `excludeDocIds` hides discussions already covered by another
+ * registered source (either pinned via scope.discussionIds, or
+ * fully covered by a scope.repos entry without an id filter).
+ * Keeps the picker focused on net-new threads.
  */
 export async function listDiscussionsForRepos(
   repos: string[],
-  opts: { spawnImpl?: SpawnLike; perRepoLimit?: number } = {}
+  opts: { spawnImpl?: SpawnLike; perRepoLimit?: number; excludeDocIds?: Set<string> } = {}
 ): Promise<OnboardingChoice[]> {
   if (repos.length === 0) return [];
   const runner = new CliRunner({ command: "gh", spawnImpl: opts.spawnImpl });
@@ -641,6 +714,7 @@ export async function listDiscussionsForRepos(
     return [];
   }
   const perRepoLimit = opts.perRepoLimit ?? 50;
+  const excludeDocIds = opts.excludeDocIds ?? new Set<string>();
   const out: OnboardingChoice[] = [];
   for (const repo of repos) {
     const [owner, name] = repo.split("/");
@@ -664,6 +738,7 @@ export async function listDiscussionsForRepos(
       if (!repository || !repository.discussions) continue;
       for (const d of repository.discussions.nodes) {
         const docId = `${repo}#${d.number}`;
+        if (excludeDocIds.has(docId)) continue;
         const updated = d.updatedAt.slice(0, 10); // YYYY-MM-DD
         out.push({
           label: `${repo}#${d.number}  ${d.title}`,

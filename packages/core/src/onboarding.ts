@@ -67,6 +67,20 @@ export interface OnboardingContext {
    * clones. Most-relevant-first. Empty when nothing was found.
    */
   orgs: string[];
+  /**
+   * Sources already registered in this workspace. Adapters use
+   * this to hide items that are already covered — e.g. a repo
+   * that's already in another github-discussions source's
+   * scope.repos, or a discussion that's already pinned via
+   * scope.discussionIds. Prevents the picker from offering
+   * duplicates of work the user has already done.
+   *
+   * Same-kind sources are the typical signal, but adapters can
+   * also consult other kinds (e.g. a Notion adapter inspecting
+   * SharePoint sources for the same root). Keeping it
+   * heterogeneous makes future cross-source rules cheap.
+   */
+  existingSources: Source[];
 }
 
 /** A single question shown to the user during onboarding. */

@@ -6,6 +6,7 @@ import {
   upsertMcpServer,
   githubOrgFromRemote,
   listRepos,
+  listSources,
   NotInsideWorkspaceError,
   SourceAlreadyRegisteredError,
   type OnboardingFlow,
@@ -160,7 +161,10 @@ async function buildOnboardingContext(
   workspaceRoot: string,
   cwd: string
 ): Promise<OnboardingContext> {
-  const { organization, repos } = await listRepos(workspaceRoot);
+  const [{ organization, repos }, existingSources] = await Promise.all([
+    listRepos(workspaceRoot),
+    listSources(workspaceRoot),
+  ]);
   const orgs: string[] = [];
   const seen = new Set<string>();
   // Workspace-registered org goes first — it's the strongest signal.
@@ -179,7 +183,7 @@ async function buildOnboardingContext(
       seen.add(org);
     }
   }
-  return { workspaceRoot, cwd, orgs };
+  return { workspaceRoot, cwd, orgs, existingSources };
 }
 
 async function runOnboarding(
