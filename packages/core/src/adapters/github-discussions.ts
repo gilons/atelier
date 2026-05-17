@@ -470,23 +470,25 @@ function parseRepoList(raw: string | undefined): string[] {
 // ============================================================
 
 /**
- * Repos already covered by another github-discussions source.
- * Pulled from every existing source of this kind's `scope.repos`
- * — regardless of whether the source also pins specific
- * discussionIds. A pinned subset still means "this repo is being
- * watched"; offering it again in the repo picker would create
- * confusing parallel sources for the same repo.
+ * Repos *fully* covered by another github-discussions source —
+ * those that subscribe to every discussion in the repo (no
+ * `scope.discussionIds` pin). Hiding these from the repo picker
+ * prevents the user from creating an exact-duplicate source.
  *
- * If the user genuinely wants two sources covering the same repo
- * (different categories, different transports), they can type
- * the repo manually or pass --answer repos=… to bypass the
- * picker entirely.
+ * Repos that are only *partially* covered (the existing source
+ * pinned specific discussion ids) are deliberately NOT excluded.
+ * The user may want to onboard additional threads from the same
+ * repo into a new source; the drill-down picker handles the
+ * per-discussion deduping via `collectLinkedDiscussionIds`.
  */
 function collectLinkedRepos(existingSources: Source[]): Set<string> {
   const out = new Set<string>();
   for (const s of existingSources) {
     if (s.kind !== "github-discussions") continue;
     const scope = (s.scope ?? {}) as Partial<GitHubDiscussionsScope>;
+    // Partial coverage → leave the repo in the picker so the
+    // user can pick more discussions from it.
+    if (scope.discussionIds && scope.discussionIds.length > 0) continue;
     for (const repo of scope.repos ?? []) {
       out.add(repo);
     }
