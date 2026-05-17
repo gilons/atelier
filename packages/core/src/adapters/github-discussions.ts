@@ -1,6 +1,12 @@
 import { CliRunner, type SpawnLike } from "../cli-transport.js";
 import { classifyDoc } from "../classify.js";
-import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
+import {
+  registerAdapter,
+  type OnboardingChoice,
+  type OnboardingFlow,
+  type OnboardingStep,
+  type TransportOption,
+} from "../onboarding.js";
 import type {
   AdapterAvailability,
   FetchedDoc,
@@ -327,8 +333,17 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
       { key: "name", prompt: "Display name", default: "GitHub Discussions" },
       {
         key: "repos",
-        prompt: 'Comma-separated repos in the form "owner/name" (e.g. acme/web,acme/api)',
+        prompt: "Which repos should I pull discussions from?",
+        help:
+          "Atelier scanned your workspace orgs for repos with Discussions enabled. " +
+          'Select one or more — or leave blank to type "owner/name" entries manually.',
+        multiSelect: true,
+        // The CLI shows a multi-select picker; the joined CSV must
+        // still match the same regex as a manually-typed answer so
+        // the rest of the pipeline (verify, toRegistryEntry) stays
+        // unchanged.
         validate: /^[^,]+\/[^,]+(?:\s*,\s*[^,]+\/[^,]+)*$/,
+        discoverChoices: async (ctx) => discoverDiscussionRepos(ctx.orgs),
       },
       {
         key: "categories",
@@ -395,6 +410,131 @@ function parseRepoList(raw: string | undefined): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+// ============================================================
+// Workspace-aware repo discovery (used by the onboarding wizard)
+// ============================================================
+
+/**
+ * GraphQL response shape for the per-owner repo listing we run
+ * below. We use `repositoryOwner` (matches both User and
+ * Organization) instead of the `search` API because GitHub's
+ * `has:discussions` search qualifier returns repos that *had*
+ * discussions even when they're now disabled — unreliable. The
+ * owner endpoint gives us authoritative `hasDiscussionsEnabled`.
+ */
+interface OwnerRepoNode {
+  nameWithOwner: string;
+  description: string | null;
+  hasDiscussionsEnabled: boolean;
+  discussions: { totalCount: number };
+}
+
+interface OwnerReposPage {
+  repositoryOwner: {
+    repositories: {
+      totalCount: number;
+      nodes: OwnerRepoNode[];
+    };
+  } | null;
+}
+
+const OWNER_REPOS_QUERY = `
+  query($owner: String!, $first: Int!) {
+    repositoryOwner(login: $owner) {
+      repositories(first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) {
+        totalCount
+        nodes {
+          nameWithOwner
+          description
+          hasDiscussionsEnabled
+          discussions(first: 1) { totalCount }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * For each org/user the workspace knows about, query GitHub for
+ * repos that have Discussions enabled. Returns a flat list shaped
+ * for the onboarding multi-select picker — labels are
+ * `owner/name`, notes carry the discussion count + description.
+ *
+ * Returns an empty list when:
+ *   - no orgs were discovered (caller should fall back to free-text)
+ *   - `gh` isn't installed or isn't authed
+ *   - the search returns no matches across all orgs
+ *
+ * Errors are swallowed (returning `[]`) rather than thrown: this is
+ * a convenience for the wizard, not a hard requirement. If gh blows
+ * up we want the user to fall through to manual entry, not see a
+ * crash mid-onboarding.
+ */
+export async function discoverDiscussionRepos(
+  orgs: string[],
+  opts: { spawnImpl?: SpawnLike; perOrgLimit?: number } = {}
+): Promise<OnboardingChoice[]> {
+  if (orgs.length === 0) return [];
+  const runner = new CliRunner({ command: "gh", spawnImpl: opts.spawnImpl });
+  const probe = await runner.checkAvailable();
+  if (!probe.available) return [];
+  // Don't crash if the user isn't authed; just no choices.
+  try {
+    await runner.run(["auth", "status"]);
+  } catch {
+    return [];
+  }
+
+  const perOrgLimit = opts.perOrgLimit ?? 100;
+  const seen = new Set<string>();
+  const out: OnboardingChoice[] = [];
+  // `repositoryOwner` resolves to either a User or an Organization
+  // and exposes a unified `repositories` connection. We filter
+  // client-side on `hasDiscussionsEnabled` because GraphQL doesn't
+  // expose it as a query filter. Note: when the login is a member
+  // of multiple orgs, the connection may surface repos from those
+  // related owners too — we keep them all and dedupe by
+  // `nameWithOwner`, which is the right UX (the user gets a single
+  // flat picker across everything they can see).
+  for (const org of orgs) {
+    try {
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${OWNER_REPOS_QUERY}`,
+        "-f",
+        `owner=${org}`,
+        "-F",
+        `first=${perOrgLimit}`,
+      ];
+      const result = await runner.json<{ data?: OwnerReposPage; errors?: Array<{ message: string }> }>(args);
+      if (result.errors && result.errors.length > 0) continue;
+      const owner = result.data?.repositoryOwner;
+      if (!owner) continue;
+      for (const node of owner.repositories.nodes) {
+        if (!node.hasDiscussionsEnabled) continue;
+        if (seen.has(node.nameWithOwner)) continue;
+        seen.add(node.nameWithOwner);
+        const count = node.discussions.totalCount;
+        const desc = node.description?.trim();
+        const note =
+          (count > 0 ? `${count} discussion${count === 1 ? "" : "s"}` : "no discussions yet") +
+          (desc ? ` · ${desc}` : "");
+        out.push({
+          label: node.nameWithOwner,
+          value: node.nameWithOwner,
+          note,
+        });
+      }
+    } catch {
+      // Per-org failure shouldn't sink the others.
+      continue;
+    }
+  }
+  return out;
 }
 
 function parseCsv(raw: string | undefined): string[] {

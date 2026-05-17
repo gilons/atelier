@@ -4,10 +4,13 @@ import {
   listAdapters,
   addSource,
   upsertMcpServer,
+  discoverLocal,
+  listRepos,
   NotInsideWorkspaceError,
   SourceAlreadyRegisteredError,
   type OnboardingFlow,
   type OnboardingAnswers,
+  type OnboardingContext,
   type OnboardingResult,
   type OnboardingStep,
   type TransportOption,
@@ -15,7 +18,10 @@ import {
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
 import { PromptSession } from "../prompt.js";
-import { pickOne as interactivePickOne } from "../picker.js";
+import {
+  pickMany as interactivePickMany,
+  pickOne as interactivePickOne,
+} from "../picker.js";
 
 /**
  * Interactive (and non-interactive) onboarding for a documentation
@@ -51,6 +57,36 @@ function parseAnswerFlags(raw: unknown): ParsedAnswers {
     byKey.set(v.slice(0, eq), v.slice(eq + 1));
   }
   return { byKey };
+}
+
+/**
+ * Drive a dynamic-choice step: shows a multi- or single-select
+ * picker (depending on `step.multiSelect`) and returns the user's
+ * chosen `value` strings. `null` means the user cancelled (Esc /
+ * Ctrl-C); `[]` means they confirmed without selecting anything
+ * (the caller falls back to manual entry).
+ */
+async function runChoicePicker(
+  step: OnboardingStep,
+  choices: { label: string; value: string; note?: string }[],
+  session: PromptSession
+): Promise<string[] | null> {
+  if (step.help) ui.print(`  ${ui.dim(step.help)}`);
+  if (step.multiSelect) {
+    const picked = await interactivePickMany(
+      `  ${step.prompt}`,
+      choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
+      session
+    );
+    return picked;
+  }
+  const one = await interactivePickOne(
+    `  ${step.prompt}`,
+    choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
+    session
+  );
+  if (one === null) return null;
+  return [one];
 }
 
 /** Ask a single onboarding step. Honors `secret`, `default`, `validate`. */
@@ -92,6 +128,41 @@ interface OnboardOptions {
   nonInteractive: boolean;
   /** REPL vs. shell — controls the form of next-steps hints. */
   mode: "cli" | "repl";
+  /** User's cwd when the command was invoked — for sibling-dir scans. */
+  cwd: string;
+}
+
+/**
+ * Build the context handed to adapter steps' `discoverChoices`. We
+ * combine the org persisted in repos.yaml with orgs found by
+ * scanning sibling directories — same pattern the REPL uses for
+ * `/repo discover` so the choices line up across surfaces.
+ *
+ * No spinner here; the call is cheap (no network IO) and gets
+ * wrapped in one by the caller when a step actually consumes it.
+ */
+async function buildOnboardingContext(
+  workspaceRoot: string,
+  cwd: string
+): Promise<OnboardingContext> {
+  const [{ organization }, local] = await Promise.all([
+    listRepos(workspaceRoot),
+    discoverLocal(cwd, workspaceRoot),
+  ]);
+  const orgs: string[] = [];
+  const seen = new Set<string>();
+  // Workspace-registered org goes first — it's the strongest signal.
+  if (organization && !seen.has(organization)) {
+    orgs.push(organization);
+    seen.add(organization);
+  }
+  for (const o of local.orgs) {
+    if (!seen.has(o)) {
+      orgs.push(o);
+      seen.add(o);
+    }
+  }
+  return { workspaceRoot, cwd, orgs };
 }
 
 async function runOnboarding(
@@ -185,6 +256,16 @@ async function runOnboardingInner(
   // ---- Phase 3: collect answers ----
   const answers: OnboardingAnswers = { transport: chosen.transport, values: {} };
   const steps = flow.steps(chosen.transport);
+  // Built lazily — only steps that declare `discoverChoices` need it,
+  // and building it scans the filesystem so we don't pay the cost up
+  // front for adapters that don't use discovery.
+  let onboardingCtx: OnboardingContext | null = null;
+  const getCtx = async (): Promise<OnboardingContext> => {
+    if (!onboardingCtx) {
+      onboardingCtx = await buildOnboardingContext(workspaceRoot, opts.cwd);
+    }
+    return onboardingCtx;
+  };
   ui.heading("Configure");
   for (const step of steps) {
     if (step.applies && !step.applies(answers)) continue;
@@ -212,6 +293,59 @@ async function runOnboardingInner(
         `Non-interactive mode and no value for "${step.key}". Pass --answer ${step.key}=<value>.`
       );
       return 2;
+    }
+    // Dynamic-choice path: ask the adapter for candidates and show a
+    // multi- or single-select picker. On empty/failed discovery we
+    // fall through to the regular text prompt so the user can still
+    // type the value manually.
+    if (step.discoverChoices) {
+      const ctx = await getCtx();
+      let choices = [] as Awaited<ReturnType<NonNullable<OnboardingStep["discoverChoices"]>>>;
+      try {
+        choices = await ui.spinner(
+          ctx.orgs.length > 0
+            ? `Looking up choices in ${ctx.orgs.join(", ")}`
+            : "Looking up choices",
+          () => step.discoverChoices!(ctx, answers)
+        );
+      } catch {
+        choices = [];
+      }
+      if (choices.length > 0) {
+        const picked = await runChoicePicker(step, choices, session!);
+        if (picked === null) {
+          ui.print(`  ${ui.dim("Aborted.")}`);
+          return 0;
+        }
+        if (picked.length === 0) {
+          ui.print(
+            `  ${ui.dim("(nothing selected — falling back to manual entry)")}`
+          );
+          answers.values[step.key] = await askStep(session!, step);
+          continue;
+        }
+        const joined = picked.join(",");
+        if (step.validate && !step.validate.test(joined)) {
+          ui.error(
+            `Selection "${joined}" doesn't match the expected format for "${step.key}".`
+          );
+          return 2;
+        }
+        answers.values[step.key] = joined;
+        continue;
+      }
+      // No choices — explain why so the manual prompt isn't surprising.
+      if (ctx.orgs.length === 0) {
+        ui.print(
+          `  ${ui.dim("(no workspace orgs detected — falling back to manual entry)")}`
+        );
+      } else {
+        ui.print(
+          `  ${ui.dim(`(no matching repos in ${ctx.orgs.join(", ")} — enter manually)`)}`
+        );
+      }
+      answers.values[step.key] = await askStep(session!, step);
+      continue;
     }
     answers.values[step.key] = await askStep(session!, step);
   }
@@ -490,6 +624,7 @@ export const sourceOnboardCommand: Command = {
       dryRun: values["dry-run"] === true,
       nonInteractive: values["non-interactive"] === true,
       mode,
+      cwd,
     });
   },
 };

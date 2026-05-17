@@ -35,6 +35,40 @@ export interface TransportOption {
   recommended?: boolean;
 }
 
+/**
+ * One option in a dynamic-choice step. `value` is what we store in
+ * `answers.values[step.key]`; `label` is what's shown in the picker.
+ * Used by {@link OnboardingStep.discoverChoices}.
+ */
+export interface OnboardingChoice {
+  label: string;
+  /** The string that ends up in `answers.values[step.key]`. */
+  value: string;
+  /** Dimmed annotation shown next to the label (e.g. "12 discussions"). */
+  note?: string;
+}
+
+/**
+ * Context handed to dynamic-choice discovery. Lets adapters look at
+ * the workspace (orgs already registered, locally-cloned repos
+ * nearby) without having to plumb cwd/workspaceRoot through ad-hoc.
+ *
+ * Built once per onboarding run by the CLI and passed into every
+ * step's `discoverChoices`.
+ */
+export interface OnboardingContext {
+  /** Absolute path to `.planning/`'s parent. */
+  workspaceRoot: string;
+  /** The user's cwd when onboarding started — for nearby-repo scans. */
+  cwd: string;
+  /**
+   * Distinct GitHub orgs we know about: the org persisted in
+   * repos.yaml plus any orgs detected from sibling-directory git
+   * clones. Most-relevant-first. Empty when nothing was found.
+   */
+  orgs: string[];
+}
+
 /** A single question shown to the user during onboarding. */
 export interface OnboardingStep {
   /** Stable key used to retrieve the answer. */
@@ -54,6 +88,34 @@ export interface OnboardingStep {
   applies?(answers: OnboardingAnswers): boolean;
   /** Free-form help shown above the prompt. */
   help?: string;
+  /**
+   * Render as a multi-select picker (when used with
+   * {@link discoverChoices}). The selected values are joined into a
+   * comma-separated string and stored under `step.key` so the rest
+   * of the adapter pipeline (CSV parsing, persistence) doesn't have
+   * to change.
+   *
+   * Ignored when `discoverChoices` is undefined.
+   */
+  multiSelect?: boolean;
+  /**
+   * Dynamic-choice resolver. When present, the CLI calls this to
+   * fetch candidate values (e.g. "every repo in the user's orgs
+   * that has Discussions enabled") and shows a picker instead of a
+   * free-text prompt.
+   *
+   * If the function throws OR returns an empty list, the CLI falls
+   * back to the regular text prompt (with the step's `default` and
+   * `validate` rules). That way an adapter can offer discovery as a
+   * convenience without making it the only path.
+   *
+   * Called after transport selection, so `answers.transport` is
+   * always set when this runs.
+   */
+  discoverChoices?(
+    ctx: OnboardingContext,
+    answers: OnboardingAnswers
+  ): Promise<OnboardingChoice[]>;
 }
 
 export interface OnboardingAnswers {
