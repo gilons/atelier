@@ -2,6 +2,63 @@ import { parseArgs, type ParseArgsConfig } from "node:util";
 import type { Suggestion } from "./suggestion.js";
 
 /**
+ * One choice in a wizard prompt's menu. Mirrors the `pickOne` shape
+ * from PromptSession but lives at the Command-metadata layer.
+ */
+export interface PromptChoice {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+/**
+ * Declarative wizard prompt — describes ONE argument the REPL should
+ * ask the user for before dispatching a command.
+ *
+ * The REPL's `runCommandPrompts()` walks this list before running a
+ * command. For each prompt:
+ *
+ *   - If the user already supplied the value on the command line
+ *     (`--<key> X` for option-style prompts, or a positional at the
+ *     matching index for positional-style prompts), skip.
+ *   - Otherwise, ask via PromptSession.ask / askSecret / pickOne and
+ *     splice the answer into the argv before dispatch.
+ *
+ * This is what makes `/init` and friends feel like a wizard rather
+ * than a syntax exam.
+ */
+export interface CommandPrompt {
+  /**
+   * Where the answer goes in the dispatched argv:
+   *   - As `--<key> <answer>` by default (option-style).
+   *   - As a positional at `positionalIndex` if set.
+   */
+  key: string;
+  /** Question text shown to the user. */
+  question: string;
+  /** Optional default; shown to the user and used when input is empty. */
+  default?: string;
+  /** Regex the answer must match (otherwise the wizard aborts). */
+  validate?: RegExp;
+  /** Mask input (no echo). Use for tokens / passwords. */
+  secret?: boolean;
+  /** One-line help shown above the question. */
+  help?: string;
+  /**
+   * When set, the answer is inserted as a positional at this 0-based
+   * index. The wizard also detects when the user has *already*
+   * supplied that positional and skips the prompt.
+   */
+  positionalIndex?: number;
+  /**
+   * Optional list of choices. If present, the wizard uses pickOne
+   * instead of free-text input. Pass a function if the choices need
+   * to be computed at prompt time (e.g. from a registry).
+   */
+  choices?: PromptChoice[] | (() => PromptChoice[]);
+}
+
+/**
  * Minimal command framework with nested subcommands.
  *
  * A Command is either a "leaf" (has a `run` handler) or a "group"
@@ -47,6 +104,13 @@ export interface Command {
     priorArgs: string[],
     partial: string
   ): Array<string | Suggestion>;
+  /**
+   * Optional wizard prompts. When the REPL invokes this command and
+   * any of these prompts' values are missing from the argv, it asks
+   * the user inline before dispatching. Keeps the user out of
+   * `--flag value` syntax for the common path.
+   */
+  prompts?: CommandPrompt[];
 }
 
 export interface CommandContext {

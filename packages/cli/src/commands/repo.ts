@@ -32,6 +32,15 @@ const addCmd: Command = {
     description: { type: "string", short: "d" },
   },
   positionals: ["path"],
+  prompts: [
+    {
+      key: "path",
+      question: "Path to the repo (e.g. ../api)",
+      help: "Must be a sibling of the workspace, with a .git directory.",
+      positionalIndex: 0,
+      validate: /\S/,
+    },
+  ],
   async run({ values, positionals, cwd }) {
     const [target] = positionals;
     if (!target) {

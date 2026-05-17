@@ -76,6 +76,15 @@ const addCmd: Command = {
     "no-validate-refs": { type: "boolean" },
   },
   positionals: ["name?"],
+  prompts: [
+    {
+      key: "name",
+      question: 'Feature name (e.g. "CSV Export")',
+      help: "Becomes the H1 in the feature file. Slug is derived from this.",
+      positionalIndex: 0,
+      validate: /\S/,
+    },
+  ],
   async run({ values, positionals, cwd }) {
     const name = (values.name as string | undefined) ?? positionals[0];
     if (!name) {

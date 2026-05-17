@@ -394,6 +394,26 @@ export const sourceOnboardCommand: Command = {
     }
     return [];
   },
+  /**
+   * Wizard: if the user just types `/source onboard` in the REPL,
+   * prompt for the kind via a menu of registered adapters. The
+   * adapter's own onboarding flow (transports, auth, scope) runs
+   * from `run()` once the kind is picked.
+   */
+  prompts: [
+    {
+      key: "kind",
+      question: "Source kind",
+      help: "Which kind of documentation source are you connecting?",
+      positionalIndex: 0,
+      choices: () =>
+        listAdapters().map((a) => ({
+          label: a.kind,
+          value: a.kind,
+          description: a.onboarding.displayName,
+        })),
+    },
+  ],
   async run({ positionals, values, cwd }) {
     if (values["list-kinds"] === true) {
       ui.heading("Supported source kinds");

@@ -158,8 +158,13 @@ test("completeLine: '/source onboard ' suggests source kinds with display names 
   assert.equal(notion.description, "Notion");
   const gh = r.items.find((s) => s.display === "github-discussions");
   assert.equal(gh.description, "GitHub Discussions");
-  // Option flags follow.
-  assert.ok(values(r).includes("--transport "));
+  // The menu intentionally does NOT include option flags now — the
+  // REPL wizard prompts for missing args instead of expecting users
+  // to type `--name value` syntax.
+  assert.ok(
+    !values(r).some((v) => v.startsWith("--")),
+    "menu should not include option flags"
+  );
 });
 
 test("completeLine: '/source onboard not' filters kinds by prefix", () => {
@@ -174,29 +179,25 @@ test("completeLine: '/source onboard github' completes to github-discussions", (
 });
 
 // ============================================================
-// Option flag completion
+// Option flags are no longer in the menu
 // ============================================================
 
-test("completeLine: '/source onboard notion --' lists option flags", () => {
+test("completeLine: '/source onboard notion --' returns no suggestions (we don't intrude on typed flags)", () => {
   const r = completeLine(makeRegistry(), "/source onboard notion --");
-  const v = values(r);
-  assert.ok(v.includes("--transport "));
-  assert.ok(v.includes("--non-interactive "));
+  assert.deepEqual(r.items, []);
   assert.equal(r.span, "--");
 });
 
-test("completeLine: '/source onboard notion --tr' completes --transport", () => {
+test("completeLine: '/source onboard notion --tr' still returns no suggestions", () => {
   const r = completeLine(makeRegistry(), "/source onboard notion --tr");
-  assert.deepEqual(values(r), ["--transport "]);
-  assert.equal(r.span, "--tr");
+  assert.deepEqual(r.items, []);
 });
 
-test("completeLine: option type hint surfaces as description", () => {
+test("completeLine: '/init --' no option-flag menu — wizard handles required args", () => {
+  // Used to surface `--name` / `--force` here; now `/init` prompts
+  // inline via its `prompts` metadata instead.
   const r = completeLine(makeRegistry(), "/init --");
-  const name = r.items.find((s) => s.display === "--name");
-  assert.equal(name.description, "<value>");
-  const force = r.items.find((s) => s.display === "--force");
-  assert.equal(force.description, "flag");
+  assert.deepEqual(r.items, []);
 });
 
 // ============================================================

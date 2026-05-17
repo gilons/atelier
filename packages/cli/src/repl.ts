@@ -23,6 +23,7 @@ import { dispatch, type CommandRegistry } from "./command.js";
 import { renderBanner } from "./banner.js";
 import { buildReplCompleter } from "./repl-completer.js";
 import { InputReader } from "./input-reader.js";
+import { resolveLeaf, runCommandPrompts } from "./wizard.js";
 
 /**
  * Atelier REPL — `atelier` with no args drops the user into a
@@ -362,6 +363,22 @@ async function handleLine(line: string, ctx: ReplContext): Promise<void> {
   }
   if (lower === "repo" && rest.length === 0) {
     return interactiveRepoFlow(ctx);
+  }
+
+  // If the leaf command declares wizard prompts, run them first.
+  // The wizard fills in any missing args interactively, then we
+  // dispatch with the full argv exactly as if the user had typed
+  // every value as flags. Commands that don't declare prompts
+  // dispatch unchanged.
+  const leaf = resolveLeaf(ctx.registry, [cmd, ...rest]);
+  if (leaf && leaf.command.prompts && leaf.command.prompts.length > 0) {
+    const argv = await runCommandPrompts(leaf, ctx.session);
+    if (argv === null) {
+      ui.print(`  ${ui.dim("Aborted.")}`);
+      return;
+    }
+    await dispatch(ctx.registry, argv, ctx.cwd, ATELIER_VERSION);
+    return;
   }
 
   // Bridge to the underlying CLI dispatcher. The same code path that

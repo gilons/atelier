@@ -21,6 +21,20 @@ export const initCommand: Command = {
     description: { type: "string", short: "d" },
     force: { type: "boolean", short: "f" },
   },
+  /**
+   * REPL wizard prompts. When the user types `/init` in the REPL,
+   * we ask for the workspace name inline instead of erroring on a
+   * missing flag. From a non-REPL shell, `atelier init --name X`
+   * still works and skips the prompt entirely.
+   */
+  prompts: [
+    {
+      key: "name",
+      question: "Workspace name",
+      help: "Shown on the welcome banner. Usually your org/team name.",
+      validate: /\S/,
+    },
+  ],
   async run({ values, cwd }) {
     const name = (values.name as string | undefined) ?? path.basename(cwd);
     const description = values.description as string | undefined;

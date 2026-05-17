@@ -144,29 +144,31 @@ function completeWithinCommand(
     return { span: "", items: [] };
   }
 
-  // Leaf command. Mix positional completions (from the hook) with
-  // option flags.
-  const optionItems = optionSuggestions(cmd);
+  // Leaf command. We only surface positional-value suggestions —
+  // option flags are intentionally NOT in the menu, because the
+  // REPL wizard prompts the user for missing args inline instead
+  // of asking them to remember `--name=...` syntax. Power users
+  // who want to drive the CLI by flags use the non-REPL `atelier
+  // <verb> --flag X` form instead.
   const positionalsBefore = positionalsOnly(
     endsWithSpace ? args : args.slice(0, -1)
   );
   const partial = endsWithSpace ? "" : args[args.length - 1] ?? "";
 
+  // If the user is actively typing a flag, just leave them alone
+  // (no suggestions). They asked for it; we don't intrude.
   if (partial.startsWith("--")) {
-    const matches = optionItems.filter((s) => s.value.startsWith(partial));
-    return { span: partial, items: matches };
+    return { span: partial, items: [] };
   }
 
-  // Positional + option suggestions, filtered by partial.
   const positional = cmd.complete?.(positionalsBefore, partial) ?? [];
   const positionalSuggestions = toSuggestions(positional);
-  const allItems = [...positionalSuggestions, ...optionItems];
   if (partial.length === 0) {
-    return { span: "", items: allItems };
+    return { span: "", items: positionalSuggestions };
   }
   return {
     span: partial,
-    items: allItems.filter((s) =>
+    items: positionalSuggestions.filter((s) =>
       (s.display ?? s.value).toLowerCase().startsWith(partial.toLowerCase())
     ),
   };
@@ -186,21 +188,6 @@ function toSuggestions(items: Array<string | Suggestion>): Suggestion[] {
   return items.map((item) =>
     typeof item === "string" ? { value: item } : item
   );
-}
-
-function optionSuggestions(cmd: Command): Suggestion[] {
-  if (!cmd.options) return [];
-  return Object.keys(cmd.options).map<Suggestion>((name) => ({
-    value: `--${name} `,
-    display: `--${name}`,
-    description: optionTypeHint(cmd.options![name]),
-  }));
-}
-
-function optionTypeHint(def: { type?: string }): string {
-  if (def.type === "string") return "<value>";
-  if (def.type === "boolean") return "flag";
-  return "";
 }
 
 function positionalsOnly(args: string[]): string[] {

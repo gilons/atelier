@@ -86,6 +86,21 @@ const newCmd: Command = {
     "no-validate-refs": { type: "boolean" },
   },
   positionals: ["title?"],
+  prompts: [
+    {
+      key: "title",
+      question: 'One-line description of the change (e.g. "Add CSV export")',
+      help: "Becomes the spec's title + the basis for the issue id.",
+      positionalIndex: 0,
+      validate: /\S/,
+    },
+    {
+      key: "type",
+      question: "Change type",
+      help: "Picks the spec.md template.",
+      choices: SPEC_CHANGE_TYPES.map((t) => ({ label: t, value: t })),
+    },
+  ],
   async run({ values, positionals, cwd }) {
     const title = (values.title as string | undefined) ?? positionals[0];
     if (!title) {
