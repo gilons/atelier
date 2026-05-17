@@ -4,7 +4,7 @@ import {
   listAdapters,
   addSource,
   upsertMcpServer,
-  discoverLocal,
+  githubOrgFromRemote,
   listRepos,
   NotInsideWorkspaceError,
   SourceAlreadyRegisteredError,
@@ -143,10 +143,15 @@ interface OnboardOptions {
 }
 
 /**
- * Build the context handed to adapter steps' `discoverChoices`. We
- * combine the org persisted in repos.yaml with orgs found by
- * scanning sibling directories — same pattern the REPL uses for
- * `/repo discover` so the choices line up across surfaces.
+ * Build the context handed to adapter steps' `discoverChoices`.
+ *
+ * Orgs come ONLY from what the user has actually registered with
+ * Atelier — the workspace's `organization` field plus the owner
+ * parsed from each registered repo's remote. We deliberately don't
+ * fall back to sibling-directory scans here: discovery should
+ * follow the user's explicit registrations, not surface unrelated
+ * GitHub accounts that happen to share a parent directory with
+ * the workspace.
  *
  * No spinner here; the call is cheap (no network IO) and gets
  * wrapped in one by the caller when a step actually consumes it.
@@ -155,10 +160,7 @@ async function buildOnboardingContext(
   workspaceRoot: string,
   cwd: string
 ): Promise<OnboardingContext> {
-  const [{ organization }, local] = await Promise.all([
-    listRepos(workspaceRoot),
-    discoverLocal(cwd, workspaceRoot),
-  ]);
+  const { organization, repos } = await listRepos(workspaceRoot);
   const orgs: string[] = [];
   const seen = new Set<string>();
   // Workspace-registered org goes first — it's the strongest signal.
@@ -166,10 +168,15 @@ async function buildOnboardingContext(
     orgs.push(organization);
     seen.add(organization);
   }
-  for (const o of local.orgs) {
-    if (!seen.has(o)) {
-      orgs.push(o);
-      seen.add(o);
+  // Then any org we can derive from a registered repo's remote.
+  // Same parser the local-discovery + welcome-banner paths use,
+  // so the names line up exactly with what the user sees in the
+  // REPL banner.
+  for (const listing of repos) {
+    const org = githubOrgFromRemote(listing.repo.remote);
+    if (org && !seen.has(org)) {
+      orgs.push(org);
+      seen.add(org);
     }
   }
   return { workspaceRoot, cwd, orgs };
