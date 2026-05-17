@@ -62,7 +62,12 @@ export class InputReader {
   private span = "";
   private highlight = -1;
   private historyIndex = -1; // -1 = current line; 0+ indexes history from newest
-  private linesDrawn = 0;
+  /**
+   * True once we've drawn at least one render. Before that, clearRender
+   * is a no-op so we don't `\x1b[0J` over the welcome banner that was
+   * printed before our prompt.
+   */
+  private hasRendered = false;
   private resolver: ((r: InputResult) => void) | null = null;
   private dataHandler: ((chunk: Buffer | string) => void) | null = null;
   private finished = false;
@@ -259,42 +264,46 @@ export class InputReader {
   }
 
   /**
-   * Erase whatever we drew on the previous render. We track line
-   * count rather than computing positions because the terminal might
-   * have wrapped a long prompt line — best-effort but works for
-   * typical use.
+   * Erase the prompt line and everything we drew below it.
+   *
+   * After every `render()` the cursor sits on the prompt line at the
+   * user's logical column. To clear, we move to column 0 of that line
+   * (`\r`) and then emit `\x1b[0J` — "erase from cursor to end of
+   * screen". This wipes the prompt line + any suggestion menu we drew
+   * underneath in one shot, without any line counting that can drift
+   * after an off-by-one.
+   *
+   * Crucially, this only erases things *at or below* the cursor —
+   * everything above (the welcome banner, prior REPL output) is left
+   * alone, which fixes the "welcome message vanishes on first
+   * keystroke" bug.
+   *
+   * No-op before the very first render so we don't `\x1b[0J` over the
+   * welcome banner that was printed just before us.
    */
   private clearRender(): void {
-    if (this.linesDrawn === 0) return;
-    // Hide cursor during clear to avoid flicker.
-    this.output.write("\x1b[?25l");
-    // Move to start of current line.
-    this.output.write("\r");
-    // Move up (lines drawn after the prompt) and clear each line.
-    for (let i = 0; i < this.linesDrawn; i++) {
-      this.output.write("\x1b[2K");
-      if (i < this.linesDrawn - 1) this.output.write("\x1b[1A");
-    }
-    // Now sitting on the top line, cleared. Move back to column 0.
-    this.output.write("\r");
-    this.linesDrawn = 0;
+    if (!this.hasRendered) return;
+    this.output.write("\r\x1b[0J");
   }
 
   private render(): void {
-    // Visible suggestions (clipped + scrolled around the highlight).
     const items = this.visibleSuggestions();
-    // 1) The prompt line.
+    // Hide the cursor during the multi-step draw so the user doesn't
+    // see it skipping across the menu lines.
+    this.output.write("\x1b[?25l");
+
+    // 1) Prompt line — written as one piece, cursor lands at end of buffer.
     this.output.write(this.prompt + this.state.buffer);
-    let drawn = 1;
-    // 2) Suggestion lines.
+
     if (items.length > 0) {
-      this.output.write("\n");
-      drawn++;
+      // 2) Suggestion menu beneath the prompt. Each suggestion gets
+      //    its own line. We always lead with `\n` so we never
+      //    accidentally write a suggestion ON the prompt line.
       const labelWidth = Math.min(
         40,
         items.reduce((m, s) => Math.max(m, displayOf(s.suggestion).length), 0)
       );
-      items.forEach((item, i) => {
+      for (const item of items) {
         const highlighted = item.absoluteIndex === this.highlight;
         const marker = highlighted ? cyan("›") : " ";
         const label = pad(displayOf(item.suggestion), labelWidth);
@@ -302,37 +311,28 @@ export class InputReader {
         const desc = item.suggestion.description
           ? "  " + dim("— " + item.suggestion.description)
           : "";
-        this.output.write(`  ${marker} ${labelOut}${desc}`);
-        if (i < items.length - 1) this.output.write("\n");
-        drawn += i < items.length - 1 ? 1 : 0;
-      });
+        this.output.write(`\n  ${marker} ${labelOut}${desc}`);
+      }
       // 3) Help line.
-      this.output.write("\n");
-      drawn++;
       this.output.write(
-        "  " +
-          dim("↑↓ navigate · ⇥/→ accept · ↵ submit · esc dismiss")
+        "\n  " + dim("↑↓ navigate · ⇥/→ accept · ↵ submit · esc dismiss")
       );
-      drawn++;
-      // We just printed the help line without a newline — the
-      // cursor sits at its end. We need to walk back up so the
-      // terminal cursor lands at the user's input column on the
-      // prompt line.
-      this.output.write(`\x1b[${drawn - 1}A`);
-      this.output.write("\r");
-      // Move the cursor to the right column on the prompt line:
-      // prompt visible width + buffer-cursor.
-      const col = visibleWidth(this.prompt) + this.state.cursor;
-      if (col > 0) this.output.write(`\x1b[${col}C`);
-    } else {
-      // No menu — but cursor might not be at end of buffer.
-      const col = visibleWidth(this.prompt) + this.state.cursor;
-      this.output.write("\r");
-      if (col > 0) this.output.write(`\x1b[${col}C`);
+
+      // Walk the cursor back up to the prompt line. We wrote exactly
+      // `items.length + 1` newlines (one per suggestion + one for the
+      // help line), so the cursor is that many lines below the prompt.
+      const linesBelow = items.length + 1;
+      this.output.write(`\x1b[${linesBelow}A`);
     }
-    // Restore cursor visibility.
+
+    // Park the cursor at the user's logical column on the prompt line.
+    this.output.write("\r");
+    const col = visibleWidth(this.prompt) + this.state.cursor;
+    if (col > 0) this.output.write(`\x1b[${col}C`);
+
+    // Show the cursor again now that we're parked.
     this.output.write("\x1b[?25h");
-    this.linesDrawn = drawn;
+    this.hasRendered = true;
   }
 
   /**
