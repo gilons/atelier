@@ -77,7 +77,7 @@ function parseAnswerFlags(raw: unknown): ParsedAnswers {
  */
 async function runChoicePicker(
   step: OnboardingStep,
-  choices: { label: string; value: string; note?: string }[],
+  choices: { label: string; value: string; note?: string; disabled?: boolean }[],
   session: PromptSession
 ): Promise<string[] | null> {
   if (step.help) ui.print(`  ${ui.dim(step.help)}`);
@@ -86,13 +86,23 @@ async function runChoicePicker(
     if (step.multiSelect) {
       return await interactivePickMany(
         `  ${step.prompt}`,
-        choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
+        choices.map((c) => ({
+          label: c.label,
+          value: c.value,
+          note: c.note,
+          disabled: c.disabled,
+        })),
         session
       );
     }
     const one = await interactivePickOne(
       `  ${step.prompt}`,
-      choices.map((c) => ({ label: c.label, value: c.value, note: c.note })),
+      // SingleSelectOption doesn't model `disabled`, so we just
+      // drop those entries here. Single-select callers (e.g. the
+      // transport picker) don't currently surface linked items.
+      choices
+        .filter((c) => !c.disabled)
+        .map((c) => ({ label: c.label, value: c.value, note: c.note })),
       session
     );
     if (one === null) return null;

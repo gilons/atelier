@@ -46,6 +46,14 @@ export interface OnboardingChoice {
   value: string;
   /** Dimmed annotation shown next to the label (e.g. "12 discussions"). */
   note?: string;
+  /**
+   * Visually present but unselectable. The intended use is to show
+   * items that are already covered by another registered source —
+   * the user sees them in the list (so they understand the state of
+   * the world) but can't accidentally pick them again. The `note`
+   * usually explains why ("already linked to <source-id>").
+   */
+  disabled?: boolean;
 }
 
 /**
