@@ -70,6 +70,7 @@ export class InputReader {
   private hasRendered = false;
   private resolver: ((r: InputResult) => void) | null = null;
   private dataHandler: ((chunk: Buffer | string) => void) | null = null;
+  private endHandler: (() => void) | null = null;
   private finished = false;
 
   constructor(opts: InputReaderOptions) {
@@ -97,9 +98,14 @@ export class InputReader {
       this.input.resume();
       this.input.setEncoding("utf8");
       this.dataHandler = (chunk: Buffer | string) => this.handle(String(chunk));
+      this.endHandler = () => this.finish({ type: "aborted" });
       this.input.on("data", this.dataHandler);
-      const onEnd = () => this.finish({ type: "aborted" });
-      this.input.once("end", onEnd);
+      // Use `on` not `once`: `end` rarely (never, in a normal REPL)
+      // fires, so a `once` listener would stay attached forever and
+      // pile up across every read() call — eventually triggering
+      // MaxListenersExceededWarning. We clean it explicitly in
+      // finish().
+      this.input.on("end", this.endHandler);
 
       this.refresh();
     });
@@ -410,6 +416,10 @@ export class InputReader {
     if (this.dataHandler) {
       this.input.off("data", this.dataHandler);
       this.dataHandler = null;
+    }
+    if (this.endHandler) {
+      this.input.off("end", this.endHandler);
+      this.endHandler = null;
     }
     try {
       this.input.setRawMode?.(false);

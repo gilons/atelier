@@ -76,6 +76,7 @@ export class MultiSelectPicker<T> {
   private finished = false;
   private resolver: ((r: PickerResult<T>) => void) | null = null;
   private dataHandler: ((chunk: Buffer | string) => void) | null = null;
+  private endHandler: (() => void) | null = null;
 
   // Computed
   private get maxVisible(): number {
@@ -118,8 +119,14 @@ export class MultiSelectPicker<T> {
       this.input.resume();
       this.input.setEncoding("utf8");
       this.dataHandler = (chunk) => this.onData(String(chunk));
+      this.endHandler = () => this.finish({ type: "cancelled" });
       this.input.on("data", this.dataHandler);
-      this.input.once("end", () => this.finish({ type: "cancelled" }));
+      // `once` would auto-clean on fire, but `end` never fires in a
+      // long-running REPL — so a fresh listener piles up each time a
+      // picker is opened. Keep a reference + remove explicitly in
+      // finish() to prevent MaxListenersExceededWarning after a dozen
+      // pickers in the same session.
+      this.input.on("end", this.endHandler);
       this.render();
     });
   }
@@ -471,6 +478,14 @@ export class MultiSelectPicker<T> {
       this.input.off("data", this.dataHandler);
       this.dataHandler = null;
     }
+    if (this.endHandler) {
+      // Remove the 'end' listener too — it was added with `on`
+      // (not `once`) precisely so we control its lifecycle here.
+      // Leaving it attached across many pickers in the same REPL
+      // session is what triggers MaxListenersExceededWarning.
+      this.input.off("end", this.endHandler);
+      this.endHandler = null;
+    }
     try {
       this.input.setRawMode?.(false);
     } catch {
@@ -565,6 +580,7 @@ export class SingleSelectPicker<T> {
   private finished = false;
   private resolver: ((r: SingleSelectResult<T>) => void) | null = null;
   private dataHandler: ((chunk: Buffer | string) => void) | null = null;
+  private endHandler: (() => void) | null = null;
   private optsMaxVisible: number;
 
   private get maxVisible(): number {
@@ -601,8 +617,11 @@ export class SingleSelectPicker<T> {
       this.input.resume();
       this.input.setEncoding("utf8");
       this.dataHandler = (chunk) => this.onData(String(chunk));
+      this.endHandler = () => this.finish({ type: "cancelled" });
       this.input.on("data", this.dataHandler);
-      this.input.once("end", () => this.finish({ type: "cancelled" }));
+      // See MultiSelectPicker.run — explicit on/off on the end
+      // listener so it doesn't accumulate across REPL pickers.
+      this.input.on("end", this.endHandler);
       this.render();
     });
   }
@@ -850,6 +869,10 @@ export class SingleSelectPicker<T> {
     if (this.dataHandler) {
       this.input.off("data", this.dataHandler);
       this.dataHandler = null;
+    }
+    if (this.endHandler) {
+      this.input.off("end", this.endHandler);
+      this.endHandler = null;
     }
     try {
       this.input.setRawMode?.(false);
