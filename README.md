@@ -10,8 +10,9 @@ It never calls an LLM itself. Every deterministic task — git config parsing, d
 
 | Capability | Command | Status |
 |---|---|---|
-| Initialize an org-level planning workspace | `atelier init` | ✅ |
-| Register code repos that belong to this org | `atelier repo add`, `repo discover` | ✅ |
+| Interactive REPL with slash commands | `atelier` (no args) | ✅ |
+| Initialize an org-level planning workspace | `atelier init` / `/init` | ✅ |
+| Register code repos (with auto-discovery) | `atelier repo add\|discover` / `/repo` | ✅ |
 | Map features (with code + doc refs) | `atelier feature add\|list\|show\|remove` | ✅ |
 | Map docs (with content + classification) | `atelier doc add\|list\|show\|update\|remove` | ✅ |
 | Log doc-vs-code discrepancies | `atelier discrepancy add\|list\|resolve` | ✅ |
@@ -55,35 +56,98 @@ Requirements: Node.js ≥ 20.
 
 ## Quick start
 
+The fastest path: run `atelier` with no args in any directory near your code repos. It drops you into an interactive REPL with slash commands.
+
 ```bash
-# 1. Set up the org-level planning workspace as a sibling to your code repos.
-#    Convention: ~/workspace/<org>/planning/ sits next to ../api, ../web, …
-mkdir -p ~/workspace/myorg/planning
-cd ~/workspace/myorg/planning
+cd ~/workspace/myorg     # your org directory (with api/, web/, etc. inside)
+atelier
+```
+
+What you'll see:
+
+```
+Atelier v0.0.1 — a planning companion
+
+  No workspace found at /Users/you/workspace/myorg
+  Detected 4 git repo(s) in this directory (org: myorg)
+    · api
+    · web
+    · marketing-site
+    · ops
+  → Type /init to scaffold a workspace here.
+
+  Type /help for commands, or /quit to leave.
+
+atelier ❯
+```
+
+From here, the typical flow:
+
+```
+atelier ❯ /init               # creates ./planning/.planning/
+atelier ❯ /repo               # interactive multi-select with auto-discovery
+atelier ❯ /source onboard notion
+atelier ❯ /sync
+atelier ❯ /feature add "User Onboarding" --code api:src/auth/
+atelier ❯ /spec new "Add SSO" --type new-feature --feature user-onboarding
+atelier ❯ /quit
+```
+
+### Auto-register
+
+Start `atelier` inside a code repo that's next to a planning workspace, and it offers to register the current repo automatically:
+
+```
+atelier ❯ ← (run from ~/workspace/myorg/api/)
+
+Atelier v0.0.1 — a planning companion
+
+  Workspace: MyOrg
+  Location:  /Users/you/workspace/myorg/planning
+  Org:       myorg
+  Inventory: 2 repo(s) · 1 source(s) · 8 feature(s) · 47 doc(s)
+
+  · You're inside a git repo at api that isn't registered.
+    remote: git@github.com:myorg/api.git
+    Register it with workspace planning? (Y/n) y
+✓ Registered api
+```
+
+### Interactive `/repo`
+
+`/repo` scans your siblings on disk **and** queries your GitHub org via the `gh` CLI, merges the results, and shows a filterable multi-select:
+
+```
+atelier ❯ /repo
+
+Repo registration
+
+✓ Scanning sibling directories
+✓ Querying GitHub for repos in myorg
+  Found 12 candidate(s) (org: myorg)
+
+Pick repos to register (registered ones are marked with —):
+  [ 1] - api          https://github.com/myorg/api          (registered)
+  [ 2] · web          https://github.com/myorg/web
+  [ 3] · marketing    https://github.com/myorg/marketing
+  [ 4] · ops          https://github.com/myorg/ops
+  …
+  [1,3-5] toggle  [/text] filter  [all]  [none]  [done]  [quit]
+  Selection: 2,3
+```
+
+### One-shot mode
+
+Everything is also a regular CLI command for scripts and CI:
+
+```bash
 atelier init --name "MyOrg"
-
-# 2. Register your code repos.
 atelier repo add ../api
-atelier repo add ../web
-atelier repo discover                 # finds repos in your GitHub org
-
-# 3. Onboard a doc source. Walks you through transport, auth, scope.
-atelier source onboard notion         # or: sharepoint, github-discussions
-
-# 4. Pull docs.
-atelier sync --dry-run                # preview
-atelier sync                          # actually fetch
-
-# 5. Catalog what your product does.
-atelier feature add "User Onboarding" --code api:src/auth/ --code web:components/Auth/
-
-# 6. Plan a change. Scaffolds .planning/issues/<id>/{README,spec,context,prompt}.md
-atelier spec new "Add SSO to onboarding" \
-  --type new-feature \
-  --feature user-onboarding
-
-# 7. Hand the prompt to your coding agent.
-cat .planning/issues/2026-05-17-add-sso-to-onboarding/prompt.md
+atelier source onboard notion --non-interactive \
+  --transport rest --skip-verify \
+  --answer id=company-notion --answer name="Notion" \
+  --answer envVar=NOTION_TOKEN --answer token=$NOTION_TOKEN
+atelier sync --source company-notion
 ```
 
 ## Source onboarding
@@ -187,7 +251,7 @@ Distribute as an npm package; users add it with `transport: external` and `adapt
 
 Alpha. Phase 2 is shipped; Phase 3 (the synthesis layer — delegating classification, feature extraction, and discrepancy detection to the user's coding agent) is the next major slice.
 
-**360 unit + integration tests** cover the surface today.
+**382 unit + integration tests** cover the surface today.
 
 Contributions are welcome — please open an issue or PR. See [HANDOFF.md](HANDOFF.md) for a deep architectural tour.
 

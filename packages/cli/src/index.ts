@@ -10,6 +10,7 @@ import { docCommand } from "./commands/doc.js";
 import { discrepancyCommand } from "./commands/discrepancy.js";
 import { syncCommand } from "./commands/sync.js";
 import { specCommand } from "./commands/spec.js";
+import { runRepl } from "./repl.js";
 
 const registry: CommandRegistry = {
   commands: [
@@ -26,7 +27,26 @@ const registry: CommandRegistry = {
 
 const argv = process.argv.slice(2);
 
-dispatch(registry, argv, process.cwd(), ATELIER_VERSION)
+/**
+ * Mode selection:
+ *   - With args ("atelier sync", "atelier --help", …) → one-shot CLI
+ *     dispatch. Same as before. Scripts + CI use this path.
+ *   - No args + interactive stdin → REPL.
+ *   - No args + non-interactive stdin (CI, `atelier < commands.txt`) →
+ *     fall back to top-level help so we don't dead-air on a script.
+ *     The user can still opt into REPL with `atelier --repl` if they
+ *     actually want to drive the REPL from a piped script.
+ */
+const wantRepl =
+  argv.length === 0
+    ? Boolean(process.stdin.isTTY)
+    : argv[0] === "--repl" || argv[0] === "repl";
+
+const startMode = wantRepl
+  ? runRepl(process.cwd(), registry)
+  : dispatch(registry, argv, process.cwd(), ATELIER_VERSION);
+
+startMode
   .then((code) => {
     process.exit(code);
   })

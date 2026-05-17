@@ -4,7 +4,9 @@ A planning companion for the spec-driven era. CLI tool, TypeScript on Node 22, o
 
 ## Where things stand
 
-**Phase 2.5 source onboarding extended to three sources.** Foundation + feature map + doc map + discrepancy log + sync engine + spec workflow + MCP stdio transport + a generalized source-onboarding architecture with three concrete officially-supported sources (Notion via REST, SharePoint via Microsoft Graph, GitHub Discussions via the `gh` CLI). **360 unit + integration tests, all passing.** End-to-end smoke-tested against real GitHub Discussions (pulled 5 discussions from `dinolabdev/dinorance` and indexed them with `discussion` classification).
+**Phase 2.5 source onboarding + Phase 2.6 REPL mode.** Foundation + feature map + doc map + discrepancy log + sync engine + spec workflow + MCP stdio transport + generalized source onboarding with three concrete adapters (Notion / SharePoint / GitHub Discussions) + an interactive slash-command REPL with auto-discovery. **382 unit + integration tests, all passing.** Smoke-tested end-to-end against real GitHub Discussions.
+
+The REPL is the new front door: `atelier` with no args drops into a session with workspace-context detection, sideways-aware (works from inside a code repo next to a `planning/`), and offers to auto-register the current repo when relevant. `/repo` runs a multi-select with auto-discovery from siblings on disk + `gh` org listing.
 
 **Project location:** `~/workspace/dino-lab/atelier/`
 
@@ -21,6 +23,7 @@ A planning companion for the spec-driven era. CLI tool, TypeScript on Node 22, o
 | 8 — sync engine | ✅ for `local-folder`, `mcp`, `rest`, `cli` | `atelier sync` |
 | 9 — spec workflow | ✅ | `atelier spec new|list|show|set-status|remove` |
 | 2.5 — source onboarding | ✅ framework + Notion + SharePoint + GitHub Discussions | `atelier source onboard <kind>` |
+| 2.6 — REPL mode | ✅ slash commands, auto-discovery, auto-register offer | `atelier` (no args) |
 
 The MCP stdio transport (`StdioMcpClient`) is now real. `MCP_TRANSPORT_READY = true`. Any MCP server you can spawn via stdio (Notion, Linear, custom) can be wired up via `~/.atelier/mcp-servers.json` and synced through `atelier sync`. The server needs to expose two tools — `atelier_list_docs` and `atelier_fetch_doc` — or override their names per-server in the config.
 
@@ -30,7 +33,7 @@ The MCP stdio transport (`StdioMcpClient`) is now real. `MCP_TRANSPORT_READY = t
 cd ~/workspace/dino-lab/atelier
 npm install
 npm run build
-npm test            # 360/360 should pass
+npm test            # 382/382 should pass
 
 # Or run the CLI directly:
 node packages/cli/dist/index.js --help

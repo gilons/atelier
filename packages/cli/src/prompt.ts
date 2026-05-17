@@ -170,4 +170,151 @@ export class PromptSession {
     if (raw.startsWith("n")) return false;
     return def;
   }
+
+  /**
+   * Multi-select picker. Renders the options, accepts toggle commands
+   * one prompt at a time, supports filter/search, and returns the
+   * chosen subset when the user says "done" (or just enter).
+   *
+   * Input grammar (one per line):
+   *   - `1`, `1,3,5`, `1-4`  → toggle those by index
+   *   - `all`               → select every visible option
+   *   - `none`              → deselect everything
+   *   - `/<query>`           → filter the list to options whose label
+   *                            contains the query (case-insensitive);
+   *                            `/` alone clears the filter
+   *   - `done` or empty     → finish, return the selected subset
+   *   - `quit`              → return null (caller treats as cancel)
+   *
+   * Designed for ≤ ~50 options. For very long lists, paginate the
+   * caller side.
+   */
+  async pickMany<T>(
+    question: string,
+    options: Array<{
+      label: string;
+      value: T;
+      note?: string;
+      /** Visually mark already-selected items (e.g. already registered). */
+      preselected?: boolean;
+      /** Visually mark unactionable items (e.g. already registered). */
+      disabled?: boolean;
+    }>
+  ): Promise<T[] | null> {
+    const selected = new Set<number>();
+    options.forEach((o, i) => {
+      if (o.preselected) selected.add(i);
+    });
+    let filter = "";
+    while (true) {
+      this.renderMultiSelect(question, options, selected, filter);
+      const raw = (await this.ask("  Selection")).trim();
+      if (raw === "" || raw.toLowerCase() === "done") {
+        // Drop disabled items from the result — they're informational.
+        return [...selected]
+          .filter((i) => !options[i].disabled)
+          .map((i) => options[i].value);
+      }
+      if (raw.toLowerCase() === "quit" || raw.toLowerCase() === "cancel") {
+        return null;
+      }
+      if (raw.toLowerCase() === "all") {
+        options.forEach((o, i) => {
+          if (!o.disabled && matchesFilter(o.label, filter)) selected.add(i);
+        });
+        continue;
+      }
+      if (raw.toLowerCase() === "none") {
+        selected.clear();
+        continue;
+      }
+      if (raw.startsWith("/")) {
+        filter = raw.slice(1).trim();
+        continue;
+      }
+      // Toggle by index/range.
+      const indices = parseToggleSpec(raw, options.length);
+      if (indices.length === 0) {
+        this.io.output.write(
+          `  ${pad("invalid input")}— try numbers (1,3-5), 'all', 'none', '/text', 'done', or 'quit'\n`
+        );
+        continue;
+      }
+      for (const i of indices) {
+        if (options[i].disabled) continue;
+        if (selected.has(i)) selected.delete(i);
+        else selected.add(i);
+      }
+    }
+  }
+
+  private renderMultiSelect<T>(
+    question: string,
+    options: Array<{
+      label: string;
+      value: T;
+      note?: string;
+      preselected?: boolean;
+      disabled?: boolean;
+    }>,
+    selected: Set<number>,
+    filter: string
+  ): void {
+    // Match the isTTY check used by ui.ts so NO_COLOR / piped output
+    // doesn't get raw ANSI escape sequences.
+    const isTty = (this.io.output as NodeJS.WriteStream).isTTY === true;
+    const dim = isTty ? (s: string) => `\x1b[2m${s}\x1b[0m` : (s: string) => s;
+    this.io.output.write("\n");
+    this.io.output.write(`${question}\n`);
+    if (filter) this.io.output.write(`  ${dim(`(filter: /${filter})`)}\n`);
+    const idxWidth = String(options.length).length;
+    let visible = 0;
+    options.forEach((opt, i) => {
+      if (!matchesFilter(opt.label, filter)) return;
+      visible++;
+      const num = String(i + 1).padStart(idxWidth);
+      const mark = opt.disabled ? " - " : selected.has(i) ? " ✓ " : " · ";
+      const labelText = opt.disabled ? dim(opt.label) : opt.label;
+      const noteText = opt.note ? `  ${dim(opt.note)}` : "";
+      this.io.output.write(`  [${num}]${mark}${labelText}${noteText}\n`);
+    });
+    if (visible === 0) {
+      this.io.output.write(`  ${dim(`(no options match /${filter})`)}\n`);
+    }
+    this.io.output.write(
+      `  ${dim("[1,3-5] toggle")}  ${dim("[/text] filter")}  ${dim("[all]")}  ${dim("[none]")}  ${dim("[done]")}  ${dim("[quit]")}\n`
+    );
+  }
+}
+
+function pad(s: string): string {
+  return s.padEnd(14) + " ";
+}
+
+function matchesFilter(label: string, filter: string): boolean {
+  if (!filter) return true;
+  return label.toLowerCase().includes(filter.toLowerCase());
+}
+
+function parseToggleSpec(raw: string, max: number): number[] {
+  const out = new Set<number>();
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const range = /^(\d+)-(\d+)$/.exec(trimmed);
+    if (range) {
+      const lo = parseInt(range[1], 10);
+      const hi = parseInt(range[2], 10);
+      if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
+      for (let i = lo; i <= hi; i++) {
+        if (i >= 1 && i <= max) out.add(i - 1);
+      }
+      continue;
+    }
+    const single = parseInt(trimmed, 10);
+    if (!Number.isFinite(single)) return [];
+    if (single >= 1 && single <= max) out.add(single - 1);
+    else return [];
+  }
+  return [...out];
 }
