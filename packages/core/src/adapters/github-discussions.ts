@@ -342,8 +342,18 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
         prompt: "Source id (slug)",
         default: "github-discussions",
         validate: /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
+        // No need to ask — the slug is derived from the kind. User
+        // can override with --answer id=… or edit sources.yaml later.
+        auto: true,
       },
-      { key: "name", prompt: "Display name", default: "GitHub Discussions" },
+      {
+        key: "name",
+        prompt: "Display name",
+        default: "GitHub Discussions",
+        // Same reasoning — display name maps 1:1 to the adapter's
+        // own displayName. Removing the Enter-through friction.
+        auto: true,
+      },
       {
         key: "repos",
         prompt: "Which repos should I pull discussions from?",

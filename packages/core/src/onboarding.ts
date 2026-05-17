@@ -89,6 +89,18 @@ export interface OnboardingStep {
   /** Free-form help shown above the prompt. */
   help?: string;
   /**
+   * Apply the step's `default` automatically without prompting the
+   * user. Used for fields where the default is virtually always
+   * what the user wants (e.g. "Source id" derived from the kind
+   * slug, "Display name" derived from the adapter's displayName) —
+   * removes Enter-through friction in the onboarding flow. The
+   * applied value still appears in the summary so the user sees
+   * what's about to be persisted.
+   *
+   * Overridable in non-interactive mode via `--answer key=value`.
+   */
+  auto?: boolean;
+  /**
    * Render as a multi-select picker (when used with
    * {@link discoverChoices}). The selected values are joined into a
    * comma-separated string and stored under `step.key` so the rest

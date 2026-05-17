@@ -300,6 +300,18 @@ async function runOnboardingInner(
       );
       continue;
     }
+    // Steps flagged `auto` apply their default silently — the
+    // onboarding flow uses this for fields where the default is
+    // virtually always right (id, display name). Show what was
+    // applied so the user can spot it in the transcript, but
+    // don't ask.
+    if (step.auto && step.default !== undefined) {
+      answers.values[step.key] = step.default;
+      ui.print(
+        `  ${ui.dim("·")} ${step.prompt}: ${ui.bold(step.default)} ${ui.dim("(default)")}`
+      );
+      continue;
+    }
     if (!interactive) {
       if (step.default !== undefined) {
         answers.values[step.key] = step.default;
