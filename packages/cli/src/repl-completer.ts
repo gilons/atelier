@@ -52,9 +52,19 @@ export function completeLine(
   line: string,
   _cursor: number = line.length
 ): CompletionResult {
-  // Non-slash, non-empty input → no suggestions. (Empty input still
-  // shows everything so the user discovers what's available.)
-  if (line.length > 0 && !line.startsWith("/")) {
+  // Empty input → no menu. Fish/zsh-style: the dropdown only appears
+  // once the user starts typing. This keeps the welcome banner clean
+  // and, critically, prevents the menu from pushing the cursor off
+  // the prompt line when the terminal is short — listing every
+  // command at startup would scroll the viewport and leave the
+  // visual cursor parked on a suggestion row.
+  if (line.length === 0) {
+    return { span: "", items: [] };
+  }
+
+  // Non-slash input → no suggestions either. The REPL prints a hint
+  // when the user hits enter, which is the better cue than a menu.
+  if (!line.startsWith("/")) {
     return { span: line, items: [] };
   }
 

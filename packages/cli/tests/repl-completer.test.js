@@ -69,8 +69,17 @@ function displays(result) {
 // Empty / non-slash input
 // ============================================================
 
-test("completeLine: empty input lists every top-level command", () => {
+test("completeLine: empty input returns no suggestions (clean prompt)", () => {
+  // The menu only opens once the user starts typing — keeps the
+  // welcome banner uncluttered and avoids pushing the visual
+  // cursor off-screen on short terminals.
   const r = completeLine(makeRegistry(), "");
+  assert.deepEqual(r.items, []);
+  assert.equal(r.span, "");
+});
+
+test("completeLine: '/' (just the slash) lists every top-level command", () => {
+  const r = completeLine(makeRegistry(), "/");
   const displayed = displays(r);
   for (const b of REPL_BUILTINS) {
     assert.ok(displayed.includes(`/${b}`), `missing /${b}`);
@@ -78,11 +87,10 @@ test("completeLine: empty input lists every top-level command", () => {
   for (const c of ["/init", "/repo", "/source"]) {
     assert.ok(displayed.includes(c), `missing ${c}`);
   }
-  assert.equal(r.span, "/");
 });
 
 test("completeLine: every top-level suggestion carries its summary as description", () => {
-  const r = completeLine(makeRegistry(), "");
+  const r = completeLine(makeRegistry(), "/");
   const init = r.items.find((s) => s.display === "/init");
   assert.equal(init.description, "Initialize a workspace");
   const repo = r.items.find((s) => s.display === "/repo");
