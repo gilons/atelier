@@ -299,21 +299,49 @@ export class InputReader {
       // 2) Suggestion menu beneath the prompt. Each suggestion gets
       //    its own line. We always lead with `\n` so we never
       //    accidentally write a suggestion ON the prompt line.
+      //
+      //    CRITICAL: each menu line MUST fit on a single visual row.
+      //    If a row wraps, the terminal advances the cursor by an
+      //    extra row, and our "walk back up by N" math below lands
+      //    on the wrong row — visually parking the cursor inside the
+      //    menu instead of on the prompt line. So we measure the
+      //    terminal width and truncate descriptions to fit.
+      const termWidth = (this.output as NodeJS.WriteStream).columns ?? 80;
       const labelWidth = Math.min(
         40,
         items.reduce((m, s) => Math.max(m, displayOf(s.suggestion).length), 0)
       );
+      // Layout per row: "  " (2) + marker " " (2) + label (labelWidth)
+      //               + (if desc) "  — " (4) + description text
+      // We also keep 1 column of safety so we never sit exactly at
+      // the terminal edge (some terminals wrap defensively at width).
+      const fixedLayoutWidth = 2 + 2 + labelWidth;
+      const descPrefix = "  — ";
+      const maxDescWidth = Math.max(
+        10,
+        termWidth - fixedLayoutWidth - descPrefix.length - 1
+      );
+
       for (const item of items) {
         const highlighted = item.absoluteIndex === this.highlight;
         const marker = highlighted ? cyan("›") : " ";
         const label = pad(displayOf(item.suggestion), labelWidth);
         const labelOut = highlighted ? bold(label) : label;
-        const desc = item.suggestion.description
-          ? "  " + dim("— " + item.suggestion.description)
-          : "";
+        let desc = "";
+        if (item.suggestion.description) {
+          let descText = item.suggestion.description;
+          if (descText.length > maxDescWidth) {
+            descText = descText.slice(0, Math.max(1, maxDescWidth - 1)) + "…";
+          }
+          desc = "  " + dim("— " + descText);
+        }
         this.output.write(`\n  ${marker} ${labelOut}${desc}`);
       }
-      // 3) Help line.
+      // 3) Help line — short enough to fit any reasonable terminal,
+      //    but if a user resizes very narrow it could wrap too. The
+      //    same walk-back-up logic would drift. For now we don't
+      //    handle that; the inline help is below the 60-col floor
+      //    we already use for the welcome banner.
       this.output.write(
         "\n  " + dim("↑↓ navigate · ⇥/→ accept · ↵ submit · esc dismiss")
       );
