@@ -6,7 +6,12 @@ import type {
   RemoteDocMetadata,
   SourceAdapter,
 } from "./source-adapters.js";
-import type { McpServerDef } from "./mcp-config.js";
+import type {
+  McpFetchMapping,
+  McpListMapping,
+  McpServerDef,
+  McpToolBinding,
+} from "./mcp-config.js";
 import type { Source } from "./types.js";
 
 import { ATELIER_VERSION } from "./version.js";
@@ -108,16 +113,74 @@ export class McpSourceAdapter implements SourceAdapter {
   }
 
   async listDocs(): Promise<RemoteDocMetadata[]> {
-    const toolName = this.opts.server.tools?.list ?? "atelier_list_docs";
-    const raw = (await this.opts.client.callTool(toolName, {
+    const binding = resolveBinding(
+      this.opts.server.tools?.list,
+      "atelier_list_docs"
+    );
+    const args = {
       scope: this.opts.scope ?? {},
-    })) as McpListDocsResult;
-    if (!raw || !Array.isArray(raw.docs)) {
+      ...(binding.args ?? {}),
+    };
+    const raw = await this.opts.client.callTool(binding.name, args);
+    return mapListResult(raw, binding.map as McpListMapping | undefined, {
+      serverId: this.opts.serverId,
+      toolName: binding.name,
+    });
+  }
+
+  async fetchDoc(docId: string): Promise<FetchedDoc> {
+    const binding = resolveBinding(
+      this.opts.server.tools?.fetch,
+      "atelier_fetch_doc"
+    );
+    const argKey = binding.argKey ?? "docId";
+    const args = {
+      [argKey]: docId,
+      ...(binding.args ?? {}),
+    };
+    const raw = await this.opts.client.callTool(binding.name, args);
+    return mapFetchResult(raw, docId, binding.map as McpFetchMapping | undefined, {
+      serverId: this.opts.serverId,
+      toolName: binding.name,
+    });
+  }
+}
+
+/**
+ * Normalize `tools.list` / `tools.fetch` into a binding record.
+ * Treats a bare string (legacy) as "just the tool name, no
+ * mapping" and lets the caller layer on whatever defaults it
+ * wants on top.
+ */
+function resolveBinding(
+  raw: string | McpToolBinding | undefined,
+  defaultName: string
+): McpToolBinding {
+  if (raw === undefined) return { name: defaultName };
+  if (typeof raw === "string") return { name: raw };
+  return raw;
+}
+
+/**
+ * Apply a list mapping (if any) to a raw tool response and
+ * coerce the result into Atelier's `RemoteDocMetadata[]` shape.
+ * No mapping → expect Atelier's native `{docs: [...]}` shape and
+ * validate it (matches the pre-mapping behavior so existing
+ * Atelier-compatible servers are unaffected).
+ */
+function mapListResult(
+  raw: unknown,
+  map: McpListMapping | undefined,
+  ctx: { serverId: string; toolName: string }
+): RemoteDocMetadata[] {
+  if (!map) {
+    const r = raw as McpListDocsResult | null;
+    if (!r || !Array.isArray(r.docs)) {
       throw new Error(
-        `MCP server "${this.opts.serverId}": tool "${toolName}" returned an unexpected shape (expected { docs: [...] }).`
+        `MCP server "${ctx.serverId}": tool "${ctx.toolName}" returned an unexpected shape (expected { docs: [...] }). Add tools.list.map to ~/.atelier/mcp-servers.json if the server returns a different shape.`
       );
     }
-    return raw.docs.map((d) => ({
+    return r.docs.map((d) => ({
       docId: d.docId,
       title: d.title,
       summary: d.summary,
@@ -126,24 +189,123 @@ export class McpSourceAdapter implements SourceAdapter {
       lastModified: d.lastModified,
     }));
   }
+  // Mapping-driven path: resolve the docs array, then per-item
+  // fields, by walking dot-paths into the raw response.
+  const docsRoot = map.docs === undefined ? raw : getByPath(raw, map.docs);
+  if (!Array.isArray(docsRoot)) {
+    throw new Error(
+      `MCP server "${ctx.serverId}": tool "${ctx.toolName}" mapping — "${map.docs ?? "<root>"}" didn't resolve to an array.`
+    );
+  }
+  const out: RemoteDocMetadata[] = [];
+  for (const item of docsRoot) {
+    const docId = pluck(item, map.docId);
+    const title = pluck(item, map.title);
+    if (!docId || !title) {
+      // Skip rather than throw — a malformed item shouldn't
+      // poison the whole listing. The user can tighten the
+      // mapping if they want stricter behavior.
+      continue;
+    }
+    out.push({
+      docId: String(docId),
+      title: String(title),
+      summary: optionalString(pluck(item, map.summary)),
+      url: optionalString(pluck(item, map.url)),
+      contentHash: optionalString(pluck(item, map.contentHash)),
+      lastModified: optionalString(pluck(item, map.lastModified)),
+    });
+  }
+  return out;
+}
 
-  async fetchDoc(docId: string): Promise<FetchedDoc> {
-    const toolName = this.opts.server.tools?.fetch ?? "atelier_fetch_doc";
-    const raw = (await this.opts.client.callTool(toolName, { docId })) as McpFetchDocResult;
-    if (!raw || typeof raw.body !== "string") {
+function mapFetchResult(
+  raw: unknown,
+  fallbackDocId: string,
+  map: McpFetchMapping | undefined,
+  ctx: { serverId: string; toolName: string }
+): FetchedDoc {
+  if (!map) {
+    const r = raw as McpFetchDocResult | null;
+    if (!r || typeof r.body !== "string") {
       throw new Error(
-        `MCP server "${this.opts.serverId}": tool "${toolName}" returned an unexpected shape (expected { docId, title, body }).`
+        `MCP server "${ctx.serverId}": tool "${ctx.toolName}" returned an unexpected shape (expected { docId, title, body }). Add tools.fetch.map to ~/.atelier/mcp-servers.json if the server returns a different shape.`
       );
     }
     return {
-      docId: raw.docId ?? docId,
-      title: raw.title,
-      body: raw.body,
-      summary: raw.summary,
-      url: raw.url,
-      contentHash: raw.contentHash,
+      docId: r.docId ?? fallbackDocId,
+      title: r.title,
+      body: r.body,
+      summary: r.summary,
+      url: r.url,
+      contentHash: r.contentHash,
     };
   }
+  const body = pluck(raw, map.body);
+  if (typeof body !== "string") {
+    throw new Error(
+      `MCP server "${ctx.serverId}": tool "${ctx.toolName}" mapping — "${map.body ?? "<missing>"}" didn't resolve to a string body.`
+    );
+  }
+  return {
+    docId: fallbackDocId,
+    title: String(pluck(raw, map.title) ?? ""),
+    body,
+    summary: optionalString(pluck(raw, map.summary)),
+    url: optionalString(pluck(raw, map.url)),
+    contentHash: optionalString(pluck(raw, map.contentHash)),
+  };
+}
+
+function pluck(obj: unknown, path: string | undefined): unknown {
+  if (path === undefined) return undefined;
+  return getByPath(obj, path);
+}
+
+function optionalString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+/**
+ * Tiny dot-path reader. Accepts both `a.b.c` and the JSONPath-
+ * style `$.a.b.c` (the `$.` prefix is stripped). Returns
+ * `undefined` for any missing segment. Bracket-index notation
+ * (`a[0].b`) is supported too — handy for tools that return
+ * `{ value: [...] }` and the user wants the first element.
+ *
+ * Deliberately minimal: no wildcards, no filters, no recursive
+ * descent. The mapping config is for shape adapting, not query
+ * languages — if someone needs JSONPath they can pre-shape with
+ * a wrapper server.
+ */
+export function getByPath(obj: unknown, path: string): unknown {
+  let p = path;
+  if (p.startsWith("$.")) p = p.slice(2);
+  else if (p === "$") return obj;
+  if (p.length === 0) return obj;
+  const segments: Array<string | number> = [];
+  // Split on `.` but also recognise `[N]` bracket indices.
+  for (const part of p.split(".")) {
+    const m = /^([^[\]]+)((?:\[\d+\])*)$/.exec(part);
+    if (!m) {
+      // Unknown segment shape — bail with undefined; better than
+      // throwing during a sync run.
+      return undefined;
+    }
+    segments.push(m[1]);
+    const brackets = m[2];
+    if (brackets) {
+      for (const idx of brackets.matchAll(/\[(\d+)\]/g)) {
+        segments.push(Number(idx[1]));
+      }
+    }
+  }
+  let cur: unknown = obj;
+  for (const s of segments) {
+    if (cur === null || cur === undefined) return undefined;
+    cur = (cur as Record<string | number, unknown>)[s as never];
+  }
+  return cur;
 }
 
 // ============================================================

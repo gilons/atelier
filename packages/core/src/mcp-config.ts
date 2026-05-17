@@ -24,6 +24,72 @@ export const ATELIER_HOME_DIR = path.join(os.homedir(), ".atelier");
 export const MCP_SERVERS_FILE = path.join(ATELIER_HOME_DIR, "mcp-servers.json");
 
 /**
+ * A field-mapping spec for adapting an arbitrary MCP tool's
+ * response into the shape Atelier's source adapter expects.
+ * Each value is a dot-path applied to the tool's raw response (or,
+ * inside `docId/title/...` for list, applied to each docs-array
+ * item). Paths may start with the optional sentinel `$.` (JSONPath-
+ * style root marker, accepted for familiarity).
+ *
+ * Used when the configured MCP server doesn't natively return
+ * Atelier's expected shape — common when wrapping a SharePoint /
+ * Confluence / etc. MCP server built for general use.
+ */
+export interface McpListMapping {
+  /**
+   * Path to the array of doc-like items in the raw response.
+   * Defaults to the response root if omitted (the tool already
+   * returns an array, or already a `{docs: [...]}` shape).
+   */
+  docs?: string;
+  /** Path inside each item that yields the docId (required when mapping). */
+  docId?: string;
+  /** Path inside each item for the title. */
+  title?: string;
+  /** Path inside each item for the URL. */
+  url?: string;
+  /** Path inside each item for the last-modified timestamp. */
+  lastModified?: string;
+  /** Path inside each item for an optional short summary. */
+  summary?: string;
+  /** Path inside each item for an opaque content hash, when the server exposes one. */
+  contentHash?: string;
+}
+
+export interface McpFetchMapping {
+  /** Path to the doc body (markdown / text). Required when mapping. */
+  body?: string;
+  /** Path to the title in the response. */
+  title?: string;
+  /** Path to the URL. */
+  url?: string;
+  /** Path to the doc summary. */
+  summary?: string;
+  /** Path to the content hash. */
+  contentHash?: string;
+}
+
+export interface McpToolBinding {
+  /** Tool name on the server. */
+  name: string;
+  /**
+   * Static arguments to pass through to the tool on every call,
+   * merged with the request-time arguments (scope for list, docId
+   * for fetch). Used for things like `{ siteUrl, listTitle }` that
+   * never change.
+   */
+  args?: Record<string, unknown>;
+  /**
+   * For fetch only: the parameter name the tool expects the docId
+   * under. Defaults to `"docId"`. Common alternatives:
+   * `"fileRelativeUrl"`, `"itemId"`, `"path"`.
+   */
+  argKey?: string;
+  /** Optional response-shape mapping. */
+  map?: McpListMapping | McpFetchMapping;
+}
+
+/**
  * Definition of a single MCP server. Mirrors the conventional shape
  * Claude Desktop and others use, with extras for Atelier's wiring.
  */
@@ -40,14 +106,20 @@ export interface McpServerDef {
   /** Optional human description. */
   description?: string;
   /**
-   * Conventional tool names used by Atelier when this server backs a
-   * source. The adapter calls `tools.list` for enumeration and
-   * `tools.fetch` for a single doc's content. Users can override per
-   * server if their server names tools differently.
+   * How Atelier reaches the list-docs and fetch-doc capabilities on
+   * this server. Each value is either:
+   *
+   *   - a string (just the tool name; response shape must already
+   *     match Atelier's expected `{docs: [...]}` / `{body, ...}` form), or
+   *
+   *   - a {@link McpToolBinding} (tool name + static args + an
+   *     optional response-shape mapping). Use the binding form when
+   *     plugging in a third-party MCP server whose tools return a
+   *     different shape from Atelier's native one.
    */
   tools?: {
-    list?: string;
-    fetch?: string;
+    list?: string | McpToolBinding;
+    fetch?: string | McpToolBinding;
   };
 }
 
@@ -165,19 +237,71 @@ export function normalizeMcpServersConfig(
       const t = def.tools as Record<string, unknown>;
       out.tools = {};
       if (t.list !== undefined) {
-        if (typeof t.list !== "string") {
-          throw new Error(`${contextPath}: servers.${id}.tools.list must be a string`);
-        }
-        out.tools.list = t.list;
+        out.tools.list = normalizeToolBinding(
+          t.list,
+          `${contextPath}: servers.${id}.tools.list`
+        );
       }
       if (t.fetch !== undefined) {
-        if (typeof t.fetch !== "string") {
-          throw new Error(`${contextPath}: servers.${id}.tools.fetch must be a string`);
-        }
-        out.tools.fetch = t.fetch;
+        out.tools.fetch = normalizeToolBinding(
+          t.fetch,
+          `${contextPath}: servers.${id}.tools.fetch`
+        );
       }
     }
     servers[id] = out;
   }
   return { version: 1, servers };
+}
+
+/**
+ * Accept either a bare string ("just the tool name") or a binding
+ * object ({ name, args?, argKey?, map? }). Returns the same shape
+ * Atelier consumes downstream. Throws with the surrounding path
+ * baked into the message so users can locate the bad field
+ * quickly.
+ */
+function normalizeToolBinding(
+  raw: unknown,
+  ctxPath: string
+): string | McpToolBinding {
+  if (typeof raw === "string") {
+    if (raw.length === 0) throw new Error(`${ctxPath} must be a non-empty string`);
+    return raw;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${ctxPath} must be a string or an object`);
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.name !== "string" || obj.name.length === 0) {
+    throw new Error(`${ctxPath}.name must be a non-empty string`);
+  }
+  const out: McpToolBinding = { name: obj.name };
+  if (obj.args !== undefined) {
+    if (typeof obj.args !== "object" || obj.args === null || Array.isArray(obj.args)) {
+      throw new Error(`${ctxPath}.args must be an object`);
+    }
+    out.args = obj.args as Record<string, unknown>;
+  }
+  if (obj.argKey !== undefined) {
+    if (typeof obj.argKey !== "string" || obj.argKey.length === 0) {
+      throw new Error(`${ctxPath}.argKey must be a non-empty string`);
+    }
+    out.argKey = obj.argKey;
+  }
+  if (obj.map !== undefined) {
+    if (typeof obj.map !== "object" || obj.map === null || Array.isArray(obj.map)) {
+      throw new Error(`${ctxPath}.map must be an object`);
+    }
+    const mapRaw = obj.map as Record<string, unknown>;
+    const map: Record<string, string> = {};
+    for (const [k, v] of Object.entries(mapRaw)) {
+      if (typeof v !== "string") {
+        throw new Error(`${ctxPath}.map.${k} must be a string (dot-path)`);
+      }
+      map[k] = v;
+    }
+    out.map = map as McpListMapping | McpFetchMapping;
+  }
+  return out;
 }

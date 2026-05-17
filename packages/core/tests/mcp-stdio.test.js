@@ -207,3 +207,132 @@ test("syncWorkspace can pull docs from a real spawned MCP server", async () => {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
+
+// ============================================================
+// Tool-shape mapping — adapts a server returning a non-Atelier
+// shape (e.g. a generic SharePoint MCP server) into the
+// adapter's expected RemoteDocMetadata / FetchedDoc form.
+// ============================================================
+
+function fakeMappingClient(map) {
+  const calls = [];
+  return {
+    calls,
+    callTool(name, args) {
+      calls.push({ name, args });
+      return Promise.resolve(map[name]);
+    },
+    dispose() {
+      return Promise.resolve();
+    },
+  };
+}
+
+test("McpSourceAdapter.listDocs honors a tool-shape mapping", async () => {
+  // Simulate a SharePoint-style server returning { value: [...] }
+  // with field names that don't match Atelier's native shape.
+  const client = fakeMappingClient({
+    spo_list_files: {
+      value: [
+        {
+          id: "01ABC",
+          name: "spec.md",
+          webUrl: "https://contoso.sharepoint.com/.../spec.md",
+          lastModifiedDateTime: "2026-05-10T09:00:00Z",
+        },
+        {
+          id: "01DEF",
+          name: "notes.md",
+          webUrl: "https://contoso.sharepoint.com/.../notes.md",
+          lastModifiedDateTime: "2026-05-11T12:00:00Z",
+        },
+      ],
+    },
+  });
+  const adapter = new McpSourceAdapter({
+    serverId: "fake-sharepoint",
+    server: {
+      command: "irrelevant",
+      tools: {
+        list: {
+          name: "spo_list_files",
+          args: { siteUrl: "https://contoso.sharepoint.com" },
+          map: {
+            docs: "value",
+            docId: "id",
+            title: "name",
+            url: "webUrl",
+            lastModified: "lastModifiedDateTime",
+          },
+        },
+      },
+    },
+    client,
+  });
+  const docs = await adapter.listDocs();
+  assert.equal(docs.length, 2);
+  assert.deepEqual(docs[0], {
+    docId: "01ABC",
+    title: "spec.md",
+    summary: undefined,
+    url: "https://contoso.sharepoint.com/.../spec.md",
+    contentHash: undefined,
+    lastModified: "2026-05-10T09:00:00Z",
+  });
+  // The static args should have been forwarded to the tool call.
+  assert.deepEqual(client.calls[0].args.siteUrl, "https://contoso.sharepoint.com");
+});
+
+test("McpSourceAdapter.fetchDoc honors mapping + custom argKey", async () => {
+  const client = fakeMappingClient({
+    spo_get_file: {
+      name: "spec.md",
+      webUrl: "https://contoso.sharepoint.com/.../spec.md",
+      contents: "# Spec\n\nThe body.",
+    },
+  });
+  const adapter = new McpSourceAdapter({
+    serverId: "fake-sharepoint",
+    server: {
+      command: "irrelevant",
+      tools: {
+        fetch: {
+          name: "spo_get_file",
+          argKey: "fileId",
+          args: { siteUrl: "https://contoso.sharepoint.com" },
+          map: {
+            body: "contents",
+            title: "name",
+            url: "webUrl",
+          },
+        },
+      },
+    },
+    client,
+  });
+  const fetched = await adapter.fetchDoc("01ABC");
+  assert.equal(fetched.docId, "01ABC");
+  assert.equal(fetched.title, "spec.md");
+  assert.match(fetched.body, /# Spec/);
+  // The docId should have been forwarded under the custom arg key.
+  assert.equal(client.calls[0].args.fileId, "01ABC");
+  // Static args still merged in.
+  assert.equal(
+    client.calls[0].args.siteUrl,
+    "https://contoso.sharepoint.com"
+  );
+});
+
+test("McpSourceAdapter.listDocs without a mapping still validates the native shape", async () => {
+  const client = fakeMappingClient({
+    atelier_list_docs: { docs: [{ docId: "a", title: "A" }] },
+  });
+  const adapter = new McpSourceAdapter({
+    serverId: "native",
+    server: { command: "irrelevant" }, // no tools override
+    client,
+  });
+  const docs = await adapter.listDocs();
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].docId, "a");
+});
