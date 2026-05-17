@@ -298,6 +298,11 @@ async function runOnboardingInner(
     // multi- or single-select picker. On empty/failed discovery we
     // fall through to the regular text prompt so the user can still
     // type the value manually.
+    if (process.env.ATELIER_DEBUG) {
+      ui.print(
+        `  ${ui.dim(`[debug] step=${step.key} discoverChoices=${typeof step.discoverChoices} multiSelect=${step.multiSelect ?? false} interactive=${interactive}`)}`
+      );
+    }
     if (step.discoverChoices) {
       const ctx = await getCtx();
       let choices = [] as Awaited<ReturnType<NonNullable<OnboardingStep["discoverChoices"]>>>;
