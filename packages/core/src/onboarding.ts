@@ -214,6 +214,24 @@ export interface OnboardingFlow {
 
   /** Translate final answers into a registry entry. */
   toRegistryEntry(answers: OnboardingAnswers): OnboardingResult;
+
+  /**
+   * Optional: combine the new onboarding answers with an already-
+   * registered source. Called by the CLI when the user re-runs
+   * /source onboard, points at the same id, and confirms the
+   * "add to existing" prompt — typical scenario is incrementally
+   * adding more discussions to a github-discussions source they
+   * already onboarded.
+   *
+   * Returns a fresh {@link OnboardingResult} whose `source` is the
+   * merged entry. The CLI rewrites the existing entry with this
+   * value (no second addition of any MCP server / env vars; those
+   * stay as-is on the existing entry).
+   *
+   * Adapters that don't override this fall back to a "create new
+   * id" flow.
+   */
+  merge?(existing: Source, answers: OnboardingAnswers): OnboardingResult;
 }
 
 // ============================================================

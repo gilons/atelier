@@ -3,6 +3,7 @@ import {
   getAdapter,
   listAdapters,
   addSource,
+  updateSource,
   upsertMcpServer,
   githubOrgFromRemote,
   listRepos,
@@ -14,6 +15,7 @@ import {
   type OnboardingContext,
   type OnboardingResult,
   type OnboardingStep,
+  type Source,
   type TransportOption,
 } from "@atelier/core";
 import type { Command } from "../command.js";
@@ -436,11 +438,54 @@ async function runOnboardingInner(
   }
 
   // ---- Phase 5: summary + confirm ----
-  const entry = flow.toRegistryEntry(answers);
+  let entry = flow.toRegistryEntry(answers);
+
+  // If a source with the same id already exists, offer to MERGE
+  // the new selections into it instead of failing on duplicate.
+  // Common case: the user re-runs /source onboard to add more
+  // discussions to a source they already created.
+  let mergeIntoId: string | null = null;
+  const targetId = entry.source.id;
+  if (targetId) {
+    // Re-read sources here rather than reuse onboardingCtx.existingSources:
+    // the user may have edited sources.yaml externally between the start
+    // of onboarding and now, and we want the merge decision based on
+    // the latest state.
+    const existingSources = await listSources(workspaceRoot);
+    const existing = existingSources.find((s) => s.id === targetId);
+    if (existing) {
+      if (existing.kind !== entry.source.kind) {
+        ui.error(
+          `Source id "${targetId}" is already registered as kind "${existing.kind}". Choose a different id.`
+        );
+        return 1;
+      }
+      if (!flow.merge) {
+        ui.error(
+          `Source "${targetId}" already exists and the ${flow.displayName} adapter doesn't support merging. Pick a different id or remove the existing one first.`
+        );
+        return 1;
+      }
+      // Build the merge candidate so the summary the user
+      // confirms reflects the final, combined entry — not what
+      // they just picked alone.
+      const merged = flow.merge(existing as Source, answers);
+      entry = merged;
+      mergeIntoId = targetId;
+      ui.print(
+        `  ${ui.cyan("ℹ")} A source with id ${ui.bold(targetId)} already exists — new selections will be ${ui.bold("merged")} into it.`
+      );
+      ui.blank();
+    }
+  }
+
   printSummary(entry);
 
   if (!opts.yes && interactive) {
-    const ok = await session!.confirm("Apply these changes?", { default: true });
+    const question = mergeIntoId
+      ? `Merge into source "${mergeIntoId}"?`
+      : "Apply these changes?";
+    const ok = await session!.confirm(question, { default: true });
     if (!ok) {
       ui.print(`  ${ui.dim("Aborted. Nothing was written.")}`);
       return 0;
@@ -456,17 +501,25 @@ async function runOnboardingInner(
 
   // ---- Phase 6: apply ----
   try {
-    await ui.spinner("Writing sources.yaml", () => applyToRegistry(workspaceRoot, entry));
-    if (entry.mcpServer) {
-      await ui.spinner(`Adding "${entry.mcpServer.id}" to ~/.atelier/mcp-servers.json`, () =>
-        upsertMcpServer(entry.mcpServer!.id, {
-          command: entry.mcpServer!.command,
-          args: entry.mcpServer!.args,
-          env: entry.mcpServer!.env,
-          tools: entry.mcpServer!.tools,
-          description: entry.mcpServer!.description,
-        })
+    if (mergeIntoId) {
+      await ui.spinner(`Updating "${mergeIntoId}" in sources.yaml`, () =>
+        applyMergedEntry(workspaceRoot, mergeIntoId, entry)
       );
+      // Deliberately skip the MCP-server upsert on merge: a merge
+      // never adds a new transport, only widens scope.
+    } else {
+      await ui.spinner("Writing sources.yaml", () => applyToRegistry(workspaceRoot, entry));
+      if (entry.mcpServer) {
+        await ui.spinner(`Adding "${entry.mcpServer.id}" to ~/.atelier/mcp-servers.json`, () =>
+          upsertMcpServer(entry.mcpServer!.id, {
+            command: entry.mcpServer!.command,
+            args: entry.mcpServer!.args,
+            env: entry.mcpServer!.env,
+            tools: entry.mcpServer!.tools,
+            description: entry.mcpServer!.description,
+          })
+        );
+      }
     }
   } catch (err) {
     if (err instanceof SourceAlreadyRegisteredError) {
@@ -501,6 +554,33 @@ async function applyToRegistry(
     scope: s.scope,
     enabled: true,
   });
+}
+
+/**
+ * Replace the registry entry at `id` with the merged result.
+ * Re-uses the existing entry's `enabled` flag if the adapter
+ * didn't surface one — by convention onboarding produces enabled
+ * entries, but merge shouldn't accidentally re-enable a source
+ * the user explicitly disabled.
+ */
+async function applyMergedEntry(
+  workspaceRoot: string,
+  id: string,
+  entry: OnboardingResult
+): Promise<void> {
+  const s = entry.source;
+  const next: Source = {
+    id,
+    kind: s.kind,
+    name: s.name,
+    enabled: true,
+  };
+  if (s.transport !== undefined) next.transport = s.transport;
+  if (s.mcpServer !== undefined) next.mcpServer = s.mcpServer;
+  if (s.credentials !== undefined) next.credentials = s.credentials;
+  if (s.adapterModule !== undefined) next.adapterModule = s.adapterModule;
+  if (s.scope !== undefined) next.scope = s.scope;
+  await updateSource(workspaceRoot, id, next);
 }
 
 function printSummary(entry: OnboardingResult): void {

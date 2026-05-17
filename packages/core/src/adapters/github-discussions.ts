@@ -453,6 +453,60 @@ const githubDiscussionsOnboarding: OnboardingFlow = {
       },
     };
   },
+  merge(existing, answers) {
+    // Build the "new only" result the normal way, then fold its
+    // scope into the existing entry. Union semantics for the list
+    // fields, latest-value-wins for the scalar settings.
+    const incoming = githubDiscussionsOnboarding.toRegistryEntry(answers);
+    const inScope = (incoming.source.scope ?? {}) as Partial<GitHubDiscussionsScope>;
+    const exScope = (existing.scope ?? {}) as Partial<GitHubDiscussionsScope>;
+
+    const repos = unique([...(exScope.repos ?? []), ...(inScope.repos ?? [])]);
+
+    // discussionIds rules:
+    //   · If either side has no pin, the result has no pin
+    //     ("sync everything in scope.repos"). A specific list on
+    //     one side + sync-all on the other resolves to sync-all
+    //     because sync-all is the broader subscription.
+    //   · Otherwise union the pinned ids.
+    const exPinned = exScope.discussionIds ?? [];
+    const inPinned = inScope.discussionIds ?? [];
+    const exFull = exScope.repos && exScope.repos.length > 0 && exPinned.length === 0;
+    const inFull = inScope.repos && inScope.repos.length > 0 && inPinned.length === 0;
+    let mergedDiscussionIds: string[] | undefined;
+    if (exFull || inFull) {
+      mergedDiscussionIds = undefined;
+    } else {
+      const u = unique([...exPinned, ...inPinned]);
+      mergedDiscussionIds = u.length > 0 ? u : undefined;
+    }
+
+    const categories = unique([
+      ...(exScope.categories ?? []),
+      ...(inScope.categories ?? []),
+    ]);
+    // For the cap, take the larger value — the user is broadening,
+    // not narrowing, with each merge.
+    const maxPerRepo = Math.max(
+      exScope.maxPerRepo ?? 0,
+      inScope.maxPerRepo ?? 0
+    );
+
+    const scope: Record<string, unknown> = { repos };
+    if (mergedDiscussionIds) scope.discussionIds = mergedDiscussionIds;
+    if (categories.length > 0) scope.categories = categories;
+    if (maxPerRepo > 0) scope.maxPerRepo = maxPerRepo;
+
+    return {
+      source: {
+        id: existing.id,
+        kind: "github-discussions",
+        name: existing.name,
+        transport: existing.transport ?? "cli",
+        scope,
+      },
+    };
+  },
 };
 
 function parseRepoList(raw: string | undefined): string[] {
@@ -757,6 +811,10 @@ export async function listDiscussionsForRepos(
 
 function parseCsv(raw: string | undefined): string[] {
   return parseRepoList(raw);
+}
+
+function unique<T>(xs: T[]): T[] {
+  return [...new Set(xs)];
 }
 
 registerAdapter({

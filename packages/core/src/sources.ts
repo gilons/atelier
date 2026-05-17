@@ -147,6 +147,33 @@ export async function addSource(
   return source;
 }
 
+/**
+ * Replace an existing source by id with a fully-formed entry.
+ *
+ * Used by the merge path in /source onboard: when the user
+ * onboards extra items into an already-registered source, the
+ * adapter produces the merged Source and we rewrite the file.
+ * Same persistence semantics as addSource — single read, single
+ * write, no partial state on disk.
+ *
+ * Throws SourceNotFoundError if the id isn't already registered.
+ */
+export async function updateSource(
+  workspaceRoot: string,
+  id: string,
+  next: Source
+): Promise<Source> {
+  const cfg = await loadSourcesConfig(workspaceRoot);
+  const idx = cfg.sources.findIndex((s) => s.id === id);
+  if (idx === -1) throw new SourceNotFoundError(id);
+  // Force the persisted id to match the lookup id even if the
+  // caller passed a different one — guards against accidental
+  // renames slipping through.
+  cfg.sources[idx] = { ...next, id };
+  await saveSourcesConfig(workspaceRoot, cfg);
+  return cfg.sources[idx];
+}
+
 /** Remove a source by id. Returns the removed entry. */
 export async function removeSource(workspaceRoot: string, id: string): Promise<Source> {
   const cfg = await loadSourcesConfig(workspaceRoot);
