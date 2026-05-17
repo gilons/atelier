@@ -323,6 +323,14 @@ export class MultiSelectPicker<T> {
   /**
    * Echo a one-line summary of what was picked so the scrollback
    * shows what the user submitted (the menu itself is gone).
+   *
+   * We deliberately don't repeat the question text here: in REPL
+   * mode the terminal sometimes scrolls the question header above
+   * the visible area before render() ends, so `clearRender` can
+   * miss it. Repeating the question in the echo then shows it
+   * twice — once from the surviving render header, once from the
+   * echo. A bare `→ value` line is unambiguous and looks fine
+   * whether or not the header was cleared.
    */
   private echoFinal(values: T[]): void {
     const summary =
@@ -331,7 +339,7 @@ export class MultiSelectPicker<T> {
         : values.length === 1
           ? labelOf(this.options[[...this.selected][0]])
           : `${values.length} item(s)`;
-    this.output.write(`${this.question}: ${summary}\n`);
+    this.output.write(`  ${cyan(this.output, "→")} ${summary}\n`);
   }
 
   private render(): void {
@@ -468,7 +476,14 @@ export class MultiSelectPicker<T> {
     } catch {
       /* ignore */
     }
-    this.input.pause();
+    // Note: we deliberately do NOT call input.pause() here. The
+    // picker is typically embedded in a larger flow (a wizard or a
+    // /source onboard run) that shares the same stdin via a
+    // PromptSession. Pausing stdin after the picker finishes leaves
+    // the session's readline starved — the next `ask()` call hangs
+    // or, worse, surfaces "input stream ended before answering"
+    // which the REPL catches as a clean exit. The caller owns the
+    // stdin lifecycle; we just hand control back.
     this.output.write("\x1b[?25h"); // restore cursor
     this.resolver?.(result);
     this.resolver = null;
@@ -713,8 +728,12 @@ export class SingleSelectPicker<T> {
     }
     const value = this.options[this.highlight].value;
     this.clearRender();
+    // See note on echoFinal in MultiSelectPicker — we don't repeat
+    // the question text here because clearRender may not have
+    // wiped it (terminal scroll), and a double-print of the
+    // question looks broken. A bare `→ value` is unambiguous.
     this.output.write(
-      `${this.question}: ${this.options[this.highlight].label}\n`
+      `  ${cyan(this.output, "→")} ${this.options[this.highlight].label}\n`
     );
     this.finish({ type: "submitted", value });
   }
@@ -837,7 +856,9 @@ export class SingleSelectPicker<T> {
     } catch {
       /* ignore */
     }
-    this.input.pause();
+    // See MultiSelectPicker.finish — do NOT pause stdin here.
+    // Caller (wizard / source-onboard) keeps reading via its
+    // PromptSession; pausing would strangle the next ask().
     this.output.write("\x1b[?25h");
     this.resolver?.(result);
     this.resolver = null;
