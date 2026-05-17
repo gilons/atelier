@@ -1,174 +1,198 @@
 import type { Command, CommandRegistry } from "./command.js";
-import type { CompleterFn } from "./prompt.js";
+import type { Completer, CompletionResult, Suggestion } from "./suggestion.js";
 
 /**
- * Tab-completion for the REPL prompt.
+ * As-you-type completer for the REPL prompt.
  *
- * Behavior, in priority order:
+ * Returns `{ span, items }` where:
+ *   - `span` is the substring of the current line that the chosen
+ *     suggestion would replace (computed from the cursor position
+ *     and the last token boundary).
+ *   - `items` is an ordered list of suggestion rows. Each row has
+ *     a `value` to insert, an optional `display` label, and a
+ *     `description` (typically the underlying command's `summary`).
  *
- *   1. Empty input  → suggest the slash prefix so the user knows
- *      commands start with `/`.
- *   2. Non-slash input → no suggestions (we don't autocomplete
- *      arbitrary text; the REPL responds with a hint message
- *      instead).
- *   3. `/<partial>` → match against built-in REPL commands
- *      (`help`, `quit`, …) plus every top-level CLI command.
- *   4. `/<cmd> <sub-partial>` → walk into the command tree; suggest
- *      matching subcommand names.
- *   5. `/<cmd> [...args] <partial>` after a leaf command was
- *      reached → first try the command's `complete()` hook (e.g.
- *      `source onboard` enumerates registered source kinds), then
- *      fall back to option flag completion (`--transport`,
- *      `--non-interactive`, …).
- *   6. `/<cmd> [...args] ` (trailing space) → show every possible
- *      next thing (subcommands and/or options and/or positional
- *      completions).
+ * Behavior:
+ *   1. Empty input  → list every top-level command (including REPL
+ *      built-ins) so the user can see what's possible.
+ *   2. `/<partial>` → match against built-ins + registry commands.
+ *   3. `/<cmd> <sub-partial>` → walk into the subcommand tree.
+ *   4. `/<cmd> <subs...> <partial>` → first try the leaf command's
+ *      `complete()` hook (e.g. `source onboard` enumerates source
+ *      kinds with descriptions); then fall back to option flags.
+ *   5. Non-slash input → no suggestions. The REPL handles the line
+ *      with a hint message at submit time.
  *
- * The completer is pure-function (no side effects) and easy to
- * unit-test. The REPL passes the result to readline.
+ * Pure function; the REPL passes us through `InputReader.completer`.
  */
 
-/** REPL-only commands that aren't in the CommandRegistry. */
-export const REPL_BUILTINS = ["help", "status", "clear", "quit", "exit"];
-
-export function buildReplCompleter(registry: CommandRegistry): CompleterFn {
-  return (line: string) => {
-    return completeLine(registry, line);
-  };
+interface BuiltinDef {
+  name: string;
+  summary: string;
 }
 
-/** Exported for unit tests — pure function, no side effects. */
+const REPL_BUILTIN_DEFS: BuiltinDef[] = [
+  { name: "help", summary: "Show available commands" },
+  { name: "status", summary: "Show workspace overview" },
+  { name: "clear", summary: "Clear the screen" },
+  { name: "quit", summary: "Leave the REPL" },
+  { name: "exit", summary: "Leave the REPL" },
+];
+
+/** Re-exported for tests that want to verify built-in coverage. */
+export const REPL_BUILTINS = REPL_BUILTIN_DEFS.map((d) => d.name);
+
+export function buildReplCompleter(registry: CommandRegistry): Completer {
+  return (line: string, cursor: number) => completeLine(registry, line, cursor);
+}
+
+/** Exported for tests — pure function. */
 export function completeLine(
   registry: CommandRegistry,
-  line: string
-): [string[], string] {
-  // The user hasn't typed anything yet — suggest "/" so they know
-  // commands start with a slash.
-  if (line.trim() === "") return [["/"], line];
-
-  // Non-slash input → no completions. The REPL will print a hint
-  // when the user hits enter, which is the better cue than tab.
-  if (!line.startsWith("/")) return [[], line];
-
-  // Tokenize the post-slash portion. Treat trailing whitespace as
-  // meaningful — it means "I've finished a token and want the next
-  // thing", which changes the suggestion shape (no partial match).
-  const body = line.slice(1);
-  const endsWithSpace = /\s$/.test(body) || body === "";
-  const tokens = body.split(/\s+/).filter((t) => t.length > 0);
-
-  // Phase 1: still typing the top-level command name.
-  if (tokens.length === 0 || (tokens.length === 1 && !endsWithSpace)) {
-    const partial = (tokens[0] ?? "").toLowerCase();
-    const all = uniqueSorted([
-      ...REPL_BUILTINS,
-      ...registry.commands.map((c) => c.name),
-    ]);
-    const matches = all.filter((name) => name.startsWith(partial));
-    // Return matches as `/<name>` so readline replaces the typed
-    // `/<partial>` correctly. The trailing space hint is left off
-    // because some matches are exit verbs (`/quit`) that don't take
-    // arguments — readline will still allow the user to type a space
-    // afterward.
-    return [matches.map((n) => `/${n}`), `/${tokens[0] ?? ""}`];
+  line: string,
+  _cursor: number = line.length
+): CompletionResult {
+  // Non-slash, non-empty input → no suggestions. (Empty input still
+  // shows everything so the user discovers what's available.)
+  if (line.length > 0 && !line.startsWith("/")) {
+    return { span: line, items: [] };
   }
 
-  // Phase 2: top-level command is known. Walk into it.
+  // Pre-split into tokens. We treat trailing whitespace as
+  // "advance to the next slot", which changes the suggestion shape.
+  const body = line.startsWith("/") ? line.slice(1) : line;
+  const endsWithSpace = body.length > 0 && /\s$/.test(body);
+  const tokens = body.split(/\s+/).filter((t) => t.length > 0);
+
+  // ---- Phase 1: top-level command name ----
+  if (tokens.length === 0 || (tokens.length === 1 && !endsWithSpace)) {
+    const partial = (tokens[0] ?? "").toLowerCase();
+    const candidates: Suggestion[] = [
+      ...REPL_BUILTIN_DEFS.map<Suggestion>((d) => ({
+        value: `/${d.name}`,
+        display: `/${d.name}`,
+        description: d.summary,
+      })),
+      ...registry.commands.map<Suggestion>((c) => ({
+        value: `/${c.name} `,
+        display: `/${c.name}`,
+        description: c.summary,
+      })),
+    ];
+    const matches = candidates.filter((s) =>
+      (s.display ?? s.value).slice(1).toLowerCase().startsWith(partial)
+    );
+    matches.sort((a, b) => (a.display ?? a.value).localeCompare(b.display ?? b.value));
+    return { span: `/${tokens[0] ?? ""}`, items: matches };
+  }
+
+  // ---- Phase 2: walk into the command tree ----
   const cmdName = tokens[0];
   const cmd = registry.commands.find((c) => c.name === cmdName);
-  if (!cmd) return [[], ""];
+  if (!cmd) return { span: "", items: [] };
 
   return completeWithinCommand(cmd, tokens.slice(1), endsWithSpace);
 }
 
-/**
- * Recursive helper: given a command and the tokens that follow it,
- * decide what the user is typing and return completions.
- *
- * - If the command has subcommands and the next token matches one,
- *   descend.
- * - Otherwise either complete the subcommand name (partial), the
- *   command's positional via its `complete()` hook, or an option.
- */
 function completeWithinCommand(
   cmd: Command,
   args: string[],
   endsWithSpace: boolean
-): [string[], string] {
-  // If this is a group command (has subcommands), the next token is
-  // a subcommand name. Walk in if it matches one.
+): CompletionResult {
+  // Group command: next token is a subcommand.
   if (cmd.subcommands && cmd.subcommands.length > 0) {
-    if (args.length > 0 && !endsWithSpace && args.length === 1) {
-      // User is typing a partial subcommand name.
-      const partial = args[0].toLowerCase();
-      const subs = cmd.subcommands
-        .map((s) => s.name)
-        .filter((n) => n.startsWith(partial));
-      return [subs, args[0]];
-    }
     if (args.length === 0) {
-      // Right after the group command — list all subcommands.
-      return [cmd.subcommands.map((s) => s.name), ""];
+      // Right after the group name with a trailing space — list every subcommand.
+      return {
+        span: "",
+        items: cmd.subcommands.map<Suggestion>((s) => ({
+          value: s.name + " ",
+          display: s.name,
+          description: s.summary,
+        })),
+      };
     }
+    if (args.length === 1 && !endsWithSpace) {
+      const partial = args[0].toLowerCase();
+      const matches = cmd.subcommands.filter((s) =>
+        s.name.toLowerCase().startsWith(partial)
+      );
+      return {
+        span: args[0],
+        items: matches.map<Suggestion>((s) => ({
+          value: s.name + " ",
+          display: s.name,
+          description: s.summary,
+        })),
+      };
+    }
+    // Descend.
     const match = cmd.subcommands.find((s) => s.name === args[0]);
     if (match) {
       return completeWithinCommand(match, args.slice(1), endsWithSpace);
     }
-    // Unknown subcommand and we're past it — no further completion.
-    return [[], ""];
+    return { span: "", items: [] };
   }
 
-  // Leaf command. The user is either:
-  //   (a) typing an option flag (token starts with `--`)
-  //   (b) typing a positional, which the command's `complete()` hook
-  //       enumerates if it cares to
-  //   (c) at a trailing space, expecting "what's next?"
-  const optionNames = cmd.options
-    ? Object.keys(cmd.options).map((o) => `--${o}`)
-    : [];
+  // Leaf command. Mix positional completions (from the hook) with
+  // option flags.
+  const optionItems = optionSuggestions(cmd);
+  const positionalsBefore = positionalsOnly(
+    endsWithSpace ? args : args.slice(0, -1)
+  );
+  const partial = endsWithSpace ? "" : args[args.length - 1] ?? "";
 
-  if (args.length === 0 || (endsWithSpace && (args.length === 0 || lastNonOption(args) === null))) {
-    // Right after the leaf command or after consuming options/positionals
-    // with a trailing space — offer both positional completions and options.
-    const positional =
-      cmd.complete?.(positionalsOnly(args), "") ?? [];
-    return [[...positional, ...optionNames], ""];
+  if (partial.startsWith("--")) {
+    const matches = optionItems.filter((s) => s.value.startsWith(partial));
+    return { span: partial, items: matches };
   }
 
-  const last = args[args.length - 1];
-
-  if (endsWithSpace) {
-    // The previous token was completed; we're between args.
-    // Are we still in positional territory or in flags-only mode?
-    const positional = cmd.complete?.(positionalsOnly(args), "") ?? [];
-    return [[...positional, ...optionNames], ""];
+  // Positional + option suggestions, filtered by partial.
+  const positional = cmd.complete?.(positionalsBefore, partial) ?? [];
+  const positionalSuggestions = toSuggestions(positional);
+  const allItems = [...positionalSuggestions, ...optionItems];
+  if (partial.length === 0) {
+    return { span: "", items: allItems };
   }
-
-  // Typing a partial last token.
-  if (last.startsWith("--")) {
-    const matches = optionNames.filter((o) => o.startsWith(last));
-    return [matches, last];
-  }
-  // Otherwise treat as a partial positional. The command's hook
-  // decides what's valid; if it has none, we just return empty.
-  const positional =
-    cmd.complete?.(positionalsOnly(args.slice(0, -1)), last) ?? [];
-  return [positional, last];
+  return {
+    span: partial,
+    items: allItems.filter((s) =>
+      (s.display ?? s.value).toLowerCase().startsWith(partial.toLowerCase())
+    ),
+  };
 }
 
-/** Filter out option tokens (`--foo`, `-x`) when counting positionals. */
+/**
+ * Normalize a complete-hook return value into Suggestions.
+ *
+ * Hooks may return:
+ *   - `string[]`           — bare values, no descriptions
+ *   - `Suggestion[]`       — structured suggestions
+ *
+ * The string[] form is kept for hook implementers that don't need
+ * descriptions; the REPL renders them with just the value.
+ */
+function toSuggestions(items: Array<string | Suggestion>): Suggestion[] {
+  return items.map((item) =>
+    typeof item === "string" ? { value: item } : item
+  );
+}
+
+function optionSuggestions(cmd: Command): Suggestion[] {
+  if (!cmd.options) return [];
+  return Object.keys(cmd.options).map<Suggestion>((name) => ({
+    value: `--${name} `,
+    display: `--${name}`,
+    description: optionTypeHint(cmd.options![name]),
+  }));
+}
+
+function optionTypeHint(def: { type?: string }): string {
+  if (def.type === "string") return "<value>";
+  if (def.type === "boolean") return "flag";
+  return "";
+}
+
 function positionalsOnly(args: string[]): string[] {
   return args.filter((a) => !a.startsWith("-"));
-}
-
-/** Find the last non-option token, if any. */
-function lastNonOption(args: string[]): string | null {
-  for (let i = args.length - 1; i >= 0; i--) {
-    if (!args[i].startsWith("-")) return args[i];
-  }
-  return null;
-}
-
-function uniqueSorted(items: string[]): string[] {
-  return [...new Set(items)].sort();
 }

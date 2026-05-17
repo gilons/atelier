@@ -372,15 +372,25 @@ export const sourceOnboardCommand: Command = {
   },
   /**
    * The first positional is <kind>. Enumerate every registered
-   * adapter so the user can tab-complete it. Once <kind> is supplied
-   * the positionals are exhausted and we return [] — the REPL's
-   * completer falls through to option-flag suggestions.
+   * adapter with its human display name so the REPL dropdown shows
+   *
+   *     › notion             — Notion
+   *       sharepoint         — SharePoint / OneDrive (Microsoft Graph)
+   *       github-discussions — GitHub Discussions
+   *
+   * Once <kind> is supplied, positionals are exhausted and the
+   * completer falls through to option flags (`--transport`,
+   * `--non-interactive`, …).
    */
-  complete(priorArgs: string[], partial: string): string[] {
+  complete(priorArgs: string[], partial: string) {
     if (priorArgs.length === 0) {
       return listAdapters()
-        .map((a) => a.kind)
-        .filter((k) => k.toLowerCase().startsWith(partial.toLowerCase()));
+        .filter((a) => a.kind.toLowerCase().startsWith(partial.toLowerCase()))
+        .map((a) => ({
+          value: a.kind + " ",
+          display: a.kind,
+          description: a.onboarding.displayName,
+        }));
     }
     return [];
   },

@@ -1,4 +1,5 @@
 import { parseArgs, type ParseArgsConfig } from "node:util";
+import type { Suggestion } from "./suggestion.js";
 
 /**
  * Minimal command framework with nested subcommands.
@@ -29,18 +30,23 @@ export interface Command {
   /** Handler. Leaf commands only. */
   run?(ctx: CommandContext): Exitable;
   /**
-   * Optional tab-completion hook for the REPL. Called when the user
-   * has reached this command and is typing a positional argument.
+   * Optional completion hook for the REPL's inline suggestion menu.
+   * Called when the user is typing a positional for this command.
    *
-   * @param priorArgs  Positional arguments already supplied to this command.
-   * @param partial    The token currently being typed (may be empty).
-   * @returns          Candidate completion strings (full token forms).
+   * @param priorArgs  Positional arguments already supplied.
+   * @param partial    The token currently being typed (may be "").
+   * @returns          Either bare strings or {@link Suggestion}
+   *                   objects with descriptions.
    *
    * Example: `source onboard <kind>` enumerates registered adapter
-   * kinds so the user gets `notion`, `sharepoint`,
-   * `github-discussions` on tab.
+   * kinds with their human display names as descriptions, so the
+   * dropdown shows e.g. `notion — Notion` and
+   * `github-discussions — GitHub Discussions`.
    */
-  complete?(priorArgs: string[], partial: string): string[];
+  complete?(
+    priorArgs: string[],
+    partial: string
+  ): Array<string | Suggestion>;
 }
 
 export interface CommandContext {

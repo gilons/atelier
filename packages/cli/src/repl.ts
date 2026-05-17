@@ -22,6 +22,7 @@ import { PromptSession } from "./prompt.js";
 import { dispatch, type CommandRegistry } from "./command.js";
 import { renderBanner } from "./banner.js";
 import { buildReplCompleter } from "./repl-completer.js";
+import { InputReader } from "./input-reader.js";
 
 /**
  * Atelier REPL — `atelier` with no args drops the user into a
@@ -44,6 +45,7 @@ import { buildReplCompleter } from "./repl-completer.js";
 interface ReplContext {
   cwd: string;
   registry: CommandRegistry;
+  /** Sub-prompt session for multi-step flows (multi-select, confirm). */
   session: PromptSession;
   workspaceRoot: string | null;
 }
@@ -52,9 +54,7 @@ export async function runRepl(
   cwd: string,
   registry: CommandRegistry
 ): Promise<number> {
-  const session = new PromptSession({
-    completer: buildReplCompleter(registry),
-  });
+  const session = new PromptSession();
   const ctx: ReplContext = {
     cwd,
     registry,
@@ -65,11 +65,40 @@ export async function runRepl(
     workspaceRoot: await findNearbyWorkspace(cwd),
   };
 
+  const stdinIsTty = (process.stdin as NodeJS.ReadStream).isTTY === true;
+  const stdoutIsTty = (process.stdout as NodeJS.WriteStream).isTTY === true;
+  // The inline-suggestion InputReader needs raw mode + cursor moves;
+  // both require real TTYs on stdin and stdout. Otherwise (piped
+  // input from CI, scripted tests) we fall back to the line-based
+  // PromptSession.ask().
+  const useInlineReader = stdinIsTty && stdoutIsTty;
+  const completer = useInlineReader ? buildReplCompleter(registry) : null;
+  const history: string[] = [];
+
   try {
     await renderWelcome(ctx);
 
     while (true) {
-      const line = await session.ask(ui.cyan("atelier ❯"));
+      let line: string;
+      if (useInlineReader && completer) {
+        const reader = new InputReader({
+          input: process.stdin as NodeJS.ReadStream,
+          output: process.stdout as NodeJS.WriteStream,
+          prompt: `${ui.cyan("atelier ❯")} `,
+          completer,
+          history,
+        });
+        const result = await reader.read();
+        if (result.type === "aborted") {
+          ui.print(`  ${ui.dim("Bye.")}`);
+          return 0;
+        }
+        line = result.line;
+        if (line.trim().length > 0) history.push(line);
+      } else {
+        line = await session.ask(ui.cyan("atelier ❯"));
+      }
+
       const trimmed = line.trim();
       if (!trimmed) continue;
       if (isExitCommand(trimmed)) {

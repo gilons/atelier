@@ -20,21 +20,8 @@ export interface PromptIO {
   output: NodeJS.WritableStream;
 }
 
-/**
- * Tab-completion callback. Same shape as Node's readline `completer`
- * option: takes the current line up to the cursor, returns a tuple of
- * `[completion candidates, substring being completed]`.
- */
-export type CompleterFn = (line: string) => [string[], string];
-
 export interface PromptSessionOptions {
   io?: PromptIO;
-  /**
-   * Optional tab-completion callback. Only meaningful when stdin is
-   * a TTY (readline runs in terminal mode then and dispatches tab).
-   * In piped/non-TTY contexts the completer is ignored.
-   */
-  completer?: CompleterFn;
 }
 
 interface QueuedResolver {
@@ -55,16 +42,14 @@ export class PromptSession {
   constructor(opts: PromptSessionOptions = {}) {
     this.io = opts.io ?? { input: process.stdin, output: process.stdout };
     this.isTty = (this.io.input as NodeJS.ReadStream).isTTY === true;
-    // Terminal mode unlocks history (arrow keys), line editing, and
-    // tab completion. We only enable it on a real TTY — non-TTY input
-    // (piped scripts, tests) flows through our line-event queue.
+    // PromptSession handles linear question/answer flows (onboarding
+    // steps, multi-select sub-prompts). The REPL's main prompt uses
+    // a separate `InputReader` for inline as-you-type suggestions.
+    // Terminal mode here unlocks history + line editing for free.
     this.rl = readline.createInterface({
       input: this.io.input,
       output: this.io.output,
       terminal: this.isTty,
-      completer: this.isTty && opts.completer
-        ? wrapCompleterForReadline(opts.completer)
-        : undefined,
     });
     this.rl.on("line", (line) => {
       const w = this.waiters.shift();
@@ -325,28 +310,6 @@ function pad(s: string): string {
   return s.padEnd(14) + " ";
 }
 
-/**
- * Adapter from our `CompleterFn` shape to Node's readline-internal
- * completer signature.
- *
- * Node calls the completer synchronously with the line up to the
- * cursor, and expects back `[matches, substring]` where:
- *
- *   - `matches` is a list of full strings that could replace
- *     `substring`. If empty, readline does nothing.
- *   - If `matches.length === 1`, readline auto-completes by
- *     replacing `substring` with the single match.
- *   - If many, readline shows the list and waits for the user.
- *
- * Our `CompleterFn` returns exactly that tuple; this wrapper is
- * just an explicit boundary so the rest of the codebase doesn't
- * import readline types.
- */
-function wrapCompleterForReadline(
-  completer: CompleterFn
-): (line: string) => [string[], string] {
-  return (line: string) => completer(line);
-}
 
 function matchesFilter(label: string, filter: string): boolean {
   if (!filter) return true;

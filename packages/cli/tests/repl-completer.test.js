@@ -3,34 +3,34 @@ import assert from "node:assert/strict";
 import { completeLine, REPL_BUILTINS } from "../dist/repl-completer.js";
 
 /**
- * Build a small synthetic command registry so tests don't depend on
- * the real adapters / commands shipping at any given moment.
+ * Build a small synthetic command registry so tests don't depend
+ * on the real adapters/commands shipping at any given moment.
  */
 function makeRegistry() {
   return {
     commands: [
       {
         name: "init",
-        summary: "Init",
+        summary: "Initialize a workspace",
         options: { name: { type: "string" }, force: { type: "boolean" } },
       },
       {
         name: "repo",
         summary: "Manage repos",
         subcommands: [
-          { name: "list", summary: "list" },
-          { name: "add", summary: "add", options: { name: { type: "string" } } },
-          { name: "discover", summary: "discover" },
+          { name: "list", summary: "List registered repos" },
+          { name: "add", summary: "Register a repo", options: { name: { type: "string" } } },
+          { name: "discover", summary: "Discover repos via gh" },
         ],
       },
       {
         name: "source",
         summary: "Manage sources",
         subcommands: [
-          { name: "list", summary: "list" },
+          { name: "list", summary: "List sources" },
           {
             name: "onboard",
-            summary: "onboard",
+            summary: "Onboard a source",
             positionals: ["kind"],
             options: {
               transport: { type: "string" },
@@ -38,9 +38,15 @@ function makeRegistry() {
             },
             complete(priorArgs, partial) {
               if (priorArgs.length === 0) {
-                return ["notion", "sharepoint", "github-discussions"].filter(
-                  (k) => k.startsWith(partial.toLowerCase())
-                );
+                return [
+                  { value: "notion ", display: "notion", description: "Notion" },
+                  { value: "sharepoint ", display: "sharepoint", description: "SharePoint" },
+                  {
+                    value: "github-discussions ",
+                    display: "github-discussions",
+                    description: "GitHub Discussions",
+                  },
+                ].filter((s) => s.display.startsWith(partial.toLowerCase()));
               }
               return [];
             },
@@ -51,138 +57,145 @@ function makeRegistry() {
   };
 }
 
+function values(result) {
+  return result.items.map((s) => s.value);
+}
+
+function displays(result) {
+  return result.items.map((s) => s.display ?? s.value);
+}
+
 // ============================================================
 // Empty / non-slash input
 // ============================================================
 
-test("completeLine: empty input suggests the / prefix", () => {
-  const [m, sub] = completeLine(makeRegistry(), "");
-  assert.deepEqual(m, ["/"]);
-  assert.equal(sub, "");
+test("completeLine: empty input lists every top-level command", () => {
+  const r = completeLine(makeRegistry(), "");
+  const displayed = displays(r);
+  for (const b of REPL_BUILTINS) {
+    assert.ok(displayed.includes(`/${b}`), `missing /${b}`);
+  }
+  for (const c of ["/init", "/repo", "/source"]) {
+    assert.ok(displayed.includes(c), `missing ${c}`);
+  }
+  assert.equal(r.span, "/");
 });
 
-test("completeLine: non-slash input returns no completions", () => {
-  const [m] = completeLine(makeRegistry(), "hello");
-  assert.deepEqual(m, []);
+test("completeLine: every top-level suggestion carries its summary as description", () => {
+  const r = completeLine(makeRegistry(), "");
+  const init = r.items.find((s) => s.display === "/init");
+  assert.equal(init.description, "Initialize a workspace");
+  const repo = r.items.find((s) => s.display === "/repo");
+  assert.equal(repo.description, "Manage repos");
+});
+
+test("completeLine: non-slash text returns no suggestions", () => {
+  const r = completeLine(makeRegistry(), "hello");
+  assert.deepEqual(r.items, []);
 });
 
 // ============================================================
-// Top-level command name
+// Top-level partial matching
 // ============================================================
 
-test("completeLine: '/' returns all commands incl. REPL built-ins", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/");
-  // Should be sorted alphabetically and include all built-ins + registry commands.
-  for (const builtin of REPL_BUILTINS) {
-    assert.ok(m.includes(`/${builtin}`), `missing /${builtin}`);
-  }
-  for (const cmd of ["/init", "/repo", "/source"]) {
-    assert.ok(m.includes(cmd), `missing ${cmd}`);
-  }
-  assert.equal(sub, "/");
+test("completeLine: '/r' matches /repo only", () => {
+  const r = completeLine(makeRegistry(), "/r");
+  assert.deepEqual(displays(r), ["/repo"]);
+  assert.equal(r.span, "/r");
 });
 
-test("completeLine: '/r' completes to /repo (and nothing else)", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/r");
-  assert.deepEqual(m, ["/repo"]);
-  assert.equal(sub, "/r");
-});
-
-test("completeLine: '/s' has both /source and /status (built-in)", () => {
-  const [m] = completeLine(makeRegistry(), "/s");
-  assert.ok(m.includes("/source"));
-  assert.ok(m.includes("/status"));
+test("completeLine: '/s' matches /source and /status (built-in)", () => {
+  const r = completeLine(makeRegistry(), "/s");
+  const d = displays(r);
+  assert.ok(d.includes("/source"));
+  assert.ok(d.includes("/status"));
 });
 
 test("completeLine: '/notarealcmd' returns nothing", () => {
-  const [m] = completeLine(makeRegistry(), "/notarealcmd");
-  assert.deepEqual(m, []);
+  const r = completeLine(makeRegistry(), "/notarealcmd");
+  assert.deepEqual(r.items, []);
 });
 
 // ============================================================
 // Subcommand completion
 // ============================================================
 
-test("completeLine: '/repo ' (trailing space) lists all subcommands", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/repo ");
-  assert.deepEqual(m.sort(), ["add", "discover", "list"]);
-  assert.equal(sub, "");
+test("completeLine: '/repo ' lists subcommands with summaries", () => {
+  const r = completeLine(makeRegistry(), "/repo ");
+  const d = displays(r);
+  assert.deepEqual(d.sort(), ["add", "discover", "list"]);
+  const list = r.items.find((s) => s.display === "list");
+  assert.equal(list.description, "List registered repos");
 });
 
-test("completeLine: '/repo a' completes to 'add'", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/repo a");
-  assert.deepEqual(m, ["add"]);
-  assert.equal(sub, "a");
+test("completeLine: '/repo a' filters to add", () => {
+  const r = completeLine(makeRegistry(), "/repo a");
+  assert.deepEqual(displays(r), ["add"]);
+  assert.equal(r.span, "a");
 });
 
-test("completeLine: '/repo di' completes to 'discover'", () => {
-  const [m] = completeLine(makeRegistry(), "/repo di");
-  assert.deepEqual(m, ["discover"]);
-});
-
-test("completeLine: '/repo nope' returns no matches", () => {
-  const [m] = completeLine(makeRegistry(), "/repo nope");
-  assert.deepEqual(m, []);
+test("completeLine: '/repo di' completes to discover", () => {
+  const r = completeLine(makeRegistry(), "/repo di");
+  assert.deepEqual(displays(r), ["discover"]);
 });
 
 // ============================================================
-// Per-command positional completion (source onboard <kind>)
+// Per-command positional completion
 // ============================================================
 
-test("completeLine: '/source onboard ' lists source kinds via complete() hook", () => {
-  const [m] = completeLine(makeRegistry(), "/source onboard ");
-  // The completer returns positional candidates AND option flags.
-  for (const kind of ["notion", "sharepoint", "github-discussions"]) {
-    assert.ok(m.includes(kind), `missing kind ${kind}`);
-  }
+test("completeLine: '/source onboard ' suggests source kinds with display names as descriptions", () => {
+  const r = completeLine(makeRegistry(), "/source onboard ");
+  const notion = r.items.find((s) => s.display === "notion");
+  assert.ok(notion);
+  assert.equal(notion.description, "Notion");
+  const gh = r.items.find((s) => s.display === "github-discussions");
+  assert.equal(gh.description, "GitHub Discussions");
   // Option flags follow.
-  assert.ok(m.includes("--transport"));
-  assert.ok(m.includes("--non-interactive"));
+  assert.ok(values(r).includes("--transport "));
 });
 
 test("completeLine: '/source onboard not' filters kinds by prefix", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/source onboard not");
-  assert.deepEqual(m, ["notion"]);
-  assert.equal(sub, "not");
+  const r = completeLine(makeRegistry(), "/source onboard not");
+  assert.deepEqual(displays(r), ["notion"]);
+  assert.equal(r.span, "not");
 });
 
 test("completeLine: '/source onboard github' completes to github-discussions", () => {
-  const [m] = completeLine(makeRegistry(), "/source onboard github");
-  assert.deepEqual(m, ["github-discussions"]);
+  const r = completeLine(makeRegistry(), "/source onboard github");
+  assert.deepEqual(displays(r), ["github-discussions"]);
 });
 
 // ============================================================
 // Option flag completion
 // ============================================================
 
-test("completeLine: '/source onboard notion --' lists every option flag", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/source onboard notion --");
-  assert.ok(m.includes("--transport"));
-  assert.ok(m.includes("--non-interactive"));
-  assert.equal(sub, "--");
+test("completeLine: '/source onboard notion --' lists option flags", () => {
+  const r = completeLine(makeRegistry(), "/source onboard notion --");
+  const v = values(r);
+  assert.ok(v.includes("--transport "));
+  assert.ok(v.includes("--non-interactive "));
+  assert.equal(r.span, "--");
 });
 
 test("completeLine: '/source onboard notion --tr' completes --transport", () => {
-  const [m, sub] = completeLine(makeRegistry(), "/source onboard notion --tr");
-  assert.deepEqual(m, ["--transport"]);
-  assert.equal(sub, "--tr");
+  const r = completeLine(makeRegistry(), "/source onboard notion --tr");
+  assert.deepEqual(values(r), ["--transport "]);
+  assert.equal(r.span, "--tr");
 });
 
-test("completeLine: '/init --' lists init options", () => {
-  const [m] = completeLine(makeRegistry(), "/init --");
-  assert.ok(m.includes("--name"));
-  assert.ok(m.includes("--force"));
+test("completeLine: option type hint surfaces as description", () => {
+  const r = completeLine(makeRegistry(), "/init --");
+  const name = r.items.find((s) => s.display === "--name");
+  assert.equal(name.description, "<value>");
+  const force = r.items.find((s) => s.display === "--force");
+  assert.equal(force.description, "flag");
 });
 
 // ============================================================
-// Group commands that have run() too — not in our synthetic registry,
-// but a regression check: leaf with no subcommands still works.
+// Leaf with no extras
 // ============================================================
 
 test("completeLine: a leaf with no options and no complete hook returns nothing", () => {
-  const registry = {
-    commands: [{ name: "ping", summary: "ping" }],
-  };
-  const [m] = completeLine(registry, "/ping ");
-  assert.deepEqual(m, []);
+  const r = completeLine({ commands: [{ name: "ping", summary: "ping" }] }, "/ping ");
+  assert.deepEqual(r.items, []);
 });
