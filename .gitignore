@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+**/dist/
+**/*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+*.log
+*.tgz
+.idea/
+.vscode/
+*.swp
+
+# Atelier — local cache (every dev rebuilds from sources)
+.planning/cache/
+
+# Test scratch dirs
+/tmp/atelier-*
+
+# Env files (just in case someone drops secrets in here)
+.env
+.env.*
+!.env.example
+
+# Claude Code local settings (per-developer)
+.claude/settings.local.json

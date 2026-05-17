@@ -1,0 +1,162 @@
+import type { SourceAdapter } from "./source-adapters.js";
+import type { Source, SourceKind, SourceTransport } from "./types.js";
+
+/**
+ * Source onboarding framework.
+ *
+ * Every officially-supported source kind ships with an
+ * {@link OnboardingFlow}: a declarative description of the transports
+ * it supports, the questions to ask the user, and how to translate
+ * the answers into a {@link Source} entry that the registry can store.
+ *
+ * Why declarative rather than a single `async run()` function?
+ *   - The CLI drives the prompts. Tests drive the same flow by
+ *     supplying answers programmatically. Separating "what to ask"
+ *     from "how to ask" makes both possible without forking logic.
+ *   - Third-party adapters (loaded via `external` transport) plug
+ *     into the same shape — no special-casing.
+ */
+
+/**
+ * Available transports for a given source. Discovered at runtime: we
+ * actually check whether the user has an MCP server registered, a
+ * required CLI on PATH, etc. The result is shown to the user as
+ * "Detected: …".
+ */
+export interface TransportOption {
+  transport: SourceTransport;
+  /** Short label shown in the CLI menu (e.g. "Use Claude Code's MCP server"). */
+  label: string;
+  /** True when the prerequisite (token / CLI binary / config) is present. */
+  ready: boolean;
+  /** Short human note: why it's ready, or what's missing. */
+  note?: string;
+  /** Recommended pick (one option per flow). The CLI highlights it. */
+  recommended?: boolean;
+}
+
+/** A single question shown to the user during onboarding. */
+export interface OnboardingStep {
+  /** Stable key used to retrieve the answer. */
+  key: string;
+  /** Prompt shown to the user. */
+  prompt: string;
+  /** Optional default if the user just presses enter. */
+  default?: string;
+  /** Marks this answer as a secret — CLI should mask input. */
+  secret?: boolean;
+  /** Optional regex for client-side validation. */
+  validate?: RegExp;
+  /**
+   * Should this step run? Lets steps gate on prior answers
+   * (e.g. only ask "API token" when transport === "rest").
+   */
+  applies?(answers: OnboardingAnswers): boolean;
+  /** Free-form help shown above the prompt. */
+  help?: string;
+}
+
+export interface OnboardingAnswers {
+  /** The chosen transport. Set after the transport-pick step. */
+  transport?: SourceTransport;
+  /** Free-form bag of step answers, keyed by `OnboardingStep.key`. */
+  values: Record<string, string>;
+}
+
+export interface VerifyResult {
+  ok: boolean;
+  /** When `!ok`: human-readable error for the CLI to show. */
+  error?: string;
+  /** When `ok`: short message ("Found 47 pages.") to confirm to the user. */
+  message?: string;
+}
+
+/**
+ * Output of an onboarding flow: ready to hand to `addSource` and (if
+ * the chosen transport is `mcp`) to add to the MCP servers config.
+ */
+export interface OnboardingResult {
+  /** The Source entry to register in sources.yaml. */
+  source: Omit<Source, "id" | "name" | "enabled"> & {
+    id?: string;
+    name: string;
+  };
+  /**
+   * If onboarding produced an MCP server definition the user should
+   * persist, it's here. The CLI writes it into
+   * `~/.atelier/mcp-servers.json`.
+   */
+  mcpServer?: {
+    id: string;
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+    tools?: { list?: string; fetch?: string };
+    description?: string;
+  };
+  /**
+   * Environment variables the user should set in their shell rc
+   * (e.g. `NOTION_TOKEN=...`). The CLI surfaces these — Atelier does
+   * NOT write to ~/.bashrc/.zshrc automatically.
+   */
+  envVarsToSet?: Array<{ name: string; value: string; description?: string }>;
+}
+
+/**
+ * The contract every onboarding flow implements. Both built-in
+ * adapters and third-party (`external` transport) adapters use this
+ * exact shape.
+ */
+export interface OnboardingFlow {
+  /** Matches the {@link SourceKind} this flow registers. */
+  kind: SourceKind | "external";
+  /** Display name in the CLI menu (e.g. "Notion"). */
+  displayName: string;
+  /** Short description shown above the transport menu. */
+  description: string;
+
+  /** Detect which transports the current machine can do. */
+  availableTransports(): Promise<TransportOption[]>;
+
+  /** Questions to ask, given the chosen transport. */
+  steps(transport: SourceTransport): OnboardingStep[];
+
+  /** Try the connection live; tells the user if their answers work. */
+  verify(answers: OnboardingAnswers): Promise<VerifyResult>;
+
+  /** Translate final answers into a registry entry. */
+  toRegistryEntry(answers: OnboardingAnswers): OnboardingResult;
+}
+
+// ============================================================
+// Adapter registry
+// ============================================================
+
+export interface AdapterRegistration {
+  kind: SourceKind;
+  onboarding: OnboardingFlow;
+  /**
+   * Build a working SourceAdapter from a registered Source. The sync
+   * engine resolves to this via the factory.
+   */
+  build(source: Source): Promise<SourceAdapter & { dispose?(): Promise<void> }>;
+}
+
+const builtins = new Map<SourceKind, AdapterRegistration>();
+
+/**
+ * Register a built-in adapter. Called once at module load time from
+ * each adapter module. Third-party adapters register via the same
+ * function when loaded by the `external` transport resolver.
+ */
+export function registerAdapter(reg: AdapterRegistration): void {
+  builtins.set(reg.kind, reg);
+}
+
+export function getAdapter(kind: SourceKind): AdapterRegistration | undefined {
+  return builtins.get(kind);
+}
+
+export function listAdapters(): AdapterRegistration[] {
+  return [...builtins.values()];
+}
