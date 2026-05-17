@@ -503,6 +503,348 @@ function padOrTrunc(s: string, width: number): string {
 }
 
 // ============================================================
+// Single-select raw-mode picker
+// ============================================================
+
+/**
+ * Like {@link MultiSelectPicker} but for "pick one" prompts. Same
+ * keyboard idiom — Up/Down to move, Enter to confirm — but there's
+ * no toggle (space does nothing), and Enter on the highlighted row
+ * is the submit gesture.
+ *
+ * Used for source-onboard's transport selection, the wizard's
+ * `choices`-bearing prompts, and anywhere else a one-of menu is
+ * needed in the REPL.
+ */
+export interface SingleSelectOption<T> {
+  label: string;
+  value: T;
+  note?: string;
+  /**
+   * Marks an option as the default. The highlight starts on this
+   * one and the user can press Enter without moving.
+   */
+  recommended?: boolean;
+}
+
+export type SingleSelectResult<T> =
+  | { type: "submitted"; value: T }
+  | { type: "cancelled" };
+
+export interface SingleSelectOptions {
+  input?: NodeJS.ReadStream;
+  output?: NodeJS.WriteStream;
+  maxVisible?: number;
+}
+
+export class SingleSelectPicker<T> {
+  private readonly input: NodeJS.ReadStream;
+  private readonly output: NodeJS.WriteStream;
+  private readonly question: string;
+  private readonly options: SingleSelectOption<T>[];
+
+  private highlight: number;
+  private filter = "";
+  private filterMode = false;
+  private hasRendered = false;
+  private finished = false;
+  private resolver: ((r: SingleSelectResult<T>) => void) | null = null;
+  private dataHandler: ((chunk: Buffer | string) => void) | null = null;
+  private optsMaxVisible: number;
+
+  private get maxVisible(): number {
+    const rows = (this.output.rows ?? 24) | 0;
+    return Math.max(3, Math.min(this.optsMaxVisible, rows - 6));
+  }
+
+  constructor(
+    question: string,
+    options: SingleSelectOption<T>[],
+    opts: SingleSelectOptions = {}
+  ) {
+    this.question = question;
+    this.options = options;
+    this.input = opts.input ?? (process.stdin as NodeJS.ReadStream);
+    this.output = opts.output ?? (process.stdout as NodeJS.WriteStream);
+    this.optsMaxVisible = opts.maxVisible ?? 10;
+    // Start on the recommended option, or the first one.
+    const recIdx = options.findIndex((o) => o.recommended);
+    this.highlight = recIdx >= 0 ? recIdx : 0;
+  }
+
+  run(): Promise<SingleSelectResult<T>> {
+    if (this.options.length === 0) {
+      return Promise.resolve({ type: "cancelled" });
+    }
+    return new Promise<SingleSelectResult<T>>((resolve) => {
+      this.resolver = resolve;
+      try {
+        this.input.setRawMode?.(true);
+      } catch {
+        /* not a TTY */
+      }
+      this.input.resume();
+      this.input.setEncoding("utf8");
+      this.dataHandler = (chunk) => this.onData(String(chunk));
+      this.input.on("data", this.dataHandler);
+      this.input.once("end", () => this.finish({ type: "cancelled" }));
+      this.render();
+    });
+  }
+
+  private onData(chunk: string): void {
+    if (this.finished) return;
+    for (const key of decodeKeys(chunk)) {
+      if (this.finished) return;
+      this.dispatch(key);
+    }
+  }
+
+  private dispatch(key: Key): void {
+    if (key.type === "ctrl-c" || key.type === "ctrl-d") {
+      return this.cancel();
+    }
+
+    if (this.filterMode) {
+      return this.dispatchInFilterMode(key);
+    }
+
+    switch (key.type) {
+      case "up":
+        this.highlight = this.moveHighlight(-1);
+        return this.render();
+      case "down":
+        this.highlight = this.moveHighlight(1);
+        return this.render();
+      case "char":
+        if (key.value === "/") {
+          this.filterMode = true;
+          this.filter = "";
+          return this.render();
+        }
+        // Single-letter shortcut: jump to the first option whose
+        // label starts with that letter. Same idea as filesystem
+        // navigators — type 'n' to land on "notion".
+        if (/^[a-zA-Z0-9]$/.test(key.value)) {
+          const idx = this.options.findIndex((o, i) =>
+            o.label.toLowerCase().startsWith(key.value.toLowerCase()) &&
+            i !== this.highlight
+          );
+          if (idx >= 0) {
+            this.highlight = idx;
+            return this.render();
+          }
+        }
+        return;
+      case "enter":
+        return this.submit();
+      case "escape":
+        return this.cancel();
+      default:
+        return;
+    }
+  }
+
+  private dispatchInFilterMode(key: Key): void {
+    switch (key.type) {
+      case "escape":
+        this.filter = "";
+        this.filterMode = false;
+        this.highlight = this.firstVisibleIndex();
+        return this.render();
+      case "enter":
+        // Submit straight from filter mode — the user has narrowed
+        // and now picks the highlighted row.
+        return this.submit();
+      case "backspace":
+        this.filter = this.filter.slice(0, -1);
+        if (!this.isVisible(this.highlight)) {
+          this.highlight = this.firstVisibleIndex();
+        }
+        return this.render();
+      case "char":
+        this.filter += key.value;
+        if (!this.isVisible(this.highlight)) {
+          this.highlight = this.firstVisibleIndex();
+        }
+        return this.render();
+      case "up":
+        this.highlight = this.moveHighlight(-1);
+        return this.render();
+      case "down":
+        this.highlight = this.moveHighlight(1);
+        return this.render();
+      default:
+        return;
+    }
+  }
+
+  private moveHighlight(step: number): number {
+    if (this.options.length === 0) return -1;
+    let i = this.highlight;
+    for (let n = 0; n < this.options.length; n++) {
+      i = (i + step + this.options.length) % this.options.length;
+      if (this.isVisible(i)) return i;
+    }
+    return this.highlight;
+  }
+
+  private firstVisibleIndex(): number {
+    for (let i = 0; i < this.options.length; i++) {
+      if (this.isVisible(i)) return i;
+    }
+    return 0;
+  }
+
+  private isVisible(index: number): boolean {
+    if (!this.filter) return true;
+    const opt = this.options[index];
+    const needle = this.filter.toLowerCase();
+    return (
+      opt.label.toLowerCase().includes(needle) ||
+      (opt.note?.toLowerCase().includes(needle) ?? false)
+    );
+  }
+
+  private submit(): void {
+    if (this.highlight < 0 || !this.isVisible(this.highlight)) {
+      // No valid selection — refuse to submit.
+      return;
+    }
+    const value = this.options[this.highlight].value;
+    this.clearRender();
+    this.output.write(
+      `${this.question}: ${this.options[this.highlight].label}\n`
+    );
+    this.finish({ type: "submitted", value });
+  }
+
+  private cancel(): void {
+    this.clearRender();
+    this.output.write("\x1b[?25h");
+    this.finish({ type: "cancelled" });
+  }
+
+  private clearRender(): void {
+    if (!this.hasRendered) return;
+    this.output.write("\r\x1b[0J");
+  }
+
+  private render(): void {
+    this.clearRender();
+    this.output.write("\x1b[?25l");
+    this.output.write(this.question);
+    if (this.filterMode) {
+      this.output.write("  " + dim(this.output, `(filter: ${this.filter}_)`));
+    } else if (this.filter) {
+      this.output.write("  " + dim(this.output, `(filter: ${this.filter})`));
+    }
+    this.output.write("\n");
+
+    const visibleIndices = this.computeVisibleWindow();
+    const labelWidth = Math.min(
+      40,
+      visibleIndices.reduce(
+        (m, i) => Math.max(m, this.options[i].label.length),
+        0
+      )
+    );
+    const termWidth = this.output.columns ?? 80;
+    const fixedWidth = 2 + 2 + labelWidth + 2;
+    const maxNoteWidth = Math.max(10, termWidth - fixedWidth - 1);
+
+    let rowsDrawn = 0;
+    for (const i of visibleIndices) {
+      const opt = this.options[i];
+      const isHighlighted = i === this.highlight;
+      const marker = isHighlighted ? cyan(this.output, "❯") : " ";
+      const labelText = padOrTrunc(opt.label, labelWidth);
+      const label = isHighlighted ? bold(this.output, labelText) : labelText;
+      let note = opt.note ?? "";
+      if (note.length > maxNoteWidth) {
+        note = note.slice(0, Math.max(1, maxNoteWidth - 1)) + "…";
+      }
+      const noteOut = note ? "  " + dim(this.output, note) : "";
+      this.output.write(`\n  ${marker} ${label}${noteOut}`);
+      rowsDrawn++;
+    }
+    if (rowsDrawn === 0) {
+      this.output.write(
+        "\n  " + dim(this.output, "(no matches — backspace to edit the filter)")
+      );
+      rowsDrawn = 1;
+    }
+    const totalVisible = this.allVisibleIndices().length;
+    if (visibleIndices.length < totalVisible) {
+      this.output.write(
+        "\n  " +
+          dim(
+            this.output,
+            `(showing ${visibleIndices.length} of ${totalVisible} — ↑↓ to scroll)`
+          )
+      );
+      rowsDrawn++;
+    }
+
+    this.output.write("\n  " + this.helpLine());
+    rowsDrawn++;
+
+    this.output.write(`\x1b[${rowsDrawn + 1}A`);
+    this.output.write("\r");
+    this.hasRendered = true;
+  }
+
+  private helpLine(): string {
+    const colorize = (s: string) => dim(this.output, s);
+    if (this.filterMode) {
+      return colorize("type to filter · ↵ confirm · esc clear · ⎈c cancel");
+    }
+    return colorize("↑↓ navigate · ↵ confirm · / filter · esc cancel");
+  }
+
+  private computeVisibleWindow(): number[] {
+    const all = this.allVisibleIndices();
+    const max = this.maxVisible;
+    if (all.length <= max) return all;
+    const hlPos = all.indexOf(this.highlight);
+    const half = Math.floor(max / 2);
+    let start = Math.max(0, hlPos - half);
+    let end = start + max;
+    if (end > all.length) {
+      end = all.length;
+      start = end - max;
+    }
+    return all.slice(start, end);
+  }
+
+  private allVisibleIndices(): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < this.options.length; i++) {
+      if (this.isVisible(i)) out.push(i);
+    }
+    return out;
+  }
+
+  private finish(result: SingleSelectResult<T>): void {
+    if (this.finished) return;
+    this.finished = true;
+    if (this.dataHandler) {
+      this.input.off("data", this.dataHandler);
+      this.dataHandler = null;
+    }
+    try {
+      this.input.setRawMode?.(false);
+    } catch {
+      /* ignore */
+    }
+    this.input.pause();
+    this.output.write("\x1b[?25h");
+    this.resolver?.(result);
+    this.resolver = null;
+  }
+}
+
+// ============================================================
 // Top-level helper: TTY → raw-mode picker, non-TTY → line fallback
 // ============================================================
 
@@ -551,6 +893,46 @@ export async function pickMany<T>(
   }
   try {
     return await session.pickMany(question, options);
+  } finally {
+    if (mustClose) session.close();
+  }
+}
+
+/**
+ * Show a single-select picker. Returns the chosen value or `null`
+ * if cancelled.
+ *
+ *   - TTY: {@link SingleSelectPicker} (arrow nav + Enter).
+ *   - non-TTY: line-based fallback via PromptSession.pickOne.
+ *
+ * Same `fallbackSession` semantics as {@link pickMany}: pass the
+ * REPL's fallback session in non-TTY mode so the helper doesn't
+ * race a second readline interface for stdin.
+ */
+export async function pickOne<T>(
+  question: string,
+  options: SingleSelectOption<T>[],
+  fallbackSession: import("./prompt.js").PromptSession | null = null
+): Promise<T | null> {
+  const isTty =
+    (process.stdin as NodeJS.ReadStream).isTTY === true &&
+    (process.stdout as NodeJS.WriteStream).isTTY === true;
+
+  if (isTty) {
+    const picker = new SingleSelectPicker(question, options);
+    const result = await picker.run();
+    return result.type === "submitted" ? result.value : null;
+  }
+
+  const { PromptSession } = await import("./prompt.js");
+  let session = fallbackSession;
+  let mustClose = false;
+  if (!session) {
+    session = new PromptSession();
+    mustClose = true;
+  }
+  try {
+    return await session.pickOne(question, options);
   } finally {
     if (mustClose) session.close();
   }

@@ -1,5 +1,6 @@
 import type { PromptSession } from "./prompt.js";
 import { ui } from "./ui.js";
+import { pickOne as interactivePickOne } from "./picker.js";
 import type { Command, CommandPrompt, CommandRegistry, PromptChoice } from "./command.js";
 
 /**
@@ -159,12 +160,17 @@ async function askPrompt(
         ui.error(`No choices available for "${prompt.key}".`);
         return null;
       }
-      const picked = await session.pickOne(
+      // Use the raw-mode picker (arrow + Enter). In non-TTY mode it
+      // falls back to PromptSession.pickOne — so the line-based test
+      // flows still work, but humans get arrow-key navigation.
+      const picked = await interactivePickOne(
         `  ${prompt.question}`,
         choices.map((c) => ({
-          label: c.description ? `${c.label}  —  ${c.description}` : c.label,
+          label: c.label,
           value: c.value,
-        }))
+          note: c.description,
+        })),
+        session
       );
       return picked;
     }

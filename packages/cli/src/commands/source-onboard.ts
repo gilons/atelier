@@ -15,6 +15,7 @@ import {
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
 import { PromptSession } from "../prompt.js";
+import { pickOne as interactivePickOne } from "../picker.js";
 
 /**
  * Interactive (and non-interactive) onboarding for a documentation
@@ -152,15 +153,22 @@ async function runOnboardingInner(
     ui.print(`  ${ui.dim("→ Transport:")} ${ui.bold(chosen.transport)} (from --transport)`);
     ui.blank();
   } else if (interactive) {
-    chosen = await session!.pickOne(
+    // Raw-mode picker on a TTY, line-based fallback otherwise.
+    const picked = await interactivePickOne(
       "How would you like to connect?",
       detected.map((t) => ({
         label: t.label,
         value: t,
         note: t.note,
         recommended: t.recommended,
-      }))
+      })),
+      session
     );
+    if (!picked) {
+      ui.print(`  ${ui.dim("Aborted.")}`);
+      return 0;
+    }
+    chosen = picked;
     ui.blank();
   } else {
     // Non-interactive without --transport — pick the recommended.
