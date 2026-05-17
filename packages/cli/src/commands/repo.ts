@@ -6,6 +6,8 @@ import {
   listRepos,
   loadReposConfig,
   discoverRepos,
+  discoverManyOrgs,
+  discoverLocal,
   suggestedAddCommand,
   GhAdapter,
   RepoAlreadyRegisteredError,
@@ -224,7 +226,7 @@ const discoverCmd: Command = {
     org: { type: "string", short: "o" },
     "add-cloned": { type: "boolean" },
   },
-  async run({ values, cwd }) {
+  async run({ values, cwd, mode }) {
     let workspaceRoot: string;
     try {
       workspaceRoot = await requireWorkspaceRoot(cwd);
@@ -236,14 +238,41 @@ const discoverCmd: Command = {
       throw err;
     }
 
-    // Determine the org: --org flag wins, else repos.yaml.
-    let org = values.org as string | undefined;
-    if (!org) {
+    // Determine which orgs to query, in priority order:
+    //   1. --org flag (single org).
+    //   2. Workspace-configured org from repos.yaml (single org).
+    //   3. Inferred from local sibling repos on disk (may be many).
+    //
+    // A brand-new workspace has no configured org, but sibling
+    // directories often contain git repos whose remotes point at the
+    // user's GitHub org. Falling back to that scan turns the
+    // first-run experience from "error: no org" into "we found these
+    // candidates around you".
+    const orgFlag = values.org as string | undefined;
+    let orgs: string[] = [];
+    if (orgFlag) {
+      orgs = [orgFlag];
+    } else {
       const cfg = await loadReposConfig(workspaceRoot);
-      org = cfg.organization;
+      if (cfg.organization) {
+        orgs = [cfg.organization];
+      } else {
+        const local = await discoverLocal(cwd, workspaceRoot);
+        orgs = local.orgs;
+      }
     }
-    if (!org) {
-      ui.error("No organization to discover. Register a GitHub-hosted repo first, or pass --org.");
+
+    if (orgs.length === 0) {
+      ui.error(
+        "No organization to discover from."
+      );
+      ui.print(
+        `  ${ui.dim("Either pass --org <name>, register a GitHub-hosted repo first")}`
+      );
+      const addHint = mode === "repl" ? "/repo" : "atelier repo add ../<repo>";
+      ui.print(
+        `  ${ui.dim(`(try`)} ${ui.cyan(addHint)}${ui.dim(")")}, or run this command from a directory that has sibling git repos whose remotes are on GitHub.`
+      );
       return 1;
     }
 
@@ -254,53 +283,89 @@ const discoverCmd: Command = {
       return 1;
     }
 
-    ui.info(`Querying ${host.displayName} for repos in ${ui.bold(org)}…`);
+    ui.info(
+      `Querying ${host.displayName} for ${orgs.length} org(s): ${orgs.map((o) => ui.bold(o)).join(", ")}…`
+    );
     ui.blank();
 
-    let result;
-    try {
-      result = await discoverRepos(workspaceRoot, org, host);
-    } catch (err) {
-      ui.error((err as Error).message);
+    const { byOrg, errors } = await discoverManyOrgs(workspaceRoot, orgs, host);
+    for (const [org, msg] of errors) {
+      ui.warn(`gh listing for ${org} failed: ${msg}`);
+    }
+    if (byOrg.size === 0) {
+      ui.error("No org returned any results.");
       return 1;
     }
 
-    // Summary
-    const total = result.repos.length;
-    const reg = total - result.unregistered.length;
-    ui.print(
-      `  ${ui.dim("Found:")}        ${total} repos in ${org}`
-    );
-    ui.print(`  ${ui.dim("Registered:")}   ${reg}`);
-    ui.print(`  ${ui.dim("Unregistered:")} ${result.unregistered.length}`);
-    ui.print(`  ${ui.dim("Missing local:")} ${result.missingLocally.length}`);
+    // Aggregate counts across orgs for the summary header.
+    let totalAll = 0;
+    let regAll = 0;
+    let missingAll = 0;
+    let unregAll = 0;
+    for (const r of byOrg.values()) {
+      totalAll += r.repos.length;
+      regAll += r.repos.length - r.unregistered.length;
+      missingAll += r.missingLocally.length;
+      unregAll += r.unregistered.length;
+    }
+    const orgLabel = byOrg.size === 1 ? [...byOrg.keys()][0] : `${byOrg.size} orgs`;
+    ui.print(`  ${ui.dim("Found:")}        ${totalAll} repos in ${orgLabel}`);
+    ui.print(`  ${ui.dim("Registered:")}   ${regAll}`);
+    ui.print(`  ${ui.dim("Unregistered:")} ${unregAll}`);
+    ui.print(`  ${ui.dim("Missing local:")} ${missingAll}`);
     ui.blank();
 
-    // Unregistered candidates
-    if (result.unregistered.length > 0) {
-      ui.print(ui.bold("  Unregistered:"));
-      for (const r of result.unregistered) {
-        const cloneStatus = r.localPath
-          ? ui.green(" (cloned locally)")
-          : ui.yellow(" (not cloned)");
-        ui.print(`    ${ui.dim("·")} ${r.remote.name}${cloneStatus}`);
-        if (r.remote.description) {
-          ui.print(`      ${ui.dim(r.remote.description)}`);
+    // Group output by org so the picture is clear when there are
+    // many. (For a single org the heading is still useful.)
+    for (const [org, result] of byOrg) {
+      if (byOrg.size > 1) {
+        ui.print(ui.bold(`  ${org}:`));
+      }
+      // Unregistered candidates
+      if (result.unregistered.length > 0) {
+        ui.print(`  ${byOrg.size > 1 ? "  " : ""}${ui.bold("Unregistered:")}`);
+        for (const r of result.unregistered) {
+          const cloneStatus = r.localPath
+            ? ui.green(" (cloned locally)")
+            : ui.yellow(" (not cloned)");
+          ui.print(
+            `  ${byOrg.size > 1 ? "  " : ""}  ${ui.dim("·")} ${r.remote.name}${cloneStatus}`
+          );
+          if (r.remote.description) {
+            ui.print(
+              `  ${byOrg.size > 1 ? "  " : ""}    ${ui.dim(r.remote.description)}`
+            );
+          }
+          ui.print(
+            `  ${byOrg.size > 1 ? "  " : ""}    ${ui.dim("→")} ${ui.cyan(suggestedAddCommand(r, workspaceRoot))}`
+          );
         }
-        ui.print(`      ${ui.dim("→")} ${ui.cyan(suggestedAddCommand(r, workspaceRoot))}`);
+      }
+      // Missing locally
+      if (result.missingLocally.length > 0) {
+        ui.print(
+          `  ${byOrg.size > 1 ? "  " : ""}${ui.bold("Registered but not cloned locally:")}`
+        );
+        for (const r of result.missingLocally) {
+          ui.print(
+            `  ${byOrg.size > 1 ? "  " : ""}  ${ui.yellow("·")} ${r.remote.name}`
+          );
+          ui.print(
+            `  ${byOrg.size > 1 ? "  " : ""}    ${ui.dim("→")} ${ui.cyan(`gh repo clone ${org}/${r.remote.name}`)}`
+          );
+        }
       }
       ui.blank();
     }
 
-    // Missing locally
-    if (result.missingLocally.length > 0) {
-      ui.print(ui.bold("  Registered but not cloned locally:"));
-      for (const r of result.missingLocally) {
-        ui.print(`    ${ui.yellow("·")} ${r.remote.name}`);
-        ui.print(`      ${ui.dim("→")} ${ui.cyan(`gh repo clone ${org}/${r.remote.name}`)}`);
-      }
-      ui.blank();
-    }
+    // Build a flattened DiscoveryResult-ish view for the --add-cloned
+    // path below. Combines all orgs' results.
+    const result = {
+      organization: orgLabel,
+      repos: [...byOrg.values()].flatMap((r) => r.repos),
+      unregistered: [...byOrg.values()].flatMap((r) => r.unregistered),
+      missingLocally: [...byOrg.values()].flatMap((r) => r.missingLocally),
+    };
 
     // Auto-add cloned repos if requested.
     if (values["add-cloned"] === true) {
