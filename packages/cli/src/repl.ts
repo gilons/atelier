@@ -46,24 +46,70 @@ import { resolveLeaf, runCommandPrompts } from "./wizard.js";
 interface ReplContext {
   cwd: string;
   registry: CommandRegistry;
-  /** Sub-prompt session for multi-step flows (multi-select, confirm). */
-  session: PromptSession;
   workspaceRoot: string | null;
+  /**
+   * Non-TTY fallback session. NULL in TTY mode (where the
+   * InputReader handles raw input and any wizard/sub-flow creates
+   * its own short-lived session). NON-NULL in piped/non-TTY mode,
+   * where the same readline interface is the only one reading
+   * stdin — sub-flows must reuse it so they don't steal each
+   * other's lines, and so a fresh session doesn't see an already-
+   * consumed (and therefore "closed") stdin.
+   */
+  fallbackSession: PromptSession | null;
+}
+
+/**
+ * Run a function that needs a {@link PromptSession}.
+ *
+ *   - In TTY mode (`existing` is null), we create a short-lived
+ *     session, run the function, and close the session at the end.
+ *     This is safe because the InputReader doesn't keep any
+ *     readline interface around — there's no contention for stdin.
+ *
+ *   - In piped/non-TTY mode (`existing` is non-null), we reuse the
+ *     caller's session. Creating a fresh one would attach a second
+ *     readline interface to the same stdin; whichever fires first
+ *     wins the next line of input, and the other ends up either
+ *     stealing or missing data. Concretely: the REPL loop's fallback
+ *     session would consume both the command line AND its wizard
+ *     answers before a freshly-made wizard session got a chance to
+ *     listen, leaving the wizard with a dead stream.
+ *
+ * Why on-demand at all (vs. a long-lived session in TTY mode)?
+ * Because the REPL's InputReader puts stdin in raw mode, and a
+ * long-lived PromptSession's readline interface would silently
+ * buffer every byte typed during InputReader's reign as a "line" —
+ * causing the wizard to resolve its first `ask()` with the user's
+ * just-typed command instead of waiting for the real answer.
+ */
+export async function withSession<T>(
+  existing: PromptSession | null,
+  fn: (session: PromptSession) => Promise<T>
+): Promise<T> {
+  if (existing) {
+    return await fn(existing);
+  }
+  const session = new PromptSession();
+  try {
+    return await fn(session);
+  } finally {
+    session.close();
+  }
 }
 
 export async function runRepl(
   cwd: string,
   registry: CommandRegistry
 ): Promise<number> {
-  const session = new PromptSession();
   const ctx: ReplContext = {
     cwd,
     registry,
-    session,
     // Use the sideways-aware lookup so a user inside `api/` next to
     // `planning/` still gets a workspace context. Falls back to null
     // when nothing nearby exists.
     workspaceRoot: await findNearbyWorkspace(cwd),
+    fallbackSession: null,
   };
 
   const stdinIsTty = (process.stdin as NodeJS.ReadStream).isTTY === true;
@@ -75,6 +121,9 @@ export async function runRepl(
   const useInlineReader = stdinIsTty && stdoutIsTty;
   const completer = useInlineReader ? buildReplCompleter(registry) : null;
   const history: string[] = [];
+  // Only used on the non-TTY fallback path. In TTY mode this stays
+  // null so no readline interface contends with the InputReader.
+  let fallbackSession: PromptSession | null = null;
 
   try {
     await renderWelcome(ctx);
@@ -97,7 +146,11 @@ export async function runRepl(
         line = result.line;
         if (line.trim().length > 0) history.push(line);
       } else {
-        line = await session.ask(ui.cyan("atelier ❯"));
+        if (!fallbackSession) {
+          fallbackSession = new PromptSession();
+          ctx.fallbackSession = fallbackSession;
+        }
+        line = await fallbackSession.ask(ui.cyan("atelier ❯"));
       }
 
       const trimmed = line.trim();
@@ -122,7 +175,7 @@ export async function runRepl(
     }
     throw err;
   } finally {
-    session.close();
+    fallbackSession?.close();
   }
 }
 
@@ -321,9 +374,11 @@ async function maybeOfferAutoRegister(ctx: ReplContext): Promise<void> {
     `  ${ui.yellow("·")} You're inside a git repo at ${ui.bold(repoCtx.dirName)} that isn't registered.`
   );
   if (repoCtx.remote) ui.print(`    ${ui.dim("remote:")} ${repoCtx.remote}`);
-  const ok = await ctx.session.confirm(
-    `    Register it with workspace ${path.basename(ctx.workspaceRoot)}?`,
-    { default: true }
+  const ok = await withSession(ctx.fallbackSession, (session) =>
+    session.confirm(
+      `    Register it with workspace ${path.basename(ctx.workspaceRoot!)}?`,
+      { default: true }
+    )
   );
   if (!ok) return;
   try {
@@ -372,7 +427,9 @@ async function handleLine(line: string, ctx: ReplContext): Promise<void> {
   // dispatch unchanged.
   const leaf = resolveLeaf(ctx.registry, [cmd, ...rest]);
   if (leaf && leaf.command.prompts && leaf.command.prompts.length > 0) {
-    const argv = await runCommandPrompts(leaf, ctx.session);
+    const argv = await withSession(ctx.fallbackSession, (session) =>
+      runCommandPrompts(leaf, session)
+    );
     if (argv === null) {
       ui.print(`  ${ui.dim("Aborted.")}`);
       return;
@@ -569,15 +626,17 @@ async function interactiveRepoFlow(ctx: ReplContext): Promise<void> {
   );
   ui.blank();
 
-  const choice = await ctx.session.pickMany(
-    "Pick repos to register (registered ones are marked with —):",
-    merged.map((c) => ({
-      label: c.label,
-      value: c,
-      note: c.note,
-      preselected: false,
-      disabled: c.registered,
-    }))
+  const choice = await withSession(ctx.fallbackSession, (session) =>
+    session.pickMany(
+      "Pick repos to register (registered ones are marked with —):",
+      merged.map((c) => ({
+        label: c.label,
+        value: c,
+        note: c.note,
+        preselected: false,
+        disabled: c.registered,
+      }))
+    )
   );
   if (!choice || choice.length === 0) {
     ui.print(`  ${ui.dim("Nothing selected.")}`);
