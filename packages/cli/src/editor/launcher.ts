@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 
 /**
  * Open a URL in a chromeless desktop-style window when possible,
@@ -72,6 +73,19 @@ interface ChromiumCandidate {
  * Try to spawn `url` in a Chromium-family `--app=` window. Returns
  * the launcher mode + child handle, or null when no compatible
  * browser was found.
+ *
+ * Forces a fresh Chrome process tree via `--user-data-dir`. Without
+ * that, if the user already has a Chrome window open, the new
+ * `--app=` window inherits the existing instance's geometry and
+ * silently ignores `--window-size`. With a unique per-session
+ * data dir, Chrome boots a clean process that honors every flag
+ * we pass — including `--window-size` and `--window-position`.
+ *
+ * The data dir lives under `os.tmpdir()`; we don't bother
+ * cleaning it up because the OS handles tmpdir lifecycle (macOS
+ * clears on reboot, Linux distros usually do the same). Each
+ * session gets a fresh dir so resizes from one session don't
+ * leak into the next.
  */
 export async function openUrlInDesktopWindow(
   url: string,
@@ -80,6 +94,9 @@ export async function openUrlInDesktopWindow(
   const windowSize = opts.windowSize ?? "440,390";
   const platform = process.platform;
   const candidates = chromiumCandidates(platform);
+
+  // Fresh per-session profile so --window-size actually wins.
+  const userDataDir = await makeEphemeralUserDataDir();
 
   for (const c of candidates) {
     if (c.invocation === "macos-bundle") {
@@ -94,7 +111,22 @@ export async function openUrlInDesktopWindow(
       }
       const child = spawn(
         "open",
-        ["-n", "-a", c.command, "--args", `--app=${url}`, `--window-size=${windowSize}`],
+        [
+          "-n",
+          "-a",
+          c.command,
+          "--args",
+          `--app=${url}`,
+          `--user-data-dir=${userDataDir}`,
+          `--window-size=${windowSize}`,
+          // Position the window somewhere reasonable rather than
+          // letting Chrome stack it on top of an existing instance.
+          "--window-position=200,150",
+          // Suppress first-run noise (welcome page, default-browser
+          // prompt) since this is a transient editor profile.
+          "--no-first-run",
+          "--no-default-browser-check",
+        ],
         { detached: true, stdio: "ignore" }
       );
       child.unref();
@@ -105,7 +137,15 @@ export async function openUrlInDesktopWindow(
     if (!(await isOnPath(c.command))) continue;
     const child = spawn(
       c.command,
-      [`--app=${url}`, `--window-size=${windowSize}`, "--new-window"],
+      [
+        `--app=${url}`,
+        `--user-data-dir=${userDataDir}`,
+        `--window-size=${windowSize}`,
+        "--window-position=200,150",
+        "--new-window",
+        "--no-first-run",
+        "--no-default-browser-check",
+      ],
       { detached: true, stdio: "ignore" }
     );
     child.unref();
@@ -115,6 +155,20 @@ export async function openUrlInDesktopWindow(
   // Fallback: open in the user's default handler. This won't be
   // chromeless but it does let the user complete the flow.
   return openInDefaultHandler(url, platform);
+}
+
+/**
+ * Create a fresh, empty Chrome profile directory under
+ * `os.tmpdir()`. Returns its absolute path. We don't clean it
+ * up — the OS handles tmpdir eviction and each new session
+ * generates a new dir, so leftover dirs are bounded by how
+ * often the user runs `/doc add`.
+ */
+async function makeEphemeralUserDataDir(): Promise<string> {
+  const suffix = crypto.randomBytes(6).toString("hex");
+  const dir = path.join(os.tmpdir(), `atelier-editor-${suffix}`);
+  await fs.mkdir(dir, { recursive: true });
+  return dir;
 }
 
 function chromiumCandidates(platform: NodeJS.Platform): ChromiumCandidate[] {
