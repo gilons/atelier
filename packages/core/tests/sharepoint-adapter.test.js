@@ -493,12 +493,46 @@ test("SharePointAdapter.fetchDoc extracts text from .pptx + preserves the binary
   assert.equal(fetched.original.extension, "pptx");
 });
 
-test("SharePointAdapter.fetchDoc preserves the binary even for unsupported extensions (.pdf)", async () => {
-  // PDF / legacy Office formats: no in-house text extractor yet,
-  // but we still download the binary and preserve it via
-  // FetchedDoc.original so the user has the source file on disk.
-  // The body falls back to a clear stub pointing at the file URL.
-  const pdfBytes = Buffer.from("%PDF-1.4\n%fake fixture\n", "binary");
+test("SharePointAdapter.fetchDoc extracts text from .pdf via pdfjs + preserves the binary", async () => {
+  // Build a tiny PDF inline. Same trick as the pdf-text unit tests
+  // — the PDF spec is permissive enough that a hand-rolled byte
+  // string is a valid document.
+  const pdfBytes = Buffer.from(`%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 64 >>
+stream
+BT
+/F1 12 Tf
+100 700 Td
+(SharePoint PDF body) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f
+0000000010 00000 n
+0000000060 00000 n
+0000000115 00000 n
+0000000220 00000 n
+0000000330 00000 n
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+400
+%%EOF`, "binary");
   const fetchImpl = spFetch([
     ...siteAndDriveMatchers(),
     async (url) => {
@@ -523,13 +557,46 @@ test("SharePointAdapter.fetchDoc preserves the binary even for unsupported exten
     fetchImpl,
   });
   const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-pdf`);
-  assert.match(fetched.body, /Whitepaper\.pdf/);
-  assert.match(fetched.body, /Atelier doesn't extract text from this format/);
-  // The whole point of this change: we have the bytes attached
-  // for the sync engine to write to disk.
-  assert.ok(fetched.original, "should attach original bytes for binary formats");
+  assert.match(fetched.body, /## Page 1/);
+  assert.match(fetched.body, /SharePoint PDF body/);
+  assert.ok(fetched.original, "should attach original bytes for .pdf");
   assert.equal(fetched.original.extension, "pdf");
-  assert.equal(fetched.original.bytes.toString("binary"), pdfBytes.toString("binary"));
+});
+
+test("SharePointAdapter.fetchDoc preserves the binary for still-unsupported formats (.doc)", async () => {
+  // Legacy Office .doc (binary compound file) has no extractor
+  // yet. We still download + preserve the bytes via
+  // FetchedDoc.original so the user has the file locally; the
+  // body is a clear "not extracted yet" stub.
+  const docBytes = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, /* …truncated CFB header… */]);
+  const fetchImpl = spFetch([
+    ...siteAndDriveMatchers(),
+    async (url) => {
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-doc`)) {
+        return json(200, {
+          id: "item-doc",
+          name: "Legacy.doc",
+          webUrl: "https://contoso.sharepoint.com/Legacy.doc",
+        });
+      }
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-doc/content`)) {
+        return new Response(docBytes, {
+          status: 200,
+          headers: { "Content-Type": "application/msword" },
+        });
+      }
+    },
+  ]);
+  const adapter = new SharePointAdapter({
+    token: "test-token",
+    scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
+    fetchImpl,
+  });
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-doc`);
+  assert.match(fetched.body, /Legacy\.doc/);
+  assert.match(fetched.body, /Atelier doesn't extract text from this format/);
+  assert.ok(fetched.original, "should attach original bytes for unsupported binaries");
+  assert.equal(fetched.original.extension, "doc");
 });
 
 test("SharePointAdapter.fetchDoc reads .md raw without conversion", async () => {

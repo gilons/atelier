@@ -80,4 +80,5 @@ export {
 export { extractDocxText, wordXmlToText } from "./docx-text.js";
 export { extractXlsxText } from "./xlsx-text.js";
 export { extractPptxText, renderSlideMarkdown } from "./pptx-text.js";
+export { extractPdfText } from "./pdf-text.js";
 export { ATELIER_VERSION } from "./version.js";

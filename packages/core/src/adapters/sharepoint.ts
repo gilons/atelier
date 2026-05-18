@@ -8,6 +8,7 @@ import { classifyDoc } from "../classify.js";
 import { extractDocxText } from "../docx-text.js";
 import { extractXlsxText } from "../xlsx-text.js";
 import { extractPptxText } from "../pptx-text.js";
+import { extractPdfText } from "../pdf-text.js";
 import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
 import {
   AzureClientCredentialsProvider,
@@ -319,7 +320,7 @@ export class SharePointAdapter implements SourceAdapter {
       // Anything else: fetch raw bytes once and try to extract.
       const bin = await this.fetchRawBinary(driveId, itemId);
       original = { bytes: bin, extension: ext };
-      body = renderBinaryAsMarkdown(bin, meta.name, ext, meta.webUrl);
+      body = await renderBinaryAsMarkdown(bin, meta.name, ext, meta.webUrl);
     }
 
     return {
@@ -615,22 +616,26 @@ function stripVttTags(s: string): string {
  * whether extraction succeeds — even unparseable files should be
  * available on disk for the user to open externally.
  */
-function renderBinaryAsMarkdown(
+async function renderBinaryAsMarkdown(
   bin: Buffer,
   filename: string,
   ext: string,
   webUrl: string | undefined
-): string {
+): Promise<string> {
   const externallyOpenHint = `> Open the file directly: ${webUrl ?? "(no url)"}\n`;
-  let extract: ((b: Buffer) => string) | null = null;
+  // Map extension → extractor. Async because PDFs go through pdfjs
+  // which is fundamentally async; OOXML extractors are sync but
+  // we wrap them so the dispatch table has a uniform shape.
+  let extract: ((b: Buffer) => Promise<string> | string) | null = null;
   if (ext === "docx") extract = extractDocxText;
   else if (ext === "xlsx") extract = extractXlsxText;
   else if (ext === "pptx") extract = extractPptxText;
+  else if (ext === "pdf") extract = extractPdfText;
 
   if (!extract) {
-    // Legacy Office (.doc, .xls, .ppt), .pdf (pending pdfjs),
-    // images, archives, etc. — we keep the original on disk and
-    // stub the body so the doc still lands in the map.
+    // Legacy Office (.doc, .xls, .ppt) and other formats we don't
+    // have a parser for. We keep the original on disk so the user
+    // can open it externally; the body is a clear stub.
     return (
       `> ${filename} (.${ext}) — Atelier doesn't extract text from this format yet. ` +
       `The original is preserved alongside this entry for offline reference.\n` +
@@ -639,7 +644,7 @@ function renderBinaryAsMarkdown(
   }
   let body: string;
   try {
-    body = extract(bin);
+    body = await extract(bin);
   } catch (err) {
     return (
       `> ${filename} couldn't be parsed as a .${ext} — ${(err as Error).message}\n` +
@@ -649,7 +654,7 @@ function renderBinaryAsMarkdown(
   if (body.trim().length === 0) {
     return (
       `> ${filename} appears to contain no extractable text ` +
-      `(images, drawings, or empty paragraphs only).\n` +
+      `(scanned image, drawings, or empty paragraphs only).\n` +
       externallyOpenHint
     );
   }
