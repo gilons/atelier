@@ -64,6 +64,57 @@ const VALID_SOURCE_TRANSPORTS: ReadonlySet<SourceTransport> = new Set<SourceTran
 // Small helpers
 // ============================================================
 
+/**
+ * True when `credentials` is one of the two shapes
+ * {@link Source.credentials} allows:
+ *
+ *   - `{ envVar: "STRING" }` — the bearer-token form (Notion,
+ *     legacy SharePoint paste-the-token).
+ *
+ *   - `{ kind: "azureClientCredentials", tenantId, clientId,
+ *     clientSecretEnvVar }` — the auto-refresh form (SharePoint
+ *     via the Azure AD app's client_credentials flow).
+ *
+ * Used by the sources.yaml validator. Adapters that don't
+ * understand the azure shape reject it themselves at build()
+ * time with a clear message; this validator only checks that
+ * what's persisted is one of the two recognized shapes.
+ */
+function isValidCredentials(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  if (v.kind === "azureClientCredentials") {
+    return (
+      isNonEmptyString(v.tenantId) &&
+      isNonEmptyString(v.clientId) &&
+      isNonEmptyString(v.clientSecretEnvVar) &&
+      // Optional fields — if present, must be strings.
+      (v.scope === undefined || isNonEmptyString(v.scope))
+    );
+  }
+  return isNonEmptyString(v.envVar);
+}
+
+/**
+ * Coerce a validated credentials value into a Source.credentials
+ * union member with only the recognized fields kept. Drops any
+ * extra properties that snuck in via hand-editing — keeping the
+ * persisted shape narrow.
+ */
+function normalizeCredentials(v: unknown): Source["credentials"] {
+  const obj = v as Record<string, unknown>;
+  if (obj.kind === "azureClientCredentials") {
+    const out: Extract<Source["credentials"], { kind: "azureClientCredentials" }> = {
+      kind: "azureClientCredentials",
+      tenantId: obj.tenantId as string,
+      clientId: obj.clientId as string,
+      clientSecretEnvVar: obj.clientSecretEnvVar as string,
+    };
+    if (typeof obj.scope === "string") out.scope = obj.scope;
+    return out;
+  }
+  return { envVar: obj.envVar as string };
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -137,11 +188,11 @@ function validateSource(
     valid = false;
   }
   if (credentials !== undefined) {
-    if (!isObject(credentials) || !isNonEmptyString((credentials as Record<string, unknown>).envVar)) {
+    if (!isValidCredentials(credentials)) {
       pushIssue(
         issues,
         `${basePath}.credentials`,
-        'if present, must be of the form { envVar: "NAME_OF_ENV_VAR" }'
+        'if present, must be either { envVar: "NAME_OF_ENV_VAR" } or { kind: "azureClientCredentials", tenantId, clientId, clientSecretEnvVar }'
       );
       valid = false;
     }
@@ -173,7 +224,7 @@ function validateSource(
   if (transport !== undefined) result.transport = transport as SourceTransport;
   if (mcpServer !== undefined) result.mcpServer = mcpServer as string;
   if (credentials !== undefined) {
-    result.credentials = { envVar: (credentials as { envVar: string }).envVar };
+    result.credentials = normalizeCredentials(credentials);
   }
   if (adapterModule !== undefined) result.adapterModule = adapterModule as string;
   if (scope !== undefined) result.scope = scope as Record<string, unknown>;

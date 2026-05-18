@@ -190,6 +190,91 @@ test("REPL: link-mode URL prompt is short enough not to wrap (≤80 chars before
 });
 
 // ============================================================
+// Bug 5: stale empties leaking into LATER prompts. The
+// previous fixes caught the tenant-id prompt (immediately after
+// the auth picker) but missed the URL prompt (after a mode
+// picker, two steps later). Per-prompt stale-empty filtering
+// in PromptSession.ask covers any prompt that comes after any
+// picker.
+// ============================================================
+
+test("REPL: link-mode URL prompt is patient (no stale-newline empty after mode picker)", async () => {
+  const root = await makeWorkspace({
+    env: { SHAREPOINT_CLIENT_SECRET: "x" },
+  });
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/source onboard sharepoint\r");
+    await a.expect("How would you like to connect");
+    a.enter();
+    await a.expect("Authenticate via?");
+    a.enter();
+    await a.expect("Microsoft Entra tenant id");
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("App (client) id");
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("How do you want to add this SharePoint");
+    a.enter(); // pick link
+    await a.expect(/SharePoint URL.*:/);
+    // Same rigorous check as the tenant-id test: wait + assert
+    // the empty-error never fired.
+    await new Promise((r) => setTimeout(r, 400));
+    a.assertNotPresent(
+      "This answer can't be empty",
+      "stale empty leaked into the URL prompt — PromptSession.ask filter regressed?"
+    );
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
+// Bug 6: sources.yaml validator must accept the
+// azureClientCredentials shape. Previously rejected the
+// onboarded source with "credentials must be of the form
+// {envVar: ...}" because the validator predated the new
+// auth path.
+// ============================================================
+
+test("REPL: registering an azure-app source writes credentials that load back cleanly", async () => {
+  const root = await makeWorkspace({
+    env: { SHAREPOINT_CLIENT_SECRET: "x" },
+  });
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send(
+      "/source onboard sharepoint --non-interactive --transport rest " +
+        "--answer authType=azure-app " +
+        "--answer azureTenantId=00000000-0000-0000-0000-000000000000 " +
+        "--answer azureClientId=00000000-0000-0000-0000-000000000000 " +
+        "--answer azureClientSecretEnvVar=SHAREPOINT_CLIENT_SECRET " +
+        "--answer mode=manual " +
+        "--answer hostname=contoso.sharepoint.com " +
+        "--answer sitePath=/sites/X " +
+        "--answer driveName= " +
+        "--answer folderPath= " +
+        "--skip-verify --yes\r"
+    );
+    // Source registered. Atelier should then read sources.yaml
+    // back cleanly the next time we list sources.
+    await a.expect(/Source registered|registered|complete/i, {
+      timeout: 10000,
+    });
+    a.assertNotPresent(
+      "credentials: if present, must be",
+      "validator rejected the azureClientCredentials shape it should accept"
+    );
+    a.assertNotPresent("✗ Writing sources.yaml");
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
 // Sanity: bare REPL boots, displays the banner, accepts /quit.
 // Cheap regression catcher for whole-flow brokenness — e.g. an
 // import error or a banner crash would surface here before any

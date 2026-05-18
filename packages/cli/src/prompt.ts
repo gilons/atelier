@@ -122,29 +122,31 @@ export class PromptSession {
     }
     const promptedAt = Date.now();
     let line: string;
-    // Stale-newline guard. Empty lines that resolve within ~75ms
-    // of the prompt rendering are almost always residue from
-    // earlier raw-mode handoffs — either:
+    // Stale-empty guard. Empty lines that resolve within ~250ms
+    // of the prompt rendering are residue from earlier raw-mode
+    // handoffs — either the kernel tty re-delivering a `\n` after
+    // a picker exited, or a pre-buffered line event that fired
+    // during readline's auto-resume sequence before the prompt
+    // was even rendered.
     //
-    //   - The kernel's tty line discipline re-delivering a `\n`
-    //     after a raw-mode picker (e.g. /source onboard) exited.
-    //   - A pre-buffered line event that fired DURING readline's
-    //     setup (between rl.Interface() being constructed and
-    //     rl.prompt() rendering the user-visible prompt).
+    // Why 250ms: kernel→Node flush latency is usually <10ms but
+    // can stretch on tmux / iTerm bracketed-paste setups, and
+    // line-buffered output (a verbose `help` printout immediately
+    // before the prompt) can delay the prompt-render moment
+    // relative to when the empty actually flowed. 250ms is
+    // comfortably above all the observed paths and still well
+    // below human reaction time, so we never eat a real Enter
+    // someone pressed to take a default.
     //
-    // Either way: a human cannot read a prompt and press Enter
-    // within ~75ms. Anything that fast is not real input. Skip
-    // it and wait for the next line.
-    //
-    // We don't apply this filter to non-TTY input (piped scripts,
-    // tests): there, a "line" arriving instantly IS legitimate —
+    // Non-TTY input (piped scripts, tests) skips the filter:
+    // there, an instantly-arriving empty line IS legitimate —
     // it's the next scripted answer.
     while (true) {
       line = await this.nextLine();
       if (
         this.isTty &&
         line.length === 0 &&
-        Date.now() - promptedAt < 75
+        Date.now() - promptedAt < 250
       ) {
         continue;
       }
