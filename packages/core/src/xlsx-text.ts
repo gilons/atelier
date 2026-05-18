@@ -12,23 +12,32 @@ import { decodeXmlEntities } from "./ooxml-text.js";
  *   xl/sharedStrings.xml        — string table indexed by `<c><v>`
  *   xl/worksheets/sheet1.xml    — actual cell data, one per sheet
  *
- * We emit one markdown `## Sheet name` block per worksheet, followed
- * by a markdown table. Numeric values stay as numbers; date-typed
- * cells stay as their raw value (Excel encodes dates as float serial
- * numbers from 1900-01-01; converting them needs format metadata we
- * skip in this minimal pass).
+ * We emit one `## Sheet name` heading per worksheet, followed by a
+ * fenced ```csv code block with that sheet's cells. CSV (rather than
+ * a markdown table) because agents reading the doc map can parse
+ * tabular data trivially with stdlib CSV readers, but parsing
+ * markdown-table pipes correctly is surprisingly fiddly (column
+ * widths, escape handling, alignment rows). The fenced block makes
+ * the format explicit so a renderer won't try to interpret it as
+ * prose.
+ *
+ * Numeric values stay as their literal string form; date-typed
+ * cells stay as their raw float serial (Excel encodes dates as days
+ * since 1900-01-01 — converting needs format metadata we skip in
+ * this minimal pass).
  *
  * Output shape:
  *
  *     ## Sheet1
  *
- *     | A    | B    | C  |
- *     | ---- | ---- | -- |
- *     | foo  | bar  | 42 |
- *     | baz  |      |  7 |
+ *     ```csv
+ *     A,B,C
+ *     foo,bar,42
+ *     baz,,7
+ *     ```
  *
- * Empty trailing rows and trailing empty columns are trimmed so the
- * table only covers the populated area.
+ * Empty trailing rows are trimmed; trailing empty columns within a
+ * row become trailing empty fields per RFC 4180.
  */
 
 /**
@@ -269,33 +278,36 @@ function renderSheetMarkdown(name: string, rows: ParsedRow[]): string {
     (m, r) => Math.max(m, ...r.cells.map((c) => c.col)),
     0
   );
-  // Build a 2D grid filled with empty strings.
+  // Build a 2D grid filled with empty strings. Sparse cells (an
+  // empty B in a row with an A and a C) become empty CSV fields,
+  // which is the standard "value not present here" encoding.
   const grid: string[][] = usedRows.map(() => Array(maxCol).fill(""));
   for (let i = 0; i < usedRows.length; i++) {
     for (const cell of usedRows[i].cells) {
       grid[i][cell.col - 1] = cell.value;
     }
   }
-  // Per-column width for nice padding.
-  const widths: number[] = Array(maxCol).fill(0);
-  for (let c = 0; c < maxCol; c++) {
-    // Headers default to A/B/C if the first row doesn't supply
-    // labels; we keep the literal first-row content as the
-    // header regardless, so users see what they actually have.
-    widths[c] = Math.max(1, ...grid.map((row) => row[c].length));
-  }
-
   const lines: string[] = [];
   lines.push(`## ${name}`);
   lines.push("");
-  // Header row (first row of data — Excel doesn't tag a "header
-  // row" formally, but practically it's row 1).
-  const header = grid[0].map((v, c) => v.padEnd(widths[c])).join(" | ");
-  lines.push(`| ${header} |`);
-  lines.push(`| ${widths.map((w) => "-".repeat(w)).join(" | ")} |`);
-  for (let i = 1; i < grid.length; i++) {
-    const row = grid[i].map((v, c) => v.padEnd(widths[c])).join(" | ");
-    lines.push(`| ${row} |`);
+  lines.push("```csv");
+  for (const row of grid) {
+    lines.push(row.map(csvEscape).join(","));
   }
+  lines.push("```");
   return lines.join("\n");
+}
+
+/**
+ * RFC 4180 escaping. A field that contains a comma, double quote,
+ * or newline gets wrapped in double quotes; embedded double quotes
+ * inside such a field are doubled. Plain alphanumeric / single-
+ * token cells pass through unchanged.
+ */
+function csvEscape(value: string): string {
+  if (value === "") return "";
+  if (/[",\r\n]/.test(value)) {
+    return '"' + value.replace(/"/g, '""') + '"';
+  }
+  return value;
 }

@@ -416,9 +416,10 @@ test("SharePointAdapter.fetchDoc extracts text from .xlsx + preserves the binary
   });
   const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-xlsx`);
   assert.match(fetched.body, /## People/);
-  assert.match(fetched.body, /Name/);
-  assert.match(fetched.body, /Alice/);
-  assert.match(fetched.body, /\| 42/);
+  // CSV body (agent-parseable). The actual data: Name,42 / Alice,7
+  // — column-1 is shared-string-indexed strings, column-2 is raw
+  // numbers from the worksheet.
+  assert.match(fetched.body, /```csv\nName,42\nAlice,7\n```/);
   assert.ok(fetched.original, "should attach xlsx bytes");
   assert.equal(fetched.original.extension, "xlsx");
 });
