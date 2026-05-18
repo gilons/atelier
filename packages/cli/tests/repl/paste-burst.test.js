@@ -38,6 +38,47 @@ async function rm(root) {
   await fs.rm(root, { recursive: true, force: true });
 }
 
+test("REPL: paste delivered byte-by-byte still coalesces into one render", async () => {
+  // Some terminals (Terminal.app without bracketed paste, certain
+  // SSH setups, a slow remote tty) deliver pastes as a stream of
+  // single-byte `data` events instead of one chunk. The synchronous
+  // multi-key batching in handle() doesn't help there — every chunk
+  // has exactly one key. The async setImmediate coalesce in
+  // refresh() is what catches that case.
+  //
+  // Simulate by issuing N small PTY writes back-to-back, letting
+  // each be its own `data` event.
+  const root = await makeWorkspace();
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    const beforeCount = (a.buffer.match(/atelier ❯/g) ?? []).length;
+    const url =
+      "/doc add https://dinolabgmbh-my.sharepoint.com/:w:/r/personal/" +
+      "stephan_dino-lab_io/_layouts/15/Doc.aspx?sourcedoc=%7BAAAA89C6%7D" +
+      "&file=Cloud%20Services%20Vertrag%20(SaaS)%202.0.docx";
+    // One byte per write — worst case for a per-keystroke renderer.
+    for (const ch of url) a.send(ch);
+    await new Promise((r) => setTimeout(r, 600));
+    const afterCount = (a.buffer.match(/atelier ❯/g) ?? []).length;
+    // Without coalescing, byte-by-byte paste produces ~N prompts.
+    // With setImmediate-coalescing, multiple data events in one
+    // event-loop tick share one render. We don't know exactly how
+    // many ticks the writes spanned (PTY timing varies), but the
+    // count should be a small fraction of url.length, not most of it.
+    const newPrompts = afterCount - beforeCount;
+    assert.ok(
+      newPrompts < 10,
+      `byte-by-byte paste produced ${newPrompts} prompt renders for a ${url.length}-char URL — ` +
+        `expected a small number thanks to the async render coalesce. ` +
+        `Looks like InputReader.refresh() lost its setImmediate coalesce path.`
+    );
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
 test("REPL: pasting a long URL doesn't multiply the prompt across the screen", async () => {
   const root = await makeWorkspace();
   const a = await launchAtelier({ cwd: root });
