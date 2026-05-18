@@ -6,6 +6,8 @@ import {
 } from "../http-transport.js";
 import { classifyDoc } from "../classify.js";
 import { extractDocxText } from "../docx-text.js";
+import { extractXlsxText } from "../xlsx-text.js";
+import { extractPptxText } from "../pptx-text.js";
 import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
 import {
   AzureClientCredentialsProvider,
@@ -299,44 +301,25 @@ export class SharePointAdapter implements SourceAdapter {
     });
     const ext = meta.name.split(".").pop()?.toLowerCase() ?? "";
 
+    // Two-track classification:
+    //   - Text formats (.vtt, .md, .txt): body IS the original;
+    //     no binary to preserve.
+    //   - Binary formats (Office, PDF, …): download the bytes
+    //     once and (a) parse them locally into markdown for the
+    //     doc-map body AND (b) preserve them on disk via
+    //     FetchedDoc.original so the user has the source file.
     let body: string;
+    let original: { bytes: Buffer; extension: string } | undefined;
     if (ext === "vtt") {
       const raw = await this.fetchRawText(driveId, itemId);
       body = renderVttAsMarkdown(raw, meta.name);
     } else if (ext === "md" || ext === "txt") {
       body = await this.fetchRawText(driveId, itemId);
-    } else if (ext === "docx") {
-      // Modern Word (.docx) is Office Open XML — a ZIP of XML
-      // documents. We fetch the raw bytes and pull the text out
-      // ourselves rather than relying on Graph to convert (it
-      // can't: `?format=text/plain` returns 406).
-      const bin = await this.fetchRawBinary(driveId, itemId);
-      try {
-        body = extractDocxText(bin);
-      } catch (err) {
-        body =
-          `> ${meta.name} couldn't be parsed as a .docx — ${(err as Error).message}\n` +
-          `> Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
-      }
-      if (body.trim().length === 0) {
-        // Empty extraction usually means a doc with only inline
-        // images / tables / drawings. Keep the doc-map entry but
-        // make it obvious to the reader.
-        body =
-          `> ${meta.name} appears to contain no extractable text ` +
-          `(images, drawings, or empty paragraphs only). ` +
-          `Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
-      }
     } else {
-      // Legacy Office (.doc, .xls, .ppt), PDFs, and other formats
-      // we don't have a text extractor for yet. We could ask
-      // Graph to PDF-convert and then extract — that's a useful
-      // follow-up — but for now the doc lands in the map with
-      // title + URL so the user can open it externally and an
-      // agent reading the map knows the file exists.
-      body =
-        `> ${meta.name} (.${ext}) — Atelier doesn't extract text from this format yet. ` +
-        `Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
+      // Anything else: fetch raw bytes once and try to extract.
+      const bin = await this.fetchRawBinary(driveId, itemId);
+      original = { bytes: bin, extension: ext };
+      body = renderBinaryAsMarkdown(bin, meta.name, ext, meta.webUrl);
     }
 
     return {
@@ -350,6 +333,7 @@ export class SharePointAdapter implements SourceAdapter {
         filename: meta.name,
         body,
       }),
+      original,
     };
   }
 
@@ -621,6 +605,55 @@ export function renderVttAsMarkdown(vtt: string, sourceName: string): string {
 
 function stripVttTags(s: string): string {
   return s.replace(/<\/?[a-z][^>]*>/gi, "");
+}
+
+/**
+ * Choose the right text extractor for a binary file and render its
+ * markdown body. Falls back to a clear stub for formats we don't
+ * yet support (legacy Office, PDF until pdfjs lands, anything
+ * else). The binary is preserved by the caller regardless of
+ * whether extraction succeeds — even unparseable files should be
+ * available on disk for the user to open externally.
+ */
+function renderBinaryAsMarkdown(
+  bin: Buffer,
+  filename: string,
+  ext: string,
+  webUrl: string | undefined
+): string {
+  const externallyOpenHint = `> Open the file directly: ${webUrl ?? "(no url)"}\n`;
+  let extract: ((b: Buffer) => string) | null = null;
+  if (ext === "docx") extract = extractDocxText;
+  else if (ext === "xlsx") extract = extractXlsxText;
+  else if (ext === "pptx") extract = extractPptxText;
+
+  if (!extract) {
+    // Legacy Office (.doc, .xls, .ppt), .pdf (pending pdfjs),
+    // images, archives, etc. — we keep the original on disk and
+    // stub the body so the doc still lands in the map.
+    return (
+      `> ${filename} (.${ext}) — Atelier doesn't extract text from this format yet. ` +
+      `The original is preserved alongside this entry for offline reference.\n` +
+      externallyOpenHint
+    );
+  }
+  let body: string;
+  try {
+    body = extract(bin);
+  } catch (err) {
+    return (
+      `> ${filename} couldn't be parsed as a .${ext} — ${(err as Error).message}\n` +
+      externallyOpenHint
+    );
+  }
+  if (body.trim().length === 0) {
+    return (
+      `> ${filename} appears to contain no extractable text ` +
+      `(images, drawings, or empty paragraphs only).\n` +
+      externallyOpenHint
+    );
+  }
+  return body;
 }
 
 function stripExtension(name: string): string {

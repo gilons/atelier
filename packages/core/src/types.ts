@@ -298,6 +298,18 @@ export interface DocEntryFrontMatter {
   lastFetched?: string;
   /** Hash of the fetched body. Used by Slice 8 to detect changes. */
   contentHash?: string;
+  /**
+   * Filename (sibling to the `.md` body file) where the original
+   * binary is preserved on disk. Set for non-text source files
+   * that the adapter parsed locally — e.g. `Strategy.docx` →
+   * `<encoded-docId>.docx` next to the `.md`. Lets a user open
+   * the source file in Word/Excel/etc. without re-downloading.
+   *
+   * Unset for documents whose markdown body IS the original
+   * representation (Markdown source files, GitHub Discussions
+   * threads, .vtt transcripts).
+   */
+  originalFile?: string;
   /** ISO timestamp when first registered. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */

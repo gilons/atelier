@@ -78,4 +78,6 @@ export {
   type GitHubDiscussionsScope,
 } from "./adapters/github-discussions.js";
 export { extractDocxText, wordXmlToText } from "./docx-text.js";
+export { extractXlsxText } from "./xlsx-text.js";
+export { extractPptxText, renderSlideMarkdown } from "./pptx-text.js";
 export { ATELIER_VERSION } from "./version.js";

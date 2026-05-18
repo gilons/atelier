@@ -287,6 +287,7 @@ async function syncSource(
             url: fetched.url ?? remote.url,
             body: fetched.body,
             fetchedAt: now,
+            original: fetched.original,
             skipSourceValidation: true,
           });
         }
@@ -330,6 +331,7 @@ async function syncSource(
             classification: fetched.classification ?? remote.classification ?? null,
             url: fetched.url ?? remote.url,
             body: fetched.body,
+            original: fetched.original,
           });
         }
         actions.push({

@@ -459,3 +459,99 @@ test("updateDoc throws on missing", async () => {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
+
+// ============================================================
+// Binary preservation — addDoc / updateDoc / removeDoc with
+// an `original` payload
+// ============================================================
+
+test("addDoc with `original` writes the binary alongside the .md and records originalFile", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addSource(workspaceRoot, { kind: "notion", name: "S" });
+    const doc = await addDoc(workspaceRoot, {
+      source: "s",
+      docId: "Q3-plan",
+      title: "Q3 Plan",
+      body: "# Q3 Plan\n\nSummary of plan.",
+      original: { bytes: Buffer.from([0x01, 0x02, 0x03, 0xff]), extension: "docx" },
+      skipSourceValidation: true,
+    });
+    // Front-matter records the sibling filename.
+    assert.equal(doc.originalFile, "Q3-plan.docx");
+    // Binary actually lives at <docs>/<source>/Q3-plan.docx.
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    const onDisk = await fs.readFile(binaryPath);
+    assert.deepEqual([...onDisk], [0x01, 0x02, 0x03, 0xff]);
+    // And the front-matter persists through a reload.
+    const loaded = await loadDoc(workspaceRoot, "s", "Q3-plan");
+    assert.equal(loaded.originalFile, "Q3-plan.docx");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("removeDoc deletes the preserved binary too", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addSource(workspaceRoot, { kind: "notion", name: "S" });
+    await addDoc(workspaceRoot, {
+      source: "s",
+      docId: "Q3-plan",
+      title: "Q3 Plan",
+      original: { bytes: Buffer.from("fake"), extension: "docx" },
+      skipSourceValidation: true,
+    });
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    // Sanity: exists before remove.
+    await fs.access(binaryPath);
+    await removeDoc(workspaceRoot, "s", "Q3-plan");
+    // Gone after remove.
+    await assert.rejects(() => fs.access(binaryPath));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("updateDoc with `original: null` deletes the previously-stored binary", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addSource(workspaceRoot, { kind: "notion", name: "S" });
+    await addDoc(workspaceRoot, {
+      source: "s",
+      docId: "Q3-plan",
+      title: "Q3 Plan",
+      original: { bytes: Buffer.from("first version"), extension: "docx" },
+      skipSourceValidation: true,
+    });
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    await fs.access(binaryPath); // sanity
+    const updated = await updateDoc(workspaceRoot, "s", "Q3-plan", { original: null });
+    assert.equal(updated.originalFile, undefined);
+    await assert.rejects(() => fs.access(binaryPath));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("updateDoc with a new `original` overwrites the previous binary", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addSource(workspaceRoot, { kind: "notion", name: "S" });
+    await addDoc(workspaceRoot, {
+      source: "s",
+      docId: "Q3-plan",
+      title: "Q3 Plan",
+      original: { bytes: Buffer.from("v1"), extension: "docx" },
+      skipSourceValidation: true,
+    });
+    await updateDoc(workspaceRoot, "s", "Q3-plan", {
+      original: { bytes: Buffer.from("v2 longer"), extension: "docx" },
+    });
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    const onDisk = await fs.readFile(binaryPath, "utf8");
+    assert.equal(onDisk, "v2 longer");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});

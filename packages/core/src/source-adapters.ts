@@ -61,6 +61,27 @@ export interface FetchedDoc {
    * compute one from `body` itself.
    */
   contentHash?: string;
+  /**
+   * Original source-file bytes, when the document came from a
+   * non-text format that the adapter parsed locally (e.g. .docx,
+   * .xlsx, .pdf).
+   *
+   * When set, the sync engine writes the bytes alongside the
+   * markdown body at `.atelier/docs/<source>/<encoded-docId>.<ext>`
+   * so the user has the binary on disk for offline reference. The
+   * markdown body remains the searchable "indexed view" — the
+   * original is archival.
+   *
+   * Adapters that produce pure-text bodies (`.md`, `.vtt`, GitHub
+   * Discussions, etc.) leave this undefined — the body itself IS
+   * the original and there's nothing extra worth duplicating.
+   */
+  original?: {
+    /** Raw file bytes. */
+    bytes: Buffer;
+    /** Filename extension, without the leading dot. e.g. "docx". */
+    extension: string;
+  };
 }
 
 /**

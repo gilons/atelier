@@ -129,6 +129,26 @@ function docFilePath(workspaceRoot: string, source: string, docId: string): stri
   return path.join(root, source, encodeDocFilenameStem(docId) + ".md");
 }
 
+/**
+ * Filesystem path for the preserved-original binary that sits
+ * alongside the doc's markdown body. Built from the same encoded
+ * docId stem, so the binary is always a discoverable sibling of
+ * the `.md` (e.g. `Strategy.md` ↔ `Strategy.docx`).
+ *
+ * The `originalFile` front-matter field stores just the filename
+ * (no path); this helper rebuilds the absolute path on demand.
+ */
+function docOriginalPath(
+  workspaceRoot: string,
+  source: string,
+  docId: string,
+  extension: string
+): string {
+  const root = workspacePaths(workspaceRoot).docs;
+  const ext = extension.startsWith(".") ? extension.slice(1) : extension;
+  return path.join(root, source, encodeDocFilenameStem(docId) + "." + ext);
+}
+
 async function ensureSourceDir(workspaceRoot: string, source: string): Promise<string> {
   const dir = path.join(workspacePaths(workspaceRoot).docs, source);
   await fs.mkdir(dir, { recursive: true });
@@ -171,6 +191,7 @@ export function serializeDocFile(doc: DocEntry): string {
   if (doc.url !== undefined) fm.url = doc.url;
   if (doc.lastFetched !== undefined) fm.lastFetched = doc.lastFetched;
   if (doc.contentHash !== undefined) fm.contentHash = doc.contentHash;
+  if (doc.originalFile !== undefined) fm.originalFile = doc.originalFile;
   fm.createdAt = doc.createdAt;
   fm.updatedAt = doc.updatedAt;
   return buildFrontMatterFile(fm, doc.body);
@@ -190,6 +211,18 @@ export interface AddDocOptions {
   body?: string;
   /** When set, recorded as lastFetched + contentHash on disk. */
   fetchedAt?: string;
+  /**
+   * Optional original-source binary. When present we write the
+   * bytes to a sibling file of the `.md` (extension preserved) and
+   * record the filename in the doc's `originalFile` front-matter.
+   * Lets a user open the source file (Word, Excel, …) without
+   * re-downloading.
+   */
+  original?: {
+    bytes: Buffer;
+    /** Filename extension without leading dot, e.g. "docx". */
+    extension: string;
+  };
   /**
    * If true, skip the check that `source` is registered in
    * sources.yaml. Useful for tests and bulk-import flows that
@@ -237,6 +270,11 @@ export async function addDoc(
 
   const now = new Date().toISOString();
   const body = opts.body ?? "";
+  const originalFile = opts.original
+    ? encodeDocFilenameStem(opts.docId) +
+      "." +
+      opts.original.extension.replace(/^\./, "")
+    : undefined;
   const doc: DocEntry = {
     source: opts.source,
     docId: opts.docId,
@@ -246,6 +284,7 @@ export async function addDoc(
     url: opts.url,
     lastFetched: opts.fetchedAt,
     contentHash: opts.fetchedAt && body ? hashBody(body) : undefined,
+    originalFile,
     createdAt: now,
     updatedAt: now,
     body,
@@ -259,6 +298,18 @@ export async function addDoc(
   }
 
   await fs.writeFile(filePath, serializeDocFile(doc), "utf8");
+  // Write the binary alongside the markdown — same stem, different
+  // extension. Done after the markdown write so a binary-write failure
+  // doesn't leave us with an orphaned-but-recorded `originalFile`.
+  if (opts.original) {
+    const binaryPath = docOriginalPath(
+      workspaceRoot,
+      opts.source,
+      opts.docId,
+      opts.original.extension
+    );
+    await fs.writeFile(binaryPath, opts.original.bytes);
+  }
   return doc;
 }
 
@@ -272,6 +323,7 @@ function toFrontMatter(doc: DocEntry): DocEntryFrontMatter {
     url: doc.url,
     lastFetched: doc.lastFetched,
     contentHash: doc.contentHash,
+    originalFile: doc.originalFile,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -369,6 +421,18 @@ export async function removeDoc(
 ): Promise<DocEntry> {
   const doc = await loadDoc(workspaceRoot, source, docId);
   await fs.unlink(docFilePath(workspaceRoot, source, docId));
+  // Best-effort delete of the preserved original (if any). Don't
+  // fail the call if the binary was already removed by hand —
+  // the doc entry has been deleted regardless, which is the
+  // user's intent.
+  if (doc.originalFile) {
+    const ext = doc.originalFile.split(".").pop() ?? "";
+    try {
+      await fs.unlink(docOriginalPath(workspaceRoot, source, docId, ext));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
   return doc;
 }
 
@@ -388,6 +452,17 @@ export interface UpdateDocOptions {
   body?: string;
   /** Explicit lastFetched timestamp (ISO). */
   fetchedAt?: string;
+  /**
+   * Replacement original-source binary. When set, overwrites the
+   * sibling-binary file. Pass null to delete a previously-stored
+   * original.
+   */
+  original?:
+    | {
+        bytes: Buffer;
+        extension: string;
+      }
+    | null;
 }
 
 /**
@@ -420,9 +495,34 @@ export async function updateDoc(
   } else if (patch.fetchedAt !== undefined) {
     next.lastFetched = patch.fetchedAt;
   }
+  // Resolve the original-binary update first so we know what filename
+  // to record on disk before serializing the front-matter.
+  if (patch.original === null) {
+    if (next.originalFile) {
+      const ext = next.originalFile.split(".").pop() ?? "";
+      try {
+        await fs.unlink(docOriginalPath(workspaceRoot, source, docId, ext));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+      next.originalFile = undefined;
+    }
+  } else if (patch.original !== undefined) {
+    next.originalFile =
+      encodeDocFilenameStem(docId) + "." + patch.original.extension.replace(/^\./, "");
+  }
   next.updatedAt = new Date().toISOString();
 
   const filePath = docFilePath(workspaceRoot, source, docId);
   await fs.writeFile(filePath, serializeDocFile(next), "utf8");
+  if (patch.original && patch.original !== null) {
+    const binaryPath = docOriginalPath(
+      workspaceRoot,
+      source,
+      docId,
+      patch.original.extension
+    );
+    await fs.writeFile(binaryPath, patch.original.bytes);
+  }
   return next;
 }

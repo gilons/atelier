@@ -9,23 +9,31 @@ import {
 
 /** Build a one-entry ZIP (a minimal .docx) for adapter test fixtures. */
 function buildMiniDocx(documentXml) {
-  const name = "word/document.xml";
-  const nameBuf = Buffer.from(name, "utf8");
-  const uncompressed = Buffer.from(documentXml, "utf8");
-  const compressed = zlib.deflateRawSync(uncompressed);
-  const lfh = Buffer.alloc(30);
-  lfh.writeUInt32LE(0x04034b50, 0);
-  lfh.writeUInt16LE(20, 4);
-  lfh.writeUInt16LE(0, 6);
-  lfh.writeUInt16LE(8, 8); // deflate
-  lfh.writeUInt16LE(0, 10);
-  lfh.writeUInt16LE(0, 12);
-  lfh.writeUInt32LE(0, 14);
-  lfh.writeUInt32LE(compressed.length, 18);
-  lfh.writeUInt32LE(uncompressed.length, 22);
-  lfh.writeUInt16LE(nameBuf.length, 26);
-  lfh.writeUInt16LE(0, 28);
-  return Buffer.concat([lfh, nameBuf, compressed]);
+  return buildZip([{ name: "word/document.xml", content: documentXml }]);
+}
+
+/** Build a multi-entry ZIP (for .xlsx / .pptx fixtures). */
+function buildZip(entries) {
+  const parts = [];
+  for (const e of entries) {
+    const nameBuf = Buffer.from(e.name, "utf8");
+    const uncompressed = Buffer.from(e.content, "utf8");
+    const compressed = zlib.deflateRawSync(uncompressed);
+    const lfh = Buffer.alloc(30);
+    lfh.writeUInt32LE(0x04034b50, 0);
+    lfh.writeUInt16LE(20, 4);
+    lfh.writeUInt16LE(0, 6);
+    lfh.writeUInt16LE(8, 8); // deflate
+    lfh.writeUInt16LE(0, 10);
+    lfh.writeUInt16LE(0, 12);
+    lfh.writeUInt32LE(0, 14);
+    lfh.writeUInt32LE(compressed.length, 18);
+    lfh.writeUInt32LE(uncompressed.length, 22);
+    lfh.writeUInt16LE(nameBuf.length, 26);
+    lfh.writeUInt16LE(0, 28);
+    parts.push(lfh, nameBuf, compressed);
+  }
+  return Buffer.concat(parts);
 }
 
 /**
@@ -344,10 +352,153 @@ test("SharePointAdapter.fetchDoc extracts text from .docx binary (no Graph forma
   );
 });
 
-test("SharePointAdapter.fetchDoc falls back gracefully for unsupported extensions (.doc, .pdf, …)", async () => {
-  // For legacy Office and PDF we don't have a text extractor yet.
-  // The doc should still land in the doc map with a clear note
-  // pointing the reader at the file URL.
+test("SharePointAdapter.fetchDoc extracts text from .xlsx + preserves the binary", async () => {
+  // Two-sheet xlsx fixture: a sharedStrings table, a workbook
+  // listing the sheets, the rels mapping rIds to files, and the
+  // sheet bodies themselves.
+  const sharedStrings = `<?xml version="1.0"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="2" uniqueCount="2">
+  <si><t>Name</t></si>
+  <si><t>Alice</t></si>
+</sst>`;
+  const workbook = `<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="People" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`;
+  const rels = `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="..." Target="worksheets/sheet1.xml"/>
+</Relationships>`;
+  const sheet1 = `<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="s"><v>0</v></c>
+      <c r="B1"><v>42</v></c>
+    </row>
+    <row r="2">
+      <c r="A2" t="s"><v>1</v></c>
+      <c r="B2"><v>7</v></c>
+    </row>
+  </sheetData>
+</worksheet>`;
+  const xlsxBin = buildZip([
+    { name: "xl/sharedStrings.xml", content: sharedStrings },
+    { name: "xl/workbook.xml", content: workbook },
+    { name: "xl/_rels/workbook.xml.rels", content: rels },
+    { name: "xl/worksheets/sheet1.xml", content: sheet1 },
+  ]);
+  const fetchImpl = spFetch([
+    ...siteAndDriveMatchers(),
+    async (url) => {
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-xlsx`)) {
+        return json(200, {
+          id: "item-xlsx",
+          name: "Roster.xlsx",
+          webUrl: "https://contoso.sharepoint.com/Roster.xlsx",
+        });
+      }
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-xlsx/content`)) {
+        return new Response(xlsxBin, {
+          status: 200,
+          headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        });
+      }
+    },
+  ]);
+  const adapter = new SharePointAdapter({
+    token: "test-token",
+    scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
+    fetchImpl,
+  });
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-xlsx`);
+  assert.match(fetched.body, /## People/);
+  assert.match(fetched.body, /Name/);
+  assert.match(fetched.body, /Alice/);
+  assert.match(fetched.body, /\| 42/);
+  assert.ok(fetched.original, "should attach xlsx bytes");
+  assert.equal(fetched.original.extension, "xlsx");
+});
+
+test("SharePointAdapter.fetchDoc extracts text from .pptx + preserves the binary", async () => {
+  const presentation = `<?xml version="1.0"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst>
+    <p:sldId id="256" r:id="rId1"/>
+    <p:sldId id="257" r:id="rId2"/>
+  </p:sldIdLst>
+</p:presentation>`;
+  const rels = `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="..." Target="slides/slide1.xml"/>
+  <Relationship Id="rId2" Type="..." Target="slides/slide2.xml"/>
+</Relationships>`;
+  const slide1 = `<?xml version="1.0"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree>
+    <p:sp><p:txBody>
+      <a:p><a:r><a:t>Q3 Roadmap</a:t></a:r></a:p>
+      <a:p><a:r><a:t>Ship onboarding</a:t></a:r></a:p>
+    </p:txBody></p:sp>
+  </p:spTree></p:cSld>
+</p:sld>`;
+  const slide2 = `<?xml version="1.0"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree>
+    <p:sp><p:txBody>
+      <a:p><a:r><a:t>Risks</a:t></a:r></a:p>
+    </p:txBody></p:sp>
+  </p:spTree></p:cSld>
+</p:sld>`;
+  const pptxBin = buildZip([
+    { name: "ppt/presentation.xml", content: presentation },
+    { name: "ppt/_rels/presentation.xml.rels", content: rels },
+    { name: "ppt/slides/slide1.xml", content: slide1 },
+    { name: "ppt/slides/slide2.xml", content: slide2 },
+  ]);
+  const fetchImpl = spFetch([
+    ...siteAndDriveMatchers(),
+    async (url) => {
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-pptx`)) {
+        return json(200, {
+          id: "item-pptx",
+          name: "Q3.pptx",
+          webUrl: "https://contoso.sharepoint.com/Q3.pptx",
+        });
+      }
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-pptx/content`)) {
+        return new Response(pptxBin, {
+          status: 200,
+          headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+        });
+      }
+    },
+  ]);
+  const adapter = new SharePointAdapter({
+    token: "test-token",
+    scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
+    fetchImpl,
+  });
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-pptx`);
+  assert.match(fetched.body, /## Slide 1: Q3 Roadmap/);
+  assert.match(fetched.body, /Ship onboarding/);
+  assert.match(fetched.body, /## Slide 2: Risks/);
+  assert.ok(fetched.original, "should attach pptx bytes");
+  assert.equal(fetched.original.extension, "pptx");
+});
+
+test("SharePointAdapter.fetchDoc preserves the binary even for unsupported extensions (.pdf)", async () => {
+  // PDF / legacy Office formats: no in-house text extractor yet,
+  // but we still download the binary and preserve it via
+  // FetchedDoc.original so the user has the source file on disk.
+  // The body falls back to a clear stub pointing at the file URL.
+  const pdfBytes = Buffer.from("%PDF-1.4\n%fake fixture\n", "binary");
   const fetchImpl = spFetch([
     ...siteAndDriveMatchers(),
     async (url) => {
@@ -356,6 +507,12 @@ test("SharePointAdapter.fetchDoc falls back gracefully for unsupported extension
           id: "item-pdf",
           name: "Whitepaper.pdf",
           webUrl: "https://contoso.sharepoint.com/Whitepaper.pdf",
+        });
+      }
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-pdf/content`)) {
+        return new Response(pdfBytes, {
+          status: 200,
+          headers: { "Content-Type": "application/pdf" },
         });
       }
     },
@@ -368,6 +525,11 @@ test("SharePointAdapter.fetchDoc falls back gracefully for unsupported extension
   const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-pdf`);
   assert.match(fetched.body, /Whitepaper\.pdf/);
   assert.match(fetched.body, /Atelier doesn't extract text from this format/);
+  // The whole point of this change: we have the bytes attached
+  // for the sync engine to write to disk.
+  assert.ok(fetched.original, "should attach original bytes for binary formats");
+  assert.equal(fetched.original.extension, "pdf");
+  assert.equal(fetched.original.bytes.toString("binary"), pdfBytes.toString("binary"));
 });
 
 test("SharePointAdapter.fetchDoc reads .md raw without conversion", async () => {

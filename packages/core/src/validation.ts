@@ -589,6 +589,7 @@ export function validateDocEntryFrontMatter(
     url,
     lastFetched,
     contentHash,
+    originalFile,
     createdAt,
     updatedAt,
   } = raw;
@@ -625,6 +626,9 @@ export function validateDocEntryFrontMatter(
   if (contentHash !== undefined && !isNonEmptyString(contentHash)) {
     pushIssue(issues, "$.contentHash", "if present, must be a non-empty string");
   }
+  if (originalFile !== undefined && !isNonEmptyString(originalFile)) {
+    pushIssue(issues, "$.originalFile", "if present, must be a non-empty string");
+  }
   if (!isNonEmptyString(createdAt)) {
     pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
   }
@@ -645,6 +649,7 @@ export function validateDocEntryFrontMatter(
   if (url !== undefined) value.url = url as string;
   if (lastFetched !== undefined) value.lastFetched = lastFetched as string;
   if (contentHash !== undefined) value.contentHash = contentHash as string;
+  if (originalFile !== undefined) value.originalFile = originalFile as string;
   return { ok: true, value, issues: [] };
 }
 
