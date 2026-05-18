@@ -275,6 +275,53 @@ test("REPL: registering an azure-app source writes credentials that load back cl
 });
 
 // ============================================================
+// Bug 7: text prompts after a picker rendered the SAME prompt
+// text twice on screen — once during paste echo, once via
+// readline's auto-prompt after the 'line' event fired. Looked
+// like a duplicate to users even though the data was correct.
+// Caused by readline's terminal-mode raw-mode state being
+// inconsistent after pickers toggled it externally.
+// ============================================================
+
+test("REPL: text prompt after a picker doesn't render its prompt text twice", async () => {
+  const root = await makeWorkspace({
+    env: { SHAREPOINT_CLIENT_SECRET: "x" },
+  });
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/source onboard sharepoint\r");
+    await a.expect("How would you like to connect");
+    a.enter();
+    await a.expect("Authenticate via?");
+    a.enter();
+    await a.expect("Microsoft Entra tenant id");
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("App (client) id");
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("How do you want to add this SharePoint");
+    a.enter(); // pick link
+    await a.expect("SharePoint URL");
+    a.send("https://contoso.sharepoint.com/sites/X/Shared Documents\r");
+    // Give readline a beat to settle (paste echo, line emit,
+    // any auto-prompt re-render).
+    await new Promise((r) => setTimeout(r, 400));
+    // The prompt label should appear at most once in the
+    // accumulated screen buffer. Two occurrences means readline
+    // auto-prompted after the line event and produced a
+    // duplicate "SharePoint URL: <value>" pair.
+    const occurrences = (a.buffer.match(/SharePoint URL:/g) ?? []).length;
+    assert.ok(
+      occurrences <= 1,
+      `"SharePoint URL:" appeared ${occurrences} times — readline is double-rendering the prompt after Enter.`
+    );
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
 // Sanity: bare REPL boots, displays the banner, accepts /quit.
 // Cheap regression catcher for whole-flow brokenness — e.g. an
 // import error or a banner crash would surface here before any

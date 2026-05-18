@@ -110,16 +110,22 @@ export class PromptSession {
   async ask(question: string, opts: { default?: string } = {}): Promise<string> {
     const suffix = opts.default ? ` [${opts.default}]` : "";
     const promptText = `${question}${suffix}: `;
-    if (this.isTty) {
-      // In terminal mode, hand the prompt to readline so it owns line
-      // redraw, history navigation (↑/↓), and tab completion. Calling
-      // setPrompt+prompt here is required — manually writing the prompt
-      // breaks the redraw cycle.
-      this.rl.setPrompt(promptText);
-      this.rl.prompt();
-    } else {
-      this.io.output.write(promptText);
-    }
+    // Write the prompt directly to stdout — don't use rl.setPrompt
+    // + rl.prompt(). Readline's terminal-mode prompt machinery
+    // does its own redraw cycle (clear-line ANSI, re-render on
+    // keypress, post-Enter auto-prompt) and on some terminals
+    // (bracketed-paste, certain TERM values) that produces a
+    // visibly-duplicated "prompt: value" pair after Enter. Plain
+    // stdout write keeps the visual simple and lets readline
+    // emit the 'line' event off the canonical kernel buffer
+    // without any redraw side-effects. We trade ↑/↓ history and
+    // tab completion for predictable rendering — both are nice
+    // to have but neither is critical for source onboarding.
+    this.io.output.write(promptText);
+    // Clear any pre-existing readline prompt template so a
+    // re-entrant 'line' event doesn't trigger an auto-prompt
+    // re-render with a stale template.
+    if (this.isTty) this.rl.setPrompt("");
     const promptedAt = Date.now();
     let line: string;
     // Stale-empty guard. Empty lines that resolve within ~250ms
