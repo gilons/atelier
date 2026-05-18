@@ -79,16 +79,23 @@ test("REPL: tenant id prompt is patient after the auth picker (no stale-newline 
     a.enter();
     await a.expect("Authenticate via?");
     a.enter(); // pick azure-app
-    // The prompt must wait for the user, NOT pre-resolve with empty.
-    const r = await a.expectAny(
-      ["Microsoft Entra tenant id", "This answer can't be empty"],
-      { timeout: 5000 }
+    // Wait for the tenant id prompt to render — first occurrence
+    // happens before any stale newlines could fire.
+    await a.expect("Microsoft Entra tenant id");
+    // Give the kernel up to 400ms to flush any stale `\n` byte
+    // queued during the raw→canonical mode handoff. If it fires,
+    // readline will emit an empty 'line' which would resolve
+    // session.ask() with "" and surface "answer can't be empty"
+    // in the buffer.
+    await new Promise((r) => setTimeout(r, 400));
+    a.assertNotPresent(
+      "This answer can't be empty",
+      "stale newline from the picker leaked into the tenant id prompt — armEmptyLineSwallow regression?"
     );
-    assert.equal(
-      r.index,
-      0,
-      "tenant id prompt should appear without a pre-consumed empty submission"
-    );
+    // Bonus: send a real value and confirm the next prompt
+    // advances (proves the prompt wasn't wedged).
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("App (client) id");
   } finally {
     await a.close();
     await rm(root);

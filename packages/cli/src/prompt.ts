@@ -93,6 +93,7 @@ export class PromptSession {
     this.rl.resume();
   }
 
+
   private nextLine(): Promise<string> {
     if (this.buffered.length > 0) {
       return Promise.resolve(this.buffered.shift()!);
@@ -119,7 +120,36 @@ export class PromptSession {
     } else {
       this.io.output.write(promptText);
     }
-    const line = await this.nextLine();
+    const promptedAt = Date.now();
+    let line: string;
+    // Stale-newline guard. Empty lines that resolve within ~75ms
+    // of the prompt rendering are almost always residue from
+    // earlier raw-mode handoffs — either:
+    //
+    //   - The kernel's tty line discipline re-delivering a `\n`
+    //     after a raw-mode picker (e.g. /source onboard) exited.
+    //   - A pre-buffered line event that fired DURING readline's
+    //     setup (between rl.Interface() being constructed and
+    //     rl.prompt() rendering the user-visible prompt).
+    //
+    // Either way: a human cannot read a prompt and press Enter
+    // within ~75ms. Anything that fast is not real input. Skip
+    // it and wait for the next line.
+    //
+    // We don't apply this filter to non-TTY input (piped scripts,
+    // tests): there, a "line" arriving instantly IS legitimate —
+    // it's the next scripted answer.
+    while (true) {
+      line = await this.nextLine();
+      if (
+        this.isTty &&
+        line.length === 0 &&
+        Date.now() - promptedAt < 75
+      ) {
+        continue;
+      }
+      break;
+    }
     // When stdin is piped (no terminal echo), the user's typed
     // newline doesn't appear in our output, so subsequent prompts
     // run on the same visible line. Add the newline ourselves when

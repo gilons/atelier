@@ -109,48 +109,15 @@ async function runChoicePicker(
     if (one === null) return null;
     return [one];
   } finally {
-    drainStdinResidue();
     session.resume();
-  }
-}
-
-/**
- * Discard pending whitespace bytes the picker's raw-mode handoff
- * leaked back into the kernel tty buffer.
- *
- * On macOS / tmux setups, an Enter pressed inside the raw-mode
- * picker is sometimes re-delivered as a stray `\n` once raw mode
- * turns off — which then shows up as an empty `'line'` event in
- * readline, making the next `session.ask()` resolve to `""`
- * before the user can type anything. Symptom in /source onboard:
- * "✗ This answer can't be empty" fires once (or twice, after two
- * pickers) before the actual prompt is reached.
- *
- * Important: we ONLY discard bytes that are whitespace / line
- * terminators. An earlier version of this drain called read()
- * unconditionally and ate the first character of a user paste
- * that landed in Node's buffer faster than the next prompt
- * registered — producing an invalid secret value downstream.
- * Whitespace-only filtering keeps the bug fix while preserving
- * legitimate input.
- */
-function drainStdinResidue(): void {
-  const stdin = process.stdin as NodeJS.ReadStream;
-  if (!stdin.isTTY) return;
-  stdin.pause();
-  while (true) {
-    const chunk = stdin.read();
-    if (chunk === null) return;
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    // If the whole chunk is whitespace (CR/LF/space/tab), it's
-    // safe to discard — that's the typical raw→canonical handoff
-    // residue. If it has any non-whitespace, push it back so the
-    // next reader (readline) sees it.
-    if (/^\s*$/.test(text)) continue;
-    // `unshift` puts the chunk back at the head of the internal
-    // buffer; the next emit cycle picks it up as normal data.
-    stdin.unshift(chunk);
-    return;
+    // Note on stale-newline residue: a stray `\n` sometimes leaks
+    // from the kernel tty line discipline after a picker submits.
+    // We don't drain or swallow at this layer anymore — the
+    // stale-newline guard inside PromptSession.ask filters out
+    // empty line events that resolve too fast to be real input,
+    // which covers BOTH this picker→ask transition and the
+    // REPL→PromptSession handoff (where pre-buffered empties
+    // bypassed our drain).
   }
 }
 
