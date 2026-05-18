@@ -325,17 +325,101 @@ function printSummaryRequestForAgent(sourceId: string, docId: string): void {
 }
 
 /**
+ * Unified `/doc add` prompt: ask for a filename OR a URL.
+ *
+ *   - URL → run it through the same classify/retrieve pipeline
+ *     as the positional URL form. If classification or source
+ *     matching fails (unsupported URL shape, no source onboarded
+ *     for the kind/tenant), gracefully fall back to the editor
+ *     flow with the URL preserved in front-matter so the doc is
+ *     still tracked even when we can't auto-fetch.
+ *   - Anything else → treat as a filename and open the editor.
+ *
+ * One prompt covers both paths. The user doesn't need to remember
+ * which subcommand fits — paste a URL or type a name, atelier
+ * figures it out.
+ */
+async function runUnifiedPrompt(
+  workspaceRoot: string,
+  mode: InvocationMode
+): Promise<number> {
+  const session = new PromptSession();
+  let input: string;
+  try {
+    input = (await session.ask("Filename or URL")).trim();
+  } finally {
+    session.close();
+  }
+  if (!input) {
+    ui.error("Filename or URL is required.");
+    return 2;
+  }
+  if (looksLikeUrl(input)) {
+    return await runUrlOrFallbackToEditor(workspaceRoot, input, mode);
+  }
+  return await runEditorAdd(workspaceRoot, mode, { filename: input });
+}
+
+/**
+ * URL path with editor fallback. We pre-flight the URL through
+ * `resolveDocUrlCandidates` (the same classifier the positional
+ * form uses). If the URL can't be classified — or it can be, but
+ * no compatible source is registered — fall back to the editor
+ * with the URL pre-filled on the resulting manual doc.
+ *
+ * Failures BEYOND classification (Graph 401 at sync time, network
+ * errors, etc.) are NOT caught here: those mean credentials are
+ * broken or the source is mid-degradation, and the user wants to
+ * see the real error so they can fix it. The fallback is reserved
+ * for "we can't even attempt to fetch" cases.
+ */
+async function runUrlOrFallbackToEditor(
+  workspaceRoot: string,
+  url: string,
+  mode: InvocationMode
+): Promise<number> {
+  try {
+    await resolveDocUrlCandidates(workspaceRoot, url);
+  } catch (err) {
+    if (
+      err instanceof UnsupportedDocUrlError ||
+      err instanceof NoMatchingSourceError
+    ) {
+      ui.warn(`Auto-fetch unavailable: ${(err as Error).message}`);
+      ui.print(
+        `  ${ui.dim("Falling back to manual entry — the URL will be saved on the doc.")}`
+      );
+      ui.blank();
+      return await runEditorAdd(workspaceRoot, mode, { url });
+    }
+    throw err;
+  }
+  // Pre-flight passed → proceed with the normal URL flow.
+  return await runAddByUrl(workspaceRoot, url, {
+    sourceHint: undefined,
+    runSync: true,
+    mode,
+  });
+}
+
+/**
  * Editor-driven manual add. Like `git commit` without `-m`:
  *
- *   1. Prompt for the filename (required) and an optional title.
- *   2. Drop a markdown scaffold (`# <title>\n\n`) into a temp file.
+ *   1. Prompt for the filename (required) and an optional title —
+ *      or accept them via `opts` when called from the unified
+ *      prompt that already collected the filename.
+ *   2. Drop a markdown scaffold (`# <title>\n\n`) into a temp file,
+ *      including the URL as a "Source:" link when present so the
+ *      user has context while editing.
  *   3. Spawn `$EDITOR` (or $VISUAL, falling back to `vi` / `notepad`)
  *      on the temp file with `stdio: "inherit"` — the editor owns
  *      the terminal until the user saves and quits.
  *   4. Read the result, write it as `.atelier/docs/manual/<docId>/
- *      parsed.md` via the normal addDoc path. Empty / unchanged
- *      content gets a friendly "did your editor exit before saving?"
- *      hint (common when `$EDITOR=code` without `-w`).
+ *      parsed.md` via the normal addDoc path. The URL (when
+ *      provided) lands in front-matter so the doc remembers where
+ *      it came from. Empty / unchanged content gets a friendly
+ *      "did your editor exit before saving?" hint (common when
+ *      `$EDITOR=code` without `-w`).
  *
  * Why source = "manual" hard-coded:
  *   These docs aren't sync'd from anywhere — they're authored in
@@ -355,18 +439,23 @@ function printSummaryRequestForAgent(sourceId: string, docId: string): void {
  */
 async function runEditorAdd(
   workspaceRoot: string,
-  mode: InvocationMode
+  mode: InvocationMode,
+  opts: { filename?: string; url?: string } = {}
 ): Promise<number> {
-  // Filename + title prompts. We accept hyphenated/spaced names;
-  // the normalizer slugifies before it hits the docId encoder.
+  // Filename + title prompts. Skip the filename prompt when the
+  // caller (unified prompt) already collected it. Title is always
+  // optional and defaults to the filename.
   const session = new PromptSession();
   let filename: string;
   let title: string;
   try {
-    filename = (await session.ask("File name")).trim();
+    filename = opts.filename?.trim() ?? "";
     if (!filename) {
-      ui.error("File name is required.");
-      return 2;
+      filename = (await session.ask("Filename")).trim();
+      if (!filename) {
+        ui.error("Filename is required.");
+        return 2;
+      }
     }
     title = (await session.ask("Title (optional)", { default: filename })).trim();
   } finally {
@@ -375,16 +464,21 @@ async function runEditorAdd(
 
   const docId = normalizeFilenameToDocId(filename);
   if (!docId) {
-    ui.error(`File name "${filename}" doesn't produce a usable docId.`);
+    ui.error(`Filename "${filename}" doesn't produce a usable docId.`);
     return 2;
   }
 
   // Temp file pre-seeded with a markdown scaffold so the user
   // starts with structure, not a blank page. Lives under tmpdir
-  // so unsaved drafts don't litter the workspace.
+  // so unsaved drafts don't litter the workspace. When a URL is
+  // attached (fallback path from a failed auto-fetch), include it
+  // as a quoted source line so the user has context while editing —
+  // they can leave it as-is or trim it; the URL is also persisted
+  // in front-matter by addDoc below regardless.
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-edit-"));
   const tmpFile = path.join(tmpDir, docId + ".md");
-  const scaffold = `# ${title}\n\n`;
+  const sourceLine = opts.url ? `> Source: ${opts.url}\n\n` : "";
+  const scaffold = `# ${title}\n\n${sourceLine}`;
   await fs.writeFile(tmpFile, scaffold, "utf8");
 
   ui.print(`  ${ui.dim(`Opening ${editorCommandHint()} on ${tmpFile}…`)}`);
@@ -422,6 +516,7 @@ async function runEditorAdd(
       docId,
       title,
       body: content,
+      url: opts.url,
       fetchedAt: new Date().toISOString(),
       skipSourceValidation: true,
     });
@@ -575,9 +670,12 @@ async function runManualAdd(
   const source = values.source as string | undefined;
   const docId = values["doc-id"] as string | undefined;
   const title = values.title as string | undefined;
-  // Editor mode: no scripted-flow flags at all → open the editor.
+  // No flags at all → unified prompt: ask the user for a filename
+  // OR a URL, and route based on what they typed. URL goes through
+  // the same classify/retrieve pipeline as the positional form;
+  // anything else goes to the editor.
   if (!source && !docId && !title) {
-    return await runEditorAdd(workspaceRoot, mode);
+    return await runUnifiedPrompt(workspaceRoot, mode);
   }
   // Partial flags are a user error — we don't want to half-fill
   // a doc with editor output AND ignored CLI flags.

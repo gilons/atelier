@@ -49,7 +49,7 @@ test("REPL: /doc add with no URL spawns $EDITOR and ingests the saved content", 
   try {
     await a.expect("atelier ❯");
     a.send("/doc add\r");
-    await a.expect(/File name/);
+    await a.expect(/Filename or URL/);
     a.send("onboarding-prd\r");
     await a.expect(/Title/);
     a.send("Onboarding PRD\r");
@@ -89,7 +89,7 @@ test("REPL: /doc add with no URL — empty/unchanged editor output saves nothing
   try {
     await a.expect("atelier ❯");
     a.send("/doc add\r");
-    await a.expect(/File name/);
+    await a.expect(/Filename or URL/);
     a.send("empty-test\r");
     await a.expect(/Title/);
     // Wait past PromptSession's 250ms stale-empty filter before
@@ -102,6 +102,95 @@ test("REPL: /doc add with no URL — empty/unchanged editor output saves nothing
     // And no folder was created in the docs tree.
     const docsDir = path.join(root, ".atelier", "docs", "manual");
     await assert.rejects(() => fs.access(docsDir));
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
+// Unified prompt: URL detection + classify/retrieve + fallback
+// ============================================================
+
+test("REPL: /doc add falls back to the editor when the URL has no matching source", async () => {
+  // No SharePoint source onboarded — so the SharePoint URL has
+  // no candidate. resolveDocUrlCandidates throws
+  // NoMatchingSourceError, atelier prints "Auto-fetch
+  // unavailable" and continues into the editor flow with the
+  // URL passed along.
+  const root = await makeWorkspace();
+  const a = await launchAtelier({
+    cwd: root,
+    env: {
+      EDITOR: `${process.execPath} ${FAKE_EDITOR}`,
+      VISUAL: "",
+      ATELIER_FAKE_EDITOR_CONTENT:
+        "# Cloud Services Contract\n\nFallback body — captured manually.\n",
+    },
+  });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/doc add\r");
+    await a.expect(/Filename or URL/);
+    a.send(
+      "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/contract.docx\r"
+    );
+    // The fallback message confirms we'd classified the URL but
+    // can't auto-fetch.
+    await a.expect(/Auto-fetch unavailable/, { timeout: 5000 });
+    await a.expect(/Falling back to manual entry/);
+    // Editor flow takes over — filename prompt comes next.
+    await a.expect(/Filename:/);
+    a.send("contoso-contract\r");
+    await a.expect(/Title/);
+    a.send("Cloud Services Contract\r");
+    await a.expect(/Added manual doc contoso-contract/, { timeout: 5000 });
+
+    // The URL must be persisted in the saved doc's front-matter
+    // so the doc remembers where it came from even though we
+    // couldn't auto-fetch.
+    const parsed = await fs.readFile(
+      path.join(
+        root,
+        ".atelier",
+        "docs",
+        "manual",
+        "contoso-contract",
+        "parsed.md"
+      ),
+      "utf8"
+    );
+    assert.match(parsed, /url: https:\/\/contoso\.sharepoint\.com/);
+    assert.match(parsed, /Fallback body — captured manually\./);
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+test("REPL: /doc add falls back to the editor when the URL shape isn't recognized", async () => {
+  // Unknown URL shape (not SharePoint, not GitHub Discussions)
+  // → UnsupportedDocUrlError → editor fallback.
+  const root = await makeWorkspace();
+  const a = await launchAtelier({
+    cwd: root,
+    env: {
+      EDITOR: `${process.execPath} ${FAKE_EDITOR}`,
+      VISUAL: "",
+      ATELIER_FAKE_EDITOR_CONTENT: "# Notes\n\nFrom an unsupported source.\n",
+    },
+  });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/doc add\r");
+    await a.expect(/Filename or URL/);
+    a.send("https://example.com/some-random-page\r");
+    await a.expect(/Auto-fetch unavailable/, { timeout: 5000 });
+    await a.expect(/Filename:/);
+    a.send("example-notes\r");
+    await a.expect(/Title/);
+    a.send("Example Notes\r");
+    await a.expect(/Added manual doc example-notes/, { timeout: 5000 });
   } finally {
     await a.close();
     await rm(root);
