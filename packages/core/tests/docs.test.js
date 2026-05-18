@@ -189,12 +189,16 @@ test("addDoc creates a file under .atelier/docs/<source>/", async () => {
     });
     assert.equal(doc.source, "company-notion");
     assert.equal(doc.docId, "page-abc");
+    // New layout: each doc gets its own folder, with `parsed.md`
+    // as the canonical body file. Sidecars (original.<ext>,
+    // summary.md) live in the same folder.
     const filePath = path.join(
       workspaceRoot,
       ".atelier",
       "docs",
       "company-notion",
-      "page-abc.md"
+      "page-abc",
+      "parsed.md"
     );
     const text = await fs.readFile(filePath, "utf8");
     assert.match(text, /^---\n/);
@@ -205,7 +209,7 @@ test("addDoc creates a file under .atelier/docs/<source>/", async () => {
   }
 });
 
-test("addDoc encodes special chars in docId filenames", async () => {
+test("addDoc encodes special chars in docId folder names", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {
     await addDoc(workspaceRoot, {
@@ -214,10 +218,14 @@ test("addDoc encodes special chars in docId filenames", async () => {
       title: "X",
       skipSourceValidation: true,
     });
+    // The folder name carries the encoded docId; the file inside
+    // is always called `parsed.md`.
     const dir = path.join(workspaceRoot, ".atelier", "docs", "company-notion");
-    const files = await fs.readdir(dir);
-    assert.equal(files.length, 1);
-    assert.match(files[0], /^path%2Fto%2Fdoc%20with%20spaces\.md$/);
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].isDirectory(), "doc should be stored in a folder");
+    assert.match(entries[0].name, /^path%2Fto%2Fdoc%20with%20spaces$/);
+    await fs.access(path.join(dir, entries[0].name, "parsed.md"));
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
@@ -477,15 +485,23 @@ test("addDoc with `original` writes the binary alongside the .md and records ori
       original: { bytes: Buffer.from([0x01, 0x02, 0x03, 0xff]), extension: "docx" },
       skipSourceValidation: true,
     });
-    // Front-matter records the sibling filename.
-    assert.equal(doc.originalFile, "Q3-plan.docx");
-    // Binary actually lives at <docs>/<source>/Q3-plan.docx.
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    // Front-matter records the sibling filename — predictable
+    // `original.<ext>` inside the doc folder.
+    assert.equal(doc.originalFile, "original.docx");
+    // Binary lives at <docs>/<source>/<docId>/original.docx.
+    const binaryPath = path.join(
+      workspaceRoot,
+      ".atelier",
+      "docs",
+      "s",
+      "Q3-plan",
+      "original.docx"
+    );
     const onDisk = await fs.readFile(binaryPath);
     assert.deepEqual([...onDisk], [0x01, 0x02, 0x03, 0xff]);
     // And the front-matter persists through a reload.
     const loaded = await loadDoc(workspaceRoot, "s", "Q3-plan");
-    assert.equal(loaded.originalFile, "Q3-plan.docx");
+    assert.equal(loaded.originalFile, "original.docx");
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
@@ -502,7 +518,7 @@ test("removeDoc deletes the preserved binary too", async () => {
       original: { bytes: Buffer.from("fake"), extension: "docx" },
       skipSourceValidation: true,
     });
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan", "original.docx");
     // Sanity: exists before remove.
     await fs.access(binaryPath);
     await removeDoc(workspaceRoot, "s", "Q3-plan");
@@ -524,7 +540,7 @@ test("updateDoc with `original: null` deletes the previously-stored binary", asy
       original: { bytes: Buffer.from("first version"), extension: "docx" },
       skipSourceValidation: true,
     });
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan", "original.docx");
     await fs.access(binaryPath); // sanity
     const updated = await updateDoc(workspaceRoot, "s", "Q3-plan", { original: null });
     assert.equal(updated.originalFile, undefined);
@@ -548,9 +564,113 @@ test("updateDoc with a new `original` overwrites the previous binary", async () 
     await updateDoc(workspaceRoot, "s", "Q3-plan", {
       original: { bytes: Buffer.from("v2 longer"), extension: "docx" },
     });
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan.docx");
+    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan", "original.docx");
     const onDisk = await fs.readFile(binaryPath, "utf8");
     assert.equal(onDisk, "v2 longer");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+// ============================================================
+// Legacy flat layout — read-compat + migration on update
+// ============================================================
+
+test("loadDoc reads a legacy flat-file layout doc", async () => {
+  // Simulate a workspace written by an older atelier build:
+  // <docs>/<source>/<encoded-docId>.md at the source-dir level,
+  // no doc subfolder, no parsed.md.
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    const sourceDir = path.join(workspaceRoot, ".atelier", "docs", "legacy-source");
+    await fs.mkdir(sourceDir, { recursive: true });
+    const fm = [
+      "---",
+      "source: legacy-source",
+      "docId: old-doc",
+      "title: Old Doc",
+      "createdAt: 2026-01-01T00:00:00Z",
+      "updatedAt: 2026-01-01T00:00:00Z",
+      "---",
+      "",
+      "Body from before the folder refactor.",
+    ].join("\n");
+    await fs.writeFile(path.join(sourceDir, "old-doc.md"), fm, "utf8");
+    const loaded = await loadDoc(workspaceRoot, "legacy-source", "old-doc");
+    assert.equal(loaded.title, "Old Doc");
+    assert.match(loaded.body, /Body from before/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("updateDoc migrates a legacy flat-file doc into the new folder layout", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    const sourceDir = path.join(workspaceRoot, ".atelier", "docs", "legacy-source");
+    await fs.mkdir(sourceDir, { recursive: true });
+    const legacyMd = path.join(sourceDir, "old-doc.md");
+    await fs.writeFile(
+      legacyMd,
+      [
+        "---",
+        "source: legacy-source",
+        "docId: old-doc",
+        "title: Old Doc",
+        "createdAt: 2026-01-01T00:00:00Z",
+        "updatedAt: 2026-01-01T00:00:00Z",
+        "---",
+        "",
+        "Original body.",
+      ].join("\n"),
+      "utf8"
+    );
+    await updateDoc(workspaceRoot, "legacy-source", "old-doc", {
+      body: "Updated body.",
+    });
+    // New folder exists with parsed.md inside.
+    const newPath = path.join(sourceDir, "old-doc", "parsed.md");
+    const text = await fs.readFile(newPath, "utf8");
+    assert.match(text, /Updated body\./);
+    // Legacy flat file got cleaned up so it doesn't shadow the
+    // canonical copy on subsequent reads.
+    await assert.rejects(() => fs.access(legacyMd));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("listDocs scans both the new folder layout and the legacy flat layout in one pass", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    // Mix: one new-layout doc (via addDoc) and one hand-written
+    // legacy doc.
+    await addSource(workspaceRoot, { kind: "notion", name: "Notion" });
+    await addDoc(workspaceRoot, {
+      source: "notion",
+      docId: "new-doc",
+      title: "New Doc",
+      body: "new",
+    });
+    const legacyDir = path.join(workspaceRoot, ".atelier", "docs", "notion");
+    await fs.writeFile(
+      path.join(legacyDir, "legacy-doc.md"),
+      [
+        "---",
+        "source: notion",
+        "docId: legacy-doc",
+        "title: Legacy Doc",
+        "createdAt: 2026-01-01T00:00:00Z",
+        "updatedAt: 2026-01-01T00:00:00Z",
+        "---",
+        "",
+        "legacy",
+      ].join("\n"),
+      "utf8"
+    );
+    const { docs } = await listDocs(workspaceRoot, "notion");
+    const titles = docs.map((d) => d.doc.title).sort();
+    assert.deepEqual(titles, ["Legacy Doc", "New Doc"]);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }

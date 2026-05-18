@@ -129,6 +129,40 @@ test("REPL: /doc add <sharepoint URL> with no SharePoint source tells the user t
 // (--no-sync) so we don't need a live Graph token.
 // ============================================================
 
+test("REPL: /doc add prints follow-up instructions for the assistant (summary.md request)", async () => {
+  // After every successful /doc add, the CLI emits a structured
+  // "Next step for the assistant" block instructing the agent
+  // reading the terminal to produce summary.md alongside the
+  // doc's parsed.md. The block must be present, include the
+  // exact summary.md path, and call out the available inputs.
+  const root = await makeWorkspace();
+  await writeSources(root, [
+    {
+      id: "gh",
+      kind: "github-discussions",
+      name: "GH",
+      transport: "cli",
+      scope: { repos: [] },
+    },
+  ]);
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/doc add https://github.com/my-org/my-repo/discussions/42 --no-sync\r");
+    await a.expect(/Added to source/, { timeout: 5000 });
+    await a.expect("Next step for the assistant");
+    await a.expect(
+      /\.atelier\/docs\/gh\/my-org%2Fmy-repo%2342\/summary\.md/
+    );
+    await a.expect(/1–\d+ sentence overview|1-\d+ sentence overview/);
+    await a.expect(/Keywords/);
+    await a.expect(/Anchors/);
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
 test("REPL: /doc add <sharepoint file URL> --no-sync appends a file pin to the matching source", async () => {
   const root = await makeWorkspace();
   await writeSources(root, [

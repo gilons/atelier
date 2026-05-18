@@ -124,21 +124,84 @@ export function decodeDocFilenameStem(stem: string): string {
   );
 }
 
-function docFilePath(workspaceRoot: string, source: string, docId: string): string {
+/**
+ * On-disk layout for a single doc.
+ *
+ *   .atelier/docs/<source>/<encoded-docId>/
+ *     parsed.md       — the doc body Atelier indexes (front-matter +
+ *                       markdown content). The canonical file.
+ *     original.<ext>  — when the source file was binary (Word, PDF,
+ *                       Excel, …) we preserve a verbatim copy here.
+ *     summary.md      — Atelier doesn't write this. Agents who read
+ *                       the doc produce it: a 1-paragraph summary
+ *                       plus keywords so future agents can discover
+ *                       the doc by topic without re-reading the full
+ *                       body. `/doc add` prints an instruction
+ *                       requesting exactly this artifact.
+ *
+ * Why a folder per doc rather than the older flat layout? Three
+ * reasons:
+ *   - Agent-generated artifacts (summary.md, maybe later anchors,
+ *     embeddings, etc.) need a home, and putting them next to the
+ *     parsed body is the natural place.
+ *   - When a user wants to look at the original file, having both
+ *     versions in the same folder beats hunting for a sibling.
+ *   - `removeDoc` becomes "rm -rf the folder" instead of needing to
+ *     know every file we might have written.
+ *
+ * Legacy flat layout (`<encoded>.md` + `<encoded>.docx` at the
+ * source-dir level) is still read transparently — workspaces written
+ * by older atelier builds keep working until the next /sync rewrites
+ * each doc into the new layout.
+ */
+function docFolderPath(workspaceRoot: string, source: string, docId: string): string {
+  const root = workspacePaths(workspaceRoot).docs;
+  return path.join(root, source, encodeDocFilenameStem(docId));
+}
+
+/**
+ * Absolute path to the parsed body file for a doc, in the new
+ * folder layout. `loadDoc` falls back to the legacy flat path when
+ * this one doesn't exist.
+ */
+function docParsedPath(workspaceRoot: string, source: string, docId: string): string {
+  return path.join(docFolderPath(workspaceRoot, source, docId), "parsed.md");
+}
+
+/**
+ * Legacy flat-layout path: `.atelier/docs/<source>/<encoded>.md`.
+ * Workspaces created before the per-doc-folder change still have
+ * these. We read them transparently and rewrite into the new layout
+ * on the next update.
+ */
+function legacyDocFilePath(workspaceRoot: string, source: string, docId: string): string {
   const root = workspacePaths(workspaceRoot).docs;
   return path.join(root, source, encodeDocFilenameStem(docId) + ".md");
 }
 
 /**
- * Filesystem path for the preserved-original binary that sits
- * alongside the doc's markdown body. Built from the same encoded
- * docId stem, so the binary is always a discoverable sibling of
- * the `.md` (e.g. `Strategy.md` ↔ `Strategy.docx`).
+ * Path to the preserved-original binary inside the doc folder.
+ * Filename is always `original.<ext>` — predictable, no docId
+ * encoding in the name (the folder above already carries that).
  *
- * The `originalFile` front-matter field stores just the filename
- * (no path); this helper rebuilds the absolute path on demand.
+ * `originalFile` in the front-matter stores just the basename
+ * (`original.docx`); this helper rebuilds the absolute path.
  */
 function docOriginalPath(
+  workspaceRoot: string,
+  source: string,
+  docId: string,
+  extension: string
+): string {
+  const ext = extension.startsWith(".") ? extension.slice(1) : extension;
+  return path.join(docFolderPath(workspaceRoot, source, docId), "original." + ext);
+}
+
+/**
+ * Legacy original path — sibling of the legacy `.md`, named with the
+ * docId stem and the file extension.
+ */
+function legacyDocOriginalPath(
   workspaceRoot: string,
   source: string,
   docId: string,
@@ -151,6 +214,16 @@ function docOriginalPath(
 
 async function ensureSourceDir(workspaceRoot: string, source: string): Promise<string> {
   const dir = path.join(workspacePaths(workspaceRoot).docs, source);
+  await fs.mkdir(dir, { recursive: true });
+  return dir;
+}
+
+async function ensureDocFolder(
+  workspaceRoot: string,
+  source: string,
+  docId: string
+): Promise<string> {
+  const dir = docFolderPath(workspaceRoot, source, docId);
   await fs.mkdir(dir, { recursive: true });
   return dir;
 }
@@ -260,20 +333,26 @@ export async function addDoc(
   }
 
   await ensureSourceDir(workspaceRoot, opts.source);
-  const filePath = docFilePath(workspaceRoot, opts.source, opts.docId);
-  try {
-    await fs.access(filePath);
-    throw new DocAlreadyExistsError(opts.source, opts.docId);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  const filePath = docParsedPath(workspaceRoot, opts.source, opts.docId);
+  const legacyPath = legacyDocFilePath(workspaceRoot, opts.source, opts.docId);
+  // Existence check covers BOTH layouts so we don't accidentally
+  // shadow a legacy-layout doc by writing a new-layout one.
+  for (const p of [filePath, legacyPath]) {
+    try {
+      await fs.access(p);
+      throw new DocAlreadyExistsError(opts.source, opts.docId);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
   }
 
   const now = new Date().toISOString();
   const body = opts.body ?? "";
+  // originalFile is the basename inside the doc folder. Predictable
+  // name (`original.docx`, `original.pdf`) instead of repeating the
+  // encoded docId — the docId is already encoded in the folder name.
   const originalFile = opts.original
-    ? encodeDocFilenameStem(opts.docId) +
-      "." +
-      opts.original.extension.replace(/^\./, "")
+    ? "original." + opts.original.extension.replace(/^\./, "")
     : undefined;
   const doc: DocEntry = {
     source: opts.source,
@@ -297,10 +376,11 @@ export async function addDoc(
     throw new WorkspaceValidationError(filePath, formatIssues(fmCheck.issues));
   }
 
+  await ensureDocFolder(workspaceRoot, opts.source, opts.docId);
   await fs.writeFile(filePath, serializeDocFile(doc), "utf8");
-  // Write the binary alongside the markdown — same stem, different
-  // extension. Done after the markdown write so a binary-write failure
-  // doesn't leave us with an orphaned-but-recorded `originalFile`.
+  // Write the binary alongside parsed.md in the doc's folder. Done
+  // after the markdown write so a binary-write failure doesn't leave
+  // us with an orphaned-but-recorded `originalFile`.
   if (opts.original) {
     const binaryPath = docOriginalPath(
       workspaceRoot,
@@ -334,17 +414,21 @@ export async function loadDoc(
   source: string,
   docId: string
 ): Promise<DocEntry> {
-  const filePath = docFilePath(workspaceRoot, source, docId);
-  let text: string;
-  try {
-    text = await fs.readFile(filePath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new DocNotFoundError(source, docId);
+  // Try the new folder-layout path first, then fall back to the
+  // legacy flat-file layout. Workspaces written by older atelier
+  // builds keep working — the next update will rewrite them into
+  // the new layout.
+  const filePath = docParsedPath(workspaceRoot, source, docId);
+  const legacyPath = legacyDocFilePath(workspaceRoot, source, docId);
+  for (const candidate of [filePath, legacyPath]) {
+    try {
+      const text = await fs.readFile(candidate, "utf8");
+      return parseDocFile(text, candidate);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
-    throw err;
   }
-  return parseDocFile(text, filePath);
+  throw new DocNotFoundError(source, docId);
 }
 
 export interface DocListing {
@@ -397,16 +481,32 @@ export async function listDocs(
       if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw err;
     }
-    const files = entries
-      .filter((e) => e.isFile() && e.name.endsWith(".md"))
-      .map((e) => e.name)
-      .sort();
-    for (const name of files) {
-      const filePath = path.join(dir, name);
+    // Two layouts coexist during the transition:
+    //   - Folder-per-doc (new): each subdirectory contains
+    //     `parsed.md` plus optional sidecars (original.<ext>,
+    //     summary.md). We read parsed.md.
+    //   - Flat-file (legacy): a `.md` at the source-dir level
+    //     names the doc directly. Keep reading these so old
+    //     workspaces keep working until /sync rewrites them.
+    const candidates: string[] = [];
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (e.isDirectory()) {
+        candidates.push(path.join(dir, e.name, "parsed.md"));
+      } else if (e.isFile() && e.name.endsWith(".md")) {
+        candidates.push(path.join(dir, e.name));
+      }
+    }
+    for (const filePath of candidates) {
       try {
         const text = await fs.readFile(filePath, "utf8");
         docs.push({ doc: parseDocFile(text, filePath), filePath });
       } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          // A subdirectory without `parsed.md` isn't a doc — it
+          // might be an unrelated folder a user dropped in. Skip
+          // silently rather than surfacing as an error.
+          continue;
+        }
         errors.push({ filePath, error: err as Error });
       }
     }
@@ -420,18 +520,17 @@ export async function removeDoc(
   docId: string
 ): Promise<DocEntry> {
   const doc = await loadDoc(workspaceRoot, source, docId);
-  await fs.unlink(docFilePath(workspaceRoot, source, docId));
-  // Best-effort delete of the preserved original (if any). Don't
-  // fail the call if the binary was already removed by hand —
-  // the doc entry has been deleted regardless, which is the
-  // user's intent.
+  // New layout: nuke the whole folder (parsed.md, original.<ext>,
+  // summary.md, anything else an agent created in there).
+  const folder = docFolderPath(workspaceRoot, source, docId);
+  await fs.rm(folder, { recursive: true, force: true });
+  // Legacy layout: also clean up the flat files if they exist.
+  // We can't tell from `loadDoc`'s return which layout we read,
+  // so just unlink both best-effort.
+  await fs.rm(legacyDocFilePath(workspaceRoot, source, docId), { force: true });
   if (doc.originalFile) {
     const ext = doc.originalFile.split(".").pop() ?? "";
-    try {
-      await fs.unlink(docOriginalPath(workspaceRoot, source, docId, ext));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
+    await fs.rm(legacyDocOriginalPath(workspaceRoot, source, docId, ext), { force: true });
   }
   return doc;
 }
@@ -500,20 +599,23 @@ export async function updateDoc(
   if (patch.original === null) {
     if (next.originalFile) {
       const ext = next.originalFile.split(".").pop() ?? "";
-      try {
-        await fs.unlink(docOriginalPath(workspaceRoot, source, docId, ext));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      }
+      // Remove from both the new folder layout AND any legacy
+      // location — best-effort either way.
+      await fs.rm(docOriginalPath(workspaceRoot, source, docId, ext), { force: true });
+      await fs.rm(legacyDocOriginalPath(workspaceRoot, source, docId, ext), { force: true });
       next.originalFile = undefined;
     }
   } else if (patch.original !== undefined) {
-    next.originalFile =
-      encodeDocFilenameStem(docId) + "." + patch.original.extension.replace(/^\./, "");
+    next.originalFile = "original." + patch.original.extension.replace(/^\./, "");
   }
   next.updatedAt = new Date().toISOString();
 
-  const filePath = docFilePath(workspaceRoot, source, docId);
+  // Always write the new folder layout. If the existing doc was
+  // in the legacy flat layout, this effectively migrates it on
+  // first update — we also unlink the old flat files so they
+  // don't shadow the new layout on the next read.
+  await ensureDocFolder(workspaceRoot, source, docId);
+  const filePath = docParsedPath(workspaceRoot, source, docId);
   await fs.writeFile(filePath, serializeDocFile(next), "utf8");
   if (patch.original && patch.original !== null) {
     const binaryPath = docOriginalPath(
@@ -523,6 +625,20 @@ export async function updateDoc(
       patch.original.extension
     );
     await fs.writeFile(binaryPath, patch.original.bytes);
+  }
+  // Clean up legacy flat files if they existed — we've now got
+  // the canonical copy in the new folder layout, so the flat
+  // files become stale duplicates.
+  await fs.rm(legacyDocFilePath(workspaceRoot, source, docId), { force: true });
+  if (existing.originalFile && !existing.originalFile.startsWith("original.")) {
+    // Pre-migration originalFile names included the encoded
+    // docId stem; the new convention is just `original.<ext>`.
+    // Strip the legacy file too.
+    const ext = existing.originalFile.split(".").pop() ?? "";
+    await fs.rm(
+      legacyDocOriginalPath(workspaceRoot, source, docId, ext),
+      { force: true }
+    );
   }
   return next;
 }

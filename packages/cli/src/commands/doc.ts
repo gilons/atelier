@@ -6,6 +6,7 @@ import {
   loadDoc,
   removeDoc,
   updateDoc,
+  encodeDocFilenameStem,
   DOC_CLASSIFICATIONS,
   DocAlreadyExistsError,
   DocNotFoundError,
@@ -220,7 +221,60 @@ async function runAddByUrl(
       `  ${ui.dim("Sync skipped — run `/sync` to fetch the document body.")}`
     );
   }
+
+  // Follow-up instructions for the AI agent reading this terminal.
+  // The agent should ingest the newly-added doc and write a
+  // summary.md sibling that future agents can use for keyword-
+  // based discovery without re-reading the full body.
+  if (!result.alreadyPinned) {
+    printSummaryRequestForAgent(result.source.id, result.docId);
+  }
   return 0;
+}
+
+/**
+ * Print a clearly-delimited "next step for the assistant" block
+ * after a successful `/doc add`. The agent reading the terminal
+ * scrollback sees an unambiguous instruction with a specific
+ * output path — no need to guess where summary.md should land
+ * or what it should contain.
+ *
+ * Why phrase the instruction this way (with section headers
+ * and bullet points)? Two reasons:
+ *   - LLM-readable: the structure makes it trivial for an agent
+ *     to extract the action items (path, fields to include).
+ *   - Human-readable: a developer scrolling through the
+ *     transcript can see what the agent is supposed to do next,
+ *     and can intervene if it doesn't.
+ */
+function printSummaryRequestForAgent(sourceId: string, docId: string): void {
+  const folder = `.atelier/docs/${sourceId}/${encodeDocFilenameStem(docId)}`;
+  ui.blank();
+  ui.print(ui.bold("Next step for the assistant"));
+  ui.print(
+    `  Read the doc and write a summary at:  ${ui.cyan(`${folder}/summary.md`)}`
+  );
+  ui.blank();
+  ui.print("  The summary should include:");
+  ui.print("    - A 1–2 sentence overview of what the document is about.");
+  ui.print(
+    "    - 5–10 keywords for future agent discovery — topics, dates,"
+  );
+  ui.print(
+    "      project names, people, decisions made. One per line under a"
+  );
+  ui.print("      `## Keywords` heading.");
+  ui.print(
+    "    - The doc's anchor points: section titles or key data the body"
+  );
+  ui.print("      covers, under a `## Anchors` heading.");
+  ui.blank();
+  ui.print("  Inputs available in the same folder:");
+  ui.print(`    ${ui.dim(folder + "/parsed.md")}     — markdown body (read this)`);
+  ui.print(
+    `    ${ui.dim(folder + "/original.<ext>")} — original source file (only consult if parsed.md is incomplete)`
+  );
+  ui.blank();
 }
 
 /** Compact post-add summary — focuses on the single source we touched. */
