@@ -173,6 +173,22 @@ export class PromptSession {
    * Ask for a secret. Masks input echo with `*` in TTY mode. Falls
    * back to plain `ask()` when stdin isn't a TTY (CI, tests, piped
    * input) so scripted answers still work.
+   *
+   * Important detail: while we're in raw mode reading the secret,
+   * we DETACH every other listener on stdin. Without that, the
+   * underlying readline.Interface keeps its own `data` listener
+   * attached and shadow-processes the secret bytes — turning them
+   * into a `line` event (with the secret as its value!) that gets
+   * queued in `buffered`. The next prompt then dequeues that line
+   * and fails its validator. Two bad outcomes from one bug:
+   *
+   *   (a) the user can't get past the next prompt because a stale
+   *       "line" was prefilled for them, and
+   *   (b) the secret leaks into the validator (and any error
+   *       message that echoes the input).
+   *
+   * Detaching + re-attaching keeps readline blissfully unaware of
+   * what happened during the raw-mode window.
    */
   async askSecret(question: string): Promise<string> {
     const stdin = this.io.input as NodeJS.ReadStream;
@@ -181,20 +197,49 @@ export class PromptSession {
     }
     // TTY path: temporarily take over raw input so we can mask `*`.
     return new Promise((resolve) => {
-      this.io.output.write(`${question}: `);
       this.rl.pause();
+      // Snapshot + detach every 'data' listener (readline's
+      // included) so they don't see the secret bytes. We restore
+      // them on cleanup; in between, only `onData` is attached.
+      const savedDataListeners = stdin.listeners("data") as Array<
+        (chunk: Buffer | string) => void
+      >;
+      for (const l of savedDataListeners) stdin.off("data", l);
       stdin.setRawMode?.(true);
       stdin.resume();
+      // Render the prompt AFTER raw mode is engaged. Otherwise a
+      // user who pastes the moment they see the prompt can get
+      // the first burst of bytes through the kernel's canonical-
+      // echo path (raw mode hasn't kicked in yet → kernel echoes)
+      // and the secret prefix shows up in clear text on screen.
+      // Writing the prompt last shrinks that race window to zero
+      // from the user's POV: they only see the prompt once the
+      // kernel is already in raw mode.
+      this.io.output.write(`${question}: `);
       let value = "";
+      const cleanup = () => {
+        stdin.off("data", onData);
+        stdin.setRawMode?.(false);
+        stdin.pause();
+        // Restore the listeners we detached. They sat dormant
+        // during raw mode, so readline picks up at the same
+        // logical state it would have had if askSecret never
+        // ran.
+        for (const l of savedDataListeners) stdin.on("data", l);
+        // Belt-and-braces: empty the buffered-lines queue.
+        // Anything in there at this point is either stale from
+        // an earlier prompt or stray bytes that slipped past
+        // the listener swap during the async pause() — neither
+        // is meaningful input for the NEXT prompt.
+        this.buffered.length = 0;
+        this.io.output.write("\n");
+        this.rl.resume();
+      };
       const onData = (data: Buffer) => {
         const s = data.toString("utf8");
         for (const ch of s) {
           if (ch === "\n" || ch === "\r") {
-            stdin.removeListener("data", onData);
-            stdin.setRawMode?.(false);
-            stdin.pause();
-            this.io.output.write("\n");
-            this.rl.resume();
+            cleanup();
             resolve(value);
             return;
           }

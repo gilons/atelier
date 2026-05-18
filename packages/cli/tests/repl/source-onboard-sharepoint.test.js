@@ -309,6 +309,66 @@ test("REPL: text prompt after a picker doesn't render its prompt text twice", as
 });
 
 // ============================================================
+// Bug 8: secret bytes leaking into the next prompt.
+//
+// While askSecret had raw mode engaged, the underlying
+// readline.Interface kept its own `data` listener attached and
+// shadow-processed the secret bytes — turning the pasted secret
+// into a `line` event that was queued in `buffered`. The very
+// next prompt (hostname, in this scenario) read that queued line
+// before the user could type anything, fed the secret into the
+// hostname regex, and printed "Doesn't match the expected format".
+// Two bad things at once: a stuck wizard and a partial secret
+// leak into the validator.
+//
+// This test exercises the no-preloaded-secret path: the secret
+// prompt actually fires, the user "pastes" a value + Enter, and
+// the hostname prompt that follows must be patient with no stale
+// content showing up where the user is about to type.
+// ============================================================
+
+test("REPL: hostname prompt isn't pre-filled by the previous secret entry", async () => {
+  const root = await makeWorkspace();
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/source onboard sharepoint\r");
+    await a.expect("How would you like to connect");
+    a.enter();
+    await a.expect("Authenticate via?");
+    a.enter(); // azure-app
+    await a.expect("Microsoft Entra tenant id");
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("App (client) id");
+    a.send("00000000-0000-0000-0000-000000000000\r");
+    await a.expect("Paste the client secret");
+    // Send a realistic-shape Azure secret + Enter in one burst,
+    // mimicking a clipboard paste from the Azure portal.
+    a.send("REDACTED-AZURE-TEST-SECRET\r");
+    await a.expect("SharePoint hostname", { timeout: 5000 });
+    // Give the system 400ms — plenty for any stale readline
+    // event to have fired had the listener-detach regressed.
+    await new Promise((r) => setTimeout(r, 400));
+    // The two failure modes we're guarding against:
+    //   1. The hostname validator running on a stale secret-shaped
+    //      string → "Doesn't match the expected format" appears
+    //      before the user types anything.
+    //   2. The secret value showing up on the hostname line at all.
+    a.assertNotPresent(
+      "Doesn't match the expected format",
+      "stale secret-as-line leaked into the hostname validator — readline data listener wasn't detached during raw mode?"
+    );
+    a.assertNotPresent(
+      "REDACTED-AZURE-TEST-SECRET",
+      "secret value appeared in cleartext in screen output — askSecret didn't mask"
+    );
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
 // Sanity: bare REPL boots, displays the banner, accepts /quit.
 // Cheap regression catcher for whole-flow brokenness — e.g. an
 // import error or a banner crash would surface here before any
