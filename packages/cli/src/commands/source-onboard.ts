@@ -109,8 +109,35 @@ async function runChoicePicker(
     if (one === null) return null;
     return [one];
   } finally {
+    drainStdinResidue();
     session.resume();
   }
+}
+
+/**
+ * Discard any stdin bytes the picker's raw-mode handoff leaked
+ * back into the kernel tty buffer.
+ *
+ * On macOS / tmux setups, an Enter pressed inside the raw-mode
+ * picker is sometimes re-delivered as a stray `\n` once raw mode
+ * turns off — which then shows up as an empty `'line'` event in
+ * readline, making the next `session.ask()` resolve to `""`
+ * before the user can type anything. Symptom in /source onboard:
+ * "✗ This answer can't be empty" fires once (or twice, after two
+ * pickers) before the actual prompt is reached.
+ *
+ * Pausing stdin briefly + calling `.read()` until null drains
+ * whatever Node's internal buffer holds. We resume via the
+ * caller's `session.resume()` immediately after.
+ */
+function drainStdinResidue(): void {
+  const stdin = process.stdin as NodeJS.ReadStream;
+  if (!stdin.isTTY) return;
+  stdin.pause();
+  // Loop is bounded by Node's internal buffer size — `read()`
+  // returns null as soon as nothing's pending.
+  // eslint-disable-next-line no-empty
+  while (stdin.read() !== null) {}
 }
 
 /** Ask a single onboarding step. Honors `secret`, `default`, `validate`. */
