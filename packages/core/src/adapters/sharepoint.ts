@@ -836,9 +836,15 @@ const sharepointOnboarding: OnboardingFlow = {
         key: "hostname",
         prompt: "SharePoint hostname",
         help:
-          "Your tenant's SharePoint root, e.g. contoso.sharepoint.com. " +
-          "Found in the URL of any of your sites — everything before the first /.",
-        validate: /^[a-z0-9.-]+\.[a-z]{2,}$/i,
+          "Your tenant's SharePoint root — the part of any SharePoint URL " +
+          "between `https://` and the first `/`.\n" +
+          "  Examples:\n" +
+          "    contoso.sharepoint.com         (team / org sites)\n" +
+          "    contoso-my.sharepoint.com      (personal OneDrive)\n" +
+          "  Worked example:\n" +
+          "    URL:   https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents\n" +
+          "    enter: contoso.sharepoint.com",
+        validate: /^[a-z0-9.-]+\.sharepoint\.com$/i,
       },
     ];
   },
