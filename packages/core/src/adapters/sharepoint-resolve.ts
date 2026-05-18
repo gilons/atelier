@@ -115,6 +115,21 @@ export function resolveSharePointLink(
   }
   // Strip query string + fragment — they're navigation hints, never
   // part of the resource identity (`?web=1`, `?csf=1`, `?d=…`).
+  //
+  // Exception: Word/Excel/PowerPoint Online viewer URLs carry the
+  // actual file identity in `?sourcedoc={GUID}` instead of in the
+  // path. The path itself points at `_layouts/15/Doc.aspx` which is
+  // SharePoint's viewer shim, not the document. We treat those as
+  // opaque shares so Graph's `/shares` endpoint can resolve them —
+  // it accepts any SharePoint URL and returns the underlying
+  // driveItem.
+  if (
+    parsed.searchParams.has("sourcedoc") ||
+    /\/_layouts\//i.test(parsed.pathname) ||
+    /\/Doc\.aspx$/i.test(parsed.pathname)
+  ) {
+    return { kind: "opaqueShare", hostname, url };
+  }
   let pathname = decodeURIComponent(parsed.pathname);
   // Tokenized share links: `/:[a-z]:/s/...` — opaque. Surface them
   // so the caller can choose to resolve via Graph or skip.

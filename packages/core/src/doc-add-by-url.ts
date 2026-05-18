@@ -120,11 +120,21 @@ export async function resolveDocUrlCandidates(
         `URL points at a SharePoint library root. Drill into a specific folder or file and paste that link instead.`
       );
     }
-    const hostMatches = sources.filter(
-      (s) =>
-        s.kind === "sharepoint" &&
-        getSharePointHostname(s) === classified.hostname
-    );
+    // Tenant-equivalence match. A SharePoint tenant exposes its
+    // team/org sites at `<tenant>.sharepoint.com` and its personal
+    // OneDrive sites at `<tenant>-my.sharepoint.com`. Same Azure AD
+    // tenant, same Graph credentials — they're conceptually one
+    // source. So a URL on `dinolabgmbh-my.sharepoint.com` matches a
+    // source registered for `dinolabgmbh.sharepoint.com` (and vice
+    // versa). At sync time, driveItem pins resolve by id and don't
+    // care about hostname; opaque-share pins are resolved by Graph
+    // which figures out the right routing from the original URL.
+    const targetTenant = sharePointTenantOf(classified.hostname);
+    const hostMatches = sources.filter((s) => {
+      if (s.kind !== "sharepoint") return false;
+      const host = getSharePointHostname(s);
+      return host !== undefined && sharePointTenantOf(host) === targetTenant;
+    });
     if (hostMatches.length === 0) {
       throw new NoMatchingSourceError(
         "sharepoint",
@@ -331,6 +341,25 @@ function sharePointPinKey(p: SharePointPin): string {
 function getSharePointHostname(s: Source): string | undefined {
   const scope = (s.scope ?? {}) as Partial<SharePointScope>;
   return scope.hostname;
+}
+
+/**
+ * Extract the canonical tenant prefix from a SharePoint hostname.
+ * Strips the optional `-my` suffix that distinguishes personal
+ * OneDrive sites from team sites within the same Azure tenant.
+ *
+ *   dinolabgmbh.sharepoint.com     → "dinolabgmbh"
+ *   dinolabgmbh-my.sharepoint.com  → "dinolabgmbh"
+ *   contoso.sharepoint.com         → "contoso"
+ *   anything-else                  → "anything-else" (untouched)
+ *
+ * Used to make a source registered for the org hostname also match
+ * URLs on the personal-OneDrive hostname (and vice versa) — the
+ * credentials and the Azure tenant are shared.
+ */
+function sharePointTenantOf(hostname: string): string {
+  const m = /^([a-z0-9-]+?)(-my)?\.sharepoint\.com$/i.exec(hostname);
+  return m ? m[1].toLowerCase() : hostname.toLowerCase();
 }
 
 // ============================================================

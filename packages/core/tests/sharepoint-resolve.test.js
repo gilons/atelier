@@ -156,6 +156,32 @@ test("resolveSharePointLink: querystring and fragment are stripped", () => {
   assert.equal(r.folderPath, "/Q3");
 });
 
+test("resolveSharePointLink: Doc.aspx viewer URL routes through opaqueShare", () => {
+  // Word/Excel/PowerPoint Online generates URLs of the form
+  // .../_layouts/15/Doc.aspx?sourcedoc={GUID}&file=... when the
+  // user copies a "share / get link" from inside the editor. The
+  // path points at the viewer shim, not at the actual document;
+  // the file identity is in the `sourcedoc` query param. Graph's
+  // /shares endpoint can resolve the whole URL into a real
+  // driveItem — so we surface it as opaqueShare and let the
+  // caller take that route.
+  const url =
+    "https://dinolabgmbh-my.sharepoint.com/:w:/r/personal/stephan_dino-lab_io/" +
+    "_layouts/15/Doc.aspx?sourcedoc=%7BAAAA89C6-5728-42FE-AE9A-1C6F5F3EC960%7D" +
+    "&file=Cloud%20Services%20Vertrag%20(SaaS)%202.0.docx";
+  const r = resolveSharePointLink(url);
+  assert.equal(r.kind, "opaqueShare");
+  assert.equal(r.hostname, "dinolabgmbh-my.sharepoint.com");
+  assert.equal(r.url, url);
+});
+
+test("resolveSharePointLink: bare _layouts URL routes through opaqueShare", () => {
+  const url =
+    "https://contoso.sharepoint.com/sites/Marketing/_layouts/15/start.aspx";
+  const r = resolveSharePointLink(url);
+  assert.equal(r.kind, "opaqueShare");
+});
+
 // ============================================================
 // encodeShareUrlForGraph — Microsoft's `u!{b64url}` share-url
 // encoding. Spec: https://learn.microsoft.com/graph/api/shares-get

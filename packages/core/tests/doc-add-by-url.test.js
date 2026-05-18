@@ -62,6 +62,71 @@ test("resolveDocUrlCandidates: SharePoint URL with no matching source raises NoM
   );
 });
 
+test("resolveDocUrlCandidates: -my.sharepoint.com URL matches a source registered for the base tenant hostname", async () => {
+  // SharePoint splits one Azure tenant across two hostnames:
+  //   <tenant>.sharepoint.com     → team / org sites
+  //   <tenant>-my.sharepoint.com  → personal OneDrive
+  // Both use the same Azure AD tenant and the same Graph
+  // credentials, so a user who onboarded the org host should be
+  // able to /doc add a OneDrive URL without re-onboarding.
+  const root = await workspace();
+  await addSource(root, {
+    kind: "sharepoint",
+    id: "org",
+    name: "Org SP",
+    credentials: { envVar: "TOK" },
+    scope: { hostname: "contoso.sharepoint.com", pins: [] },
+  });
+  const r = await resolveDocUrlCandidates(
+    root,
+    "https://contoso-my.sharepoint.com/personal/alice_contoso/Documents/spec.docx"
+  );
+  assert.equal(r.candidates.length, 1);
+  assert.equal(r.candidates[0].id, "org");
+});
+
+test("resolveDocUrlCandidates: base hostname URL matches a source registered for -my", async () => {
+  // The same equivalence in reverse — a user who happened to
+  // onboard their OneDrive host first should still be able to
+  // /doc add an org-site URL.
+  const root = await workspace();
+  await addSource(root, {
+    kind: "sharepoint",
+    id: "personal",
+    name: "Personal OneDrive",
+    credentials: { envVar: "TOK" },
+    scope: { hostname: "contoso-my.sharepoint.com", pins: [] },
+  });
+  const r = await resolveDocUrlCandidates(
+    root,
+    "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/spec.docx"
+  );
+  assert.equal(r.candidates.length, 1);
+  assert.equal(r.candidates[0].id, "personal");
+});
+
+test("resolveDocUrlCandidates: different tenant hostnames do NOT cross-match", async () => {
+  // Tenant-equivalence should NOT make "contoso" match "acme" —
+  // those are real different organizations with different
+  // credentials, even though both end in .sharepoint.com.
+  const root = await workspace();
+  await addSource(root, {
+    kind: "sharepoint",
+    id: "contoso",
+    name: "Contoso",
+    credentials: { envVar: "TOK" },
+    scope: { hostname: "contoso.sharepoint.com", pins: [] },
+  });
+  await assert.rejects(
+    () =>
+      resolveDocUrlCandidates(
+        root,
+        "https://acme.sharepoint.com/sites/Marketing/Shared%20Documents/spec.docx"
+      ),
+    NoMatchingSourceError
+  );
+});
+
 test("resolveDocUrlCandidates: SharePoint URL matches the right tenant by hostname", async () => {
   const root = await workspace();
   // Two SP sources on different tenants — only the hostname-matching one wins.
