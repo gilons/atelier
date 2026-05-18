@@ -72,6 +72,20 @@ export class InputReader {
   private dataHandler: ((chunk: Buffer | string) => void) | null = null;
   private endHandler: (() => void) | null = null;
   private finished = false;
+  /**
+   * Set while we're inside a multi-key chunk (paste, escape sequence
+   * that decodes to several keys). `refresh()` becomes a no-op so we
+   * don't redraw the prompt once per character — `handle()` does one
+   * render at the end of the loop instead.
+   *
+   * Without this, pasting a long URL produces N renders for an N-char
+   * paste. Each render writes `prompt + buffer`; once the buffer
+   * exceeds the terminal width the line wraps, and our `\r\x1b[0J`
+   * clear only erases at-or-below the cursor — the wrapped fragments
+   * from earlier renders stay on screen, so the user sees what looks
+   * like dozens of duplicated prompt+URL lines.
+   */
+  private batching = false;
 
   constructor(opts: InputReaderOptions) {
     this.input = opts.input;
@@ -118,9 +132,28 @@ export class InputReader {
   private handle(chunk: string): void {
     if (this.finished) return;
     const keys = decodeKeys(chunk);
-    for (const key of keys) {
-      if (this.finished) return;
-      this.dispatch(key);
+    // Single key: render inline as before — keeps single keystrokes
+    // feeling immediate.
+    if (keys.length <= 1) {
+      for (const key of keys) {
+        if (this.finished) return;
+        this.dispatch(key);
+      }
+      return;
+    }
+    // Multi-key chunk = paste (or a chained terminal escape). Apply
+    // every edit silently, then render exactly once. Dispatch handlers
+    // that finish the read (Enter, Ctrl-C) take their own render path
+    // — for those we exit the loop early and skip the final render.
+    this.batching = true;
+    try {
+      for (const key of keys) {
+        if (this.finished) return;
+        this.dispatch(key);
+      }
+    } finally {
+      this.batching = false;
+      if (!this.finished) this.refresh();
     }
   }
 
@@ -268,6 +301,10 @@ export class InputReader {
    * change which row is the target.
    */
   private refresh(opts: { skipCompleter?: boolean } = {}): void {
+    // Inside a paste burst, individual edits skip rendering — the
+    // batching wrapper in `handle()` calls `refresh()` once after
+    // every key in the chunk has been applied.
+    if (this.batching) return;
     if (!opts.skipCompleter) {
       const result = this.completer(this.state.buffer, this.state.cursor);
       this.span = result.span;
