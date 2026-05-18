@@ -249,30 +249,73 @@ async function runAddByUrl(
  */
 function printSummaryRequestForAgent(sourceId: string, docId: string): void {
   const folder = `.atelier/docs/${sourceId}/${encodeDocFilenameStem(docId)}`;
+  // The docId is opaque (often a Graph ID with `::` separators);
+  // when suggesting `--doc source:docId` we have to escape any
+  // existing colons in the docId. parseDocRefs in feature/spec
+  // handles `source:docId` cleanly because it splits at the FIRST
+  // colon only. So `gh:my-org/repo#42` works; SharePoint IDs with
+  // `::` inside also work because the split is single-colon.
+  const docRef = `${sourceId}:${docId}`;
   ui.blank();
   ui.print(ui.bold("Next step for the assistant"));
   ui.print(
-    `  Read the doc and write a summary at:  ${ui.cyan(`${folder}/summary.md`)}`
+    `  1. Read the doc and write a summary at:  ${ui.cyan(`${folder}/summary.md`)}`
   );
   ui.blank();
-  ui.print("  The summary should include:");
-  ui.print("    - A 1–2 sentence overview of what the document is about.");
+  ui.print("     The summary should include:");
+  ui.print("       - A 1–2 sentence overview of what the document is about.");
   ui.print(
-    "    - 5–10 keywords for future agent discovery — topics, dates,"
+    "       - 5–10 keywords for future agent discovery — topics, dates,"
   );
   ui.print(
-    "      project names, people, decisions made. One per line under a"
+    "         project names, people, decisions made. One per line under"
   );
-  ui.print("      `## Keywords` heading.");
+  ui.print("         a `## Keywords` heading.");
   ui.print(
-    "    - The doc's anchor points: section titles or key data the body"
+    "       - The doc's anchor points: section titles or key data the"
   );
-  ui.print("      covers, under a `## Anchors` heading.");
+  ui.print("         body covers, under a `## Anchors` heading.");
   ui.blank();
-  ui.print("  Inputs available in the same folder:");
-  ui.print(`    ${ui.dim(folder + "/parsed.md")}     — markdown body (read this)`);
+  ui.print("     Inputs available in the same folder:");
+  ui.print(`       ${ui.dim(folder + "/parsed.md")}      — markdown body (read this)`);
   ui.print(
-    `    ${ui.dim(folder + "/original.<ext>")} — original source file (only consult if parsed.md is incomplete)`
+    `       ${ui.dim(folder + "/original.<ext>")} — original source file (only consult if parsed.md is incomplete)`
+  );
+  ui.blank();
+  ui.print(
+    `  2. Suggest how this doc maps to the workspace's features and specs.`
+  );
+  ui.print(
+    `     Skim the keywords + anchors from step 1 against existing entries:`
+  );
+  ui.print(`       ${ui.dim("/feature list")}     — see what's tracked`);
+  ui.print(`       ${ui.dim("/spec list")}        — see active specs`);
+  ui.blank();
+  ui.print(
+    "     If the doc describes work that's NOT yet tracked, propose creating"
+  );
+  ui.print("     a new entry with this doc already attached:");
+  ui.print(
+    `       ${ui.cyan(`/feature add "<name>" --doc ${docRef}`)}`
+  );
+  ui.print(
+    `       ${ui.cyan(`/spec new "<title>" --doc ${docRef}`)}`
+  );
+  ui.blank();
+  ui.print(
+    "     If the doc informs an EXISTING feature/spec, append the doc ref"
+  );
+  ui.print(
+    `     to its YAML directly — there's no \`update --doc\` subcommand yet.`
+  );
+  ui.print("     For a feature at `.atelier/features/<id>.yaml`, add under");
+  ui.print(
+    `     \`docRefs:\` a new entry: \`- {source: ${sourceId}, docId: "${docId}"}\``
+  );
+  ui.print("     (specs follow the same shape under `.atelier/specs/<id>/`).");
+  ui.blank();
+  ui.print(
+    "     Always confirm the mapping with the user before running or editing."
   );
   ui.blank();
 }

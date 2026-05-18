@@ -157,6 +157,11 @@ test("REPL: /doc add prints follow-up instructions for the assistant (summary.md
     await a.expect(/1–\d+ sentence overview|1-\d+ sentence overview/);
     await a.expect(/Keywords/);
     await a.expect(/Anchors/);
+    // Step 2: the agent should also suggest mapping the doc to a
+    // feature or spec. The exact doc ref to use shows up in the
+    // suggested `/feature add` / `/spec new` lines.
+    await a.expect(/\/feature add.*--doc gh:my-org\/my-repo#42/);
+    await a.expect(/\/spec new.*--doc gh:my-org\/my-repo#42/);
   } finally {
     await a.close();
     await rm(root);
