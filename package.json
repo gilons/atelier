@@ -18,6 +18,7 @@
   ],
   "scripts": {
     "build": "tsc --build",
+    "postbuild": "chmod +x packages/cli/dist/index.js",
     "clean": "tsc --build --clean && rm -rf packages/*/dist packages/adapters/*/dist",
     "test": "node --test packages/*/tests/**/*.test.js packages/adapters/*/tests/**/*.test.js",
     "test:core": "node --test packages/core/tests/**/*.test.js",
