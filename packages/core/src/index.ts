@@ -77,4 +77,5 @@ export {
   githubDiscussionsOnboarding,
   type GitHubDiscussionsScope,
 } from "./adapters/github-discussions.js";
+export { extractDocxText, wordXmlToText } from "./docx-text.js";
 export { ATELIER_VERSION } from "./version.js";

@@ -1,10 +1,32 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as zlib from "node:zlib";
 import {
   SharePointAdapter,
   sharepointOnboarding,
   renderVttAsMarkdown,
 } from "../dist/index.js";
+
+/** Build a one-entry ZIP (a minimal .docx) for adapter test fixtures. */
+function buildMiniDocx(documentXml) {
+  const name = "word/document.xml";
+  const nameBuf = Buffer.from(name, "utf8");
+  const uncompressed = Buffer.from(documentXml, "utf8");
+  const compressed = zlib.deflateRawSync(uncompressed);
+  const lfh = Buffer.alloc(30);
+  lfh.writeUInt32LE(0x04034b50, 0);
+  lfh.writeUInt16LE(20, 4);
+  lfh.writeUInt16LE(0, 6);
+  lfh.writeUInt16LE(8, 8); // deflate
+  lfh.writeUInt16LE(0, 10);
+  lfh.writeUInt16LE(0, 12);
+  lfh.writeUInt32LE(0, 14);
+  lfh.writeUInt32LE(compressed.length, 18);
+  lfh.writeUInt32LE(uncompressed.length, 22);
+  lfh.writeUInt16LE(nameBuf.length, 26);
+  lfh.writeUInt16LE(0, 28);
+  return Buffer.concat([lfh, nameBuf, compressed]);
+}
 
 /**
  * Build a matcher-based fetch impl. Each matcher inspects the URL +
@@ -268,8 +290,22 @@ test("SharePointAdapter.fetchDoc decodes .vtt content into speaker-grouped markd
   assert.match(fetched.body, /\*\*Bob:\*\* Sounds great\./);
 });
 
-test("SharePointAdapter.fetchDoc requests plain-text conversion for Office files", async () => {
-  let convertHit = false;
+test("SharePointAdapter.fetchDoc extracts text from .docx binary (no Graph format-conversion)", async () => {
+  // Graph's `?format=text/plain` returns 406 for everything we
+  // tried it on, so we now download the raw .docx bytes and parse
+  // them ourselves. This test asserts (a) we fetch the raw content
+  // endpoint, NOT the deprecated format-convert one, and (b) the
+  // extracted text matches the document's actual content.
+  const documentXml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Cloud Services Contract</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Section 1 of the agreement.</w:t></w:r></w:p>
+  </w:body>
+</w:document>`;
+  const docxBin = buildMiniDocx(documentXml);
+  let rawFetchHit = false;
+  let formatConvertHit = false;
   const fetchImpl = spFetch([
     ...siteAndDriveMatchers(),
     async (url) => {
@@ -280,9 +316,17 @@ test("SharePointAdapter.fetchDoc requests plain-text conversion for Office files
           webUrl: "https://contoso.sharepoint.com/Strategy.docx",
         });
       }
-      if (url.includes(`/drives/${DRIVE_ID}/items/item-docx/content?format=text/plain`)) {
-        convertHit = true;
-        return text(200, "Plain text rendering of the doc.");
+      if (url.includes("format=text/plain")) {
+        formatConvertHit = true;
+        // Surface the bug if we ever regress back to this path.
+        return new Response("nope", { status: 406, statusText: "Not Acceptable" });
+      }
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-docx/content`)) {
+        rawFetchHit = true;
+        return new Response(docxBin, {
+          status: 200,
+          headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+        });
       }
     },
   ]);
@@ -292,8 +336,38 @@ test("SharePointAdapter.fetchDoc requests plain-text conversion for Office files
     fetchImpl,
   });
   const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-docx`);
-  assert.equal(fetched.body, "Plain text rendering of the doc.");
-  assert.equal(convertHit, true);
+  assert.equal(rawFetchHit, true, "should hit the raw binary content endpoint");
+  assert.equal(formatConvertHit, false, "should NOT use ?format=text/plain anymore");
+  assert.equal(
+    fetched.body,
+    "Cloud Services Contract\nSection 1 of the agreement."
+  );
+});
+
+test("SharePointAdapter.fetchDoc falls back gracefully for unsupported extensions (.doc, .pdf, …)", async () => {
+  // For legacy Office and PDF we don't have a text extractor yet.
+  // The doc should still land in the doc map with a clear note
+  // pointing the reader at the file URL.
+  const fetchImpl = spFetch([
+    ...siteAndDriveMatchers(),
+    async (url) => {
+      if (url.endsWith(`/drives/${DRIVE_ID}/items/item-pdf`)) {
+        return json(200, {
+          id: "item-pdf",
+          name: "Whitepaper.pdf",
+          webUrl: "https://contoso.sharepoint.com/Whitepaper.pdf",
+        });
+      }
+    },
+  ]);
+  const adapter = new SharePointAdapter({
+    token: "test-token",
+    scope: { hostname: "contoso.sharepoint.com", sitePath: "/sites/marketing" },
+    fetchImpl,
+  });
+  const fetched = await adapter.fetchDoc(`${DRIVE_ID}::item-pdf`);
+  assert.match(fetched.body, /Whitepaper\.pdf/);
+  assert.match(fetched.body, /Atelier doesn't extract text from this format/);
 });
 
 test("SharePointAdapter.fetchDoc reads .md raw without conversion", async () => {

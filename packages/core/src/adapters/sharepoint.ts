@@ -5,6 +5,7 @@ import {
   type FetchLike,
 } from "../http-transport.js";
 import { classifyDoc } from "../classify.js";
+import { extractDocxText } from "../docx-text.js";
 import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
 import {
   AzureClientCredentialsProvider,
@@ -304,26 +305,38 @@ export class SharePointAdapter implements SourceAdapter {
       body = renderVttAsMarkdown(raw, meta.name);
     } else if (ext === "md" || ext === "txt") {
       body = await this.fetchRawText(driveId, itemId);
-    } else {
-      // Word docs, PDFs, etc. — ask Graph to convert to plain
-      // text. Some MIME types (notably older .doc and some PDFs)
-      // come back as 406 Not Acceptable when the conversion isn't
-      // supported. Fall back to a stub body so sync continues
-      // instead of failing the whole run on one unconvertible
-      // file — the doc still lands in the doc map with title +
-      // URL so the user can open it externally.
+    } else if (ext === "docx") {
+      // Modern Word (.docx) is Office Open XML — a ZIP of XML
+      // documents. We fetch the raw bytes and pull the text out
+      // ourselves rather than relying on Graph to convert (it
+      // can't: `?format=text/plain` returns 406).
+      const bin = await this.fetchRawBinary(driveId, itemId);
       try {
-        body = await this.fetchAsPlainText(driveId, itemId);
+        body = extractDocxText(bin);
       } catch (err) {
-        const httpErr = err as HttpError;
-        if (httpErr instanceof HttpError && httpErr.status === 406) {
-          body =
-            `> ${meta.name} couldn't be converted to text by Microsoft Graph ` +
-            `(HTTP 406). Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
-        } else {
-          throw err;
-        }
+        body =
+          `> ${meta.name} couldn't be parsed as a .docx — ${(err as Error).message}\n` +
+          `> Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
       }
+      if (body.trim().length === 0) {
+        // Empty extraction usually means a doc with only inline
+        // images / tables / drawings. Keep the doc-map entry but
+        // make it obvious to the reader.
+        body =
+          `> ${meta.name} appears to contain no extractable text ` +
+          `(images, drawings, or empty paragraphs only). ` +
+          `Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
+      }
+    } else {
+      // Legacy Office (.doc, .xls, .ppt), PDFs, and other formats
+      // we don't have a text extractor for yet. We could ask
+      // Graph to PDF-convert and then extract — that's a useful
+      // follow-up — but for now the doc lands in the map with
+      // title + URL so the user can open it externally and an
+      // agent reading the map knows the file exists.
+      body =
+        `> ${meta.name} (.${ext}) — Atelier doesn't extract text from this format yet. ` +
+        `Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
     }
 
     return {
@@ -512,8 +525,15 @@ export class SharePointAdapter implements SourceAdapter {
     return await response.text();
   }
 
-  private async fetchAsPlainText(driveId: string, itemId: string): Promise<string> {
-    const url = `${GRAPH_API_BASE}/drives/${driveId}/items/${itemId}/content?format=text/plain`;
+  /**
+   * Download the raw bytes of a drive item. Used by the .docx
+   * branch in fetchDoc — Office Open XML files are ZIP archives,
+   * not text, so the response can't go through `response.text()`
+   * (UTF-8 decoding would corrupt the binary). Returns a Buffer
+   * the caller can hand to a ZIP/format parser.
+   */
+  private async fetchRawBinary(driveId: string, itemId: string): Promise<Buffer> {
+    const url = `${GRAPH_API_BASE}/drives/${driveId}/items/${itemId}/content`;
     const fetchImpl = (this.opts.fetchImpl ?? (globalThis.fetch as FetchLike));
     const token = await this.tokenProvider.getToken();
     const response = await fetchImpl(url, {
@@ -524,7 +544,8 @@ export class SharePointAdapter implements SourceAdapter {
       const text = await response.text().catch(() => "");
       throw new HttpError(response.status, response.statusText, url, text);
     }
-    return await response.text();
+    const arrayBuf = await response.arrayBuffer();
+    return Buffer.from(arrayBuf);
   }
 }
 
