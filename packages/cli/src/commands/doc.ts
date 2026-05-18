@@ -252,11 +252,39 @@ async function runAddByUrl(
  *     transcript can see what the agent is supposed to do next,
  *     and can intervene if it doesn't.
  */
+/**
+ * Detect whether atelier is running under an AI agent that's going
+ * to act on the follow-up instructions we print after a successful
+ * /doc add.
+ *
+ * We use an opt-in env var rather than sniffing for known agent
+ * fingerprints (CLAUDECODE=1, CURSOR=1, AIDER_*, etc.) because:
+ *   - The list of agents that wrap CLIs is growing; auto-detection
+ *     would need ongoing maintenance and silently drift out of date.
+ *   - Humans who DO want the instructions (e.g. to copy-paste into
+ *     their own assistant) can just export the var.
+ *   - Agents integrating with atelier set the var explicitly as
+ *     part of the integration, which is a tiny one-line change.
+ *
+ * Any non-empty value other than "0", "false", "off", "no" enables
+ * agent mode — the standard truthy-env-var convention.
+ */
+function isAgentMode(): boolean {
+  const v = (process.env.ATELIER_AGENT ?? "").trim().toLowerCase();
+  if (!v) return false;
+  return v !== "0" && v !== "false" && v !== "off" && v !== "no";
+}
+
 function printSummaryRequestForAgent(
   sourceId: string,
   docId: string,
   opts: { manual?: boolean } = {}
 ): void {
+  // Suppress entirely outside agent mode. Humans running atelier
+  // interactively just see the success line; the multi-step
+  // instruction block is noise for them. Agents that integrate
+  // with atelier set ATELIER_AGENT=1 to opt in.
+  if (!isAgentMode()) return;
   const folder = `.atelier/docs/${sourceId}/${encodeDocFilenameStem(docId)}`;
   // The docId is opaque (often a Graph ID with `::` separators);
   // when suggesting `--doc source:docId` we have to escape any

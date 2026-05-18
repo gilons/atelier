@@ -130,11 +130,15 @@ test("REPL: /doc add <sharepoint URL> with no SharePoint source tells the user t
 // ============================================================
 
 test("REPL: /doc add prints follow-up instructions for the assistant (summary.md request)", async () => {
-  // After every successful /doc add, the CLI emits a structured
-  // "Next step for the assistant" block instructing the agent
-  // reading the terminal to produce summary.md alongside the
-  // doc's parsed.md. The block must be present, include the
+  // After every successful /doc add in agent mode, the CLI emits
+  // a structured "Next step for the assistant" block instructing
+  // the agent reading the terminal to produce summary.md alongside
+  // the doc's parsed.md. The block must be present, include the
   // exact summary.md path, and call out the available inputs.
+  //
+  // We opt into agent mode via ATELIER_AGENT=1 — without that the
+  // follow-up block is suppressed entirely (humans running the
+  // CLI interactively don't want the noise).
   const root = await makeWorkspace();
   await writeSources(root, [
     {
@@ -145,7 +149,7 @@ test("REPL: /doc add prints follow-up instructions for the assistant (summary.md
       scope: { repos: [] },
     },
   ]);
-  const a = await launchAtelier({ cwd: root });
+  const a = await launchAtelier({ cwd: root, env: { ATELIER_AGENT: "1" } });
   try {
     await a.expect("atelier ❯");
     a.send("/doc add https://github.com/my-org/my-repo/discussions/42 --no-sync\r");

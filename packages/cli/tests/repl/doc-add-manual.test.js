@@ -43,6 +43,9 @@ test("REPL: /doc add with no URL spawns $EDITOR and ingests the saved content", 
       // Strip VISUAL so it doesn't shadow EDITOR if the test env
       // has one set.
       VISUAL: "",
+      // Opt into agent mode so the follow-up instruction block
+      // we assert on below actually prints.
+      ATELIER_AGENT: "1",
       ATELIER_FAKE_EDITOR_CONTENT: "# Onboarding PRD\n\nDraft body for the PRD.\n",
     },
   });
@@ -68,6 +71,43 @@ test("REPL: /doc add with no URL spawns $EDITOR and ingests the saved content", 
       "utf8"
     );
     assert.match(parsed, /Draft body for the PRD\./);
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+test("REPL: /doc add without ATELIER_AGENT suppresses the assistant follow-up block", async () => {
+  // Default mode: a human is at the keyboard. Atelier prints the
+  // success line but NOT the multi-step instruction block — that's
+  // noise for humans who aren't running an agent.
+  const root = await makeWorkspace();
+  const a = await launchAtelier({
+    cwd: root,
+    env: {
+      EDITOR: `${process.execPath} ${FAKE_EDITOR}`,
+      VISUAL: "",
+      // No ATELIER_AGENT — explicit empty string to be sure it
+      // doesn't leak from the parent env.
+      ATELIER_AGENT: "",
+      ATELIER_FAKE_EDITOR_CONTENT: "# Quiet\n\nNo follow-up expected.\n",
+    },
+  });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/doc add\r");
+    await a.expect(/Filename or URL/);
+    a.send("quiet-doc\r");
+    await a.expect(/Title/);
+    a.send("Quiet Doc\r");
+    await a.expect(/Added manual doc quiet-doc/, { timeout: 5000 });
+    // Give atelier a beat to print anything else it might have
+    // queued, then assert the agent block is NOT in the buffer.
+    await new Promise((r) => setTimeout(r, 200));
+    a.assertNotPresent(
+      "Next step for the assistant",
+      "agent follow-up block should be suppressed when ATELIER_AGENT is not set"
+    );
   } finally {
     await a.close();
     await rm(root);
