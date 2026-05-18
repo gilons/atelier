@@ -296,8 +296,25 @@ export class SharePointAdapter implements SourceAdapter {
     } else if (ext === "md" || ext === "txt") {
       body = await this.fetchRawText(driveId, itemId);
     } else {
-      // Word docs, PDFs, etc. — ask Graph to convert to plain text.
-      body = await this.fetchAsPlainText(driveId, itemId);
+      // Word docs, PDFs, etc. — ask Graph to convert to plain
+      // text. Some MIME types (notably older .doc and some PDFs)
+      // come back as 406 Not Acceptable when the conversion isn't
+      // supported. Fall back to a stub body so sync continues
+      // instead of failing the whole run on one unconvertible
+      // file — the doc still lands in the doc map with title +
+      // URL so the user can open it externally.
+      try {
+        body = await this.fetchAsPlainText(driveId, itemId);
+      } catch (err) {
+        const httpErr = err as HttpError;
+        if (httpErr instanceof HttpError && httpErr.status === 406) {
+          body =
+            `> ${meta.name} couldn't be converted to text by Microsoft Graph ` +
+            `(HTTP 406). Open the file directly: ${meta.webUrl ?? "(no url)"}\n`;
+        } else {
+          throw err;
+        }
+      }
     }
 
     return {

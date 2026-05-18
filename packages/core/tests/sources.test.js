@@ -190,7 +190,7 @@ test("sources.yaml round-trips with header comment", async () => {
       scope: { workspaceId: "abc123" },
     });
     const file = await fs.readFile(
-      path.join(root, ".planning", "sources.yaml"),
+      path.join(root, ".atelier", "sources.yaml"),
       "utf8"
     );
     assert.match(file, /^# Documentation sources/m);

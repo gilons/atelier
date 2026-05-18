@@ -33,7 +33,7 @@ test("initWorkspace creates the expected file tree", async () => {
     const p = workspacePaths(root);
 
     // Directory tree exists
-    for (const dir of [p.planning, p.features, p.issues, p.ui, p.cache]) {
+    for (const dir of [p.atelier, p.features, p.issues, p.ui, p.cache]) {
       const stat = await fs.stat(dir);
       assert.ok(stat.isDirectory(), `${dir} should be a directory`);
     }
@@ -45,7 +45,7 @@ test("initWorkspace creates the expected file tree", async () => {
     }
 
     // Internal .gitignore created
-    const gitignoreStat = await fs.stat(path.join(p.planning, ".gitignore"));
+    const gitignoreStat = await fs.stat(path.join(p.atelier, ".gitignore"));
     assert.ok(gitignoreStat.isFile());
 
     // workspaceExists now returns true

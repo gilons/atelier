@@ -208,7 +208,7 @@ test("addFeature creates a file with a derived id", async () => {
     assert.equal(feature.name, "CSV Export");
     assert.equal(feature.status, "planned");
 
-    const filePath = path.join(workspaceRoot, ".planning", "features", "csv-export.md");
+    const filePath = path.join(workspaceRoot, ".atelier", "features", "csv-export.md");
     const text = await fs.readFile(filePath, "utf8");
     assert.match(text, /^---\n/);
     assert.match(text, /id: csv-export/);
@@ -345,7 +345,7 @@ test("listFeatures returns empty list when features dir is missing", async () =>
   const { umbrella, workspaceRoot } = await workspace();
   try {
     // Even though initWorkspace creates the dir, simulate its absence.
-    await fs.rm(path.join(workspaceRoot, ".planning", "features"), {
+    await fs.rm(path.join(workspaceRoot, ".atelier", "features"), {
       recursive: true,
       force: true,
     });
@@ -362,7 +362,7 @@ test("listFeatures collects parse errors without stopping", async () => {
   try {
     await addFeature(workspaceRoot, { name: "Good One" });
     // Hand-write a broken feature file.
-    const badPath = path.join(workspaceRoot, ".planning", "features", "broken.md");
+    const badPath = path.join(workspaceRoot, ".atelier", "features", "broken.md");
     await fs.writeFile(badPath, "# no front-matter here\n", "utf8");
     const { features, errors } = await listFeatures(workspaceRoot);
     assert.equal(features.length, 1);

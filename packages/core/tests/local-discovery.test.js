@@ -53,11 +53,11 @@ test("scanChildren finds immediate-child git repos and skips non-repos", async (
   }
 });
 
-test("scanChildren skips dot-directories (e.g. .planning)", async () => {
+test("scanChildren skips dot-directories (e.g. .atelier)", async () => {
   const dir = await umbrella();
   try {
     await makeRepo(dir, "api", "git@github.com:acme/api.git");
-    await fs.mkdir(path.join(dir, ".planning"), { recursive: true });
+    await fs.mkdir(path.join(dir, ".atelier"), { recursive: true });
     await fs.mkdir(path.join(dir, ".cache"), { recursive: true });
     const result = await scanChildren(dir);
     assert.deepEqual(result.map((r) => r.dirName), ["api"]);

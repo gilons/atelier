@@ -533,14 +533,14 @@ async function runOnboardingInner(
       }
     }
     // Persist any envVarsToSet into the workspace-local secret store
-    // (.planning/.env) AND into the live process.env so the
+    // (.atelier/.env) AND into the live process.env so the
     // immediately-following verify / sync runs see them. The
     // SecretStore guarantees the file is in .gitignore — secrets
     // never leak into the tracked tree.
     if (entry.envVarsToSet && entry.envVarsToSet.length > 0) {
       const store = new SecretStore(workspaceRoot);
       await ui.spinner(
-        `Saving ${entry.envVarsToSet.length} secret(s) to .planning/.env`,
+        `Saving ${entry.envVarsToSet.length} secret(s) to .atelier/.env`,
         () => store.writeMany(entry.envVarsToSet!.map((e) => ({ name: e.name, value: e.value })))
       );
       for (const v of entry.envVarsToSet) {
@@ -658,7 +658,7 @@ function printNextSteps(
   let stepNum = 1;
 
   if (entry.envVarsToSet && entry.envVarsToSet.length > 0) {
-    ui.print(`  ${stepNum++}. Secrets saved to ${ui.cyan(".planning/.env")} (gitignored):`);
+    ui.print(`  ${stepNum++}. Secrets saved to ${ui.cyan(".atelier/.env")} (gitignored):`);
     ui.blank();
     for (const v of entry.envVarsToSet) {
       ui.print(`       ${ui.cyan(v.name)}${ui.dim(" = (set)")}`);

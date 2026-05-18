@@ -85,30 +85,32 @@ export async function inferRepoContext(
 }
 
 /**
- * Look for the nearest workspace (a directory containing `.planning/`)
- * starting from `dir` and probing in three directions:
+ * Look for the nearest workspace (a directory containing
+ * `.atelier/`, or the legacy `.planning/`) starting from `dir` and
+ * probing in three directions:
  *
- *   1. **Ancestors.** Walk up from `dir` until we hit one that contains
- *      `.planning/`. Covers the common case of running atelier from a
- *      subdirectory of the workspace itself.
- *   2. **Immediate children.** Look one level into `dir` for a child
- *      that is a workspace. Covers the case of running atelier from
- *      an umbrella dir (e.g. `~/workspace/myorg/`) when the workspace
- *      lives at `myorg/planning/`.
- *   3. **Siblings.** Look one level into the parent of `dir`. Covers
- *      the case of running atelier from inside a code repo that sits
- *      next to a `planning/` workspace.
+ *   1. **Ancestors.** Walk up from `dir` until we hit one that
+ *      is a workspace root. Covers the common case of running
+ *      atelier from a subdirectory of the workspace itself.
+ *   2. **Immediate children.** Look one level into `dir` for a
+ *      child that is a workspace. Covers the case of running
+ *      atelier from an umbrella dir (e.g. `~/workspace/myorg/`)
+ *      when the workspace lives at `myorg/planning/`.
+ *   3. **Siblings.** Look one level into the parent of `dir`.
+ *      Covers running atelier from inside a code repo that sits
+ *      next to a workspace.
  *
- * Returns the workspace root (the directory *containing* `.planning/`)
- * or null when nothing is found. We do NOT recursively scan past one
- * level in any direction — workspaces are conventionally placed at a
- * predictable layer, and unbounded scanning would surprise the user.
+ * Returns the workspace root (the directory *containing* the
+ * `.atelier/` or `.planning/` dir) or null when nothing is found.
+ * We do NOT recursively scan past one level in any direction —
+ * workspaces are conventionally placed at a predictable layer,
+ * and unbounded scanning would surprise the user.
  */
 export async function findNearbyWorkspace(dir: string): Promise<string | null> {
   // 1. Up the tree.
   let current = path.resolve(dir);
   while (true) {
-    if (await hasPlanningDir(current)) return current;
+    if (await hasWorkspaceDir(current)) return current;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -132,18 +134,24 @@ async function scanForWorkspaceIn(parent: string): Promise<string | null> {
     if (!e.isDirectory()) continue;
     if (e.name.startsWith(".")) continue;
     const cand = path.join(parent, e.name);
-    if (await hasPlanningDir(cand)) return cand;
+    if (await hasWorkspaceDir(cand)) return cand;
   }
   return null;
 }
 
-async function hasPlanningDir(dir: string): Promise<boolean> {
-  try {
-    const stat = await fs.stat(path.join(dir, ".planning"));
-    return stat.isDirectory();
-  } catch {
-    return false;
+async function hasWorkspaceDir(dir: string): Promise<boolean> {
+  // Accept either the new `.atelier/` or the legacy `.planning/`.
+  // Pre-rename workspaces should keep loading until the user
+  // gets around to `mv .planning .atelier`.
+  for (const candidate of [".atelier", ".planning"]) {
+    try {
+      const stat = await fs.stat(path.join(dir, candidate));
+      if (stat.isDirectory()) return true;
+    } catch {
+      /* keep trying */
+    }
   }
+  return false;
 }
 
 async function inspectAsRepo(absPath: string): Promise<LocalRepoCandidate | null> {

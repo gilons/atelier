@@ -2,7 +2,7 @@ import * as path from "node:path";
 import {
   initWorkspace,
   WorkspaceAlreadyInitializedError,
-  PLANNING_DIR,
+  ATELIER_DIR,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { hint } from "../command.js";
@@ -44,13 +44,13 @@ export const initCommand: Command = {
 
     try {
       const result = await initWorkspace(cwd, { name, description, force });
-      ui.success(`Initialized planning workspace in ${PLANNING_DIR}/`);
+      ui.success(`Initialized planning workspace in ${ATELIER_DIR}/`);
       ui.blank();
       ui.print(`  ${ui.dim("Name:")}     ${name}`);
       if (description) {
         ui.print(`  ${ui.dim("Desc:")}     ${description}`);
       }
-      ui.print(`  ${ui.dim("Location:")} ${result.paths.planning}`);
+      ui.print(`  ${ui.dim("Location:")} ${result.paths.atelier}`);
       ui.blank();
       ui.print("  Created:");
       for (const f of result.createdFiles) {

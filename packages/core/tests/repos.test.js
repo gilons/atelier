@@ -22,7 +22,7 @@ import {
  * Canonical layout these tests assume:
  *
  *   <umbrella>/
- *   ├── planning/        <- workspace root (has .planning/)
+ *   ├── planning/        <- workspace root (has .atelier/)
  *   └── <code repos>/    <- siblings of planning/
  *
  * Tests build a temp <umbrella>, init `planning/` as the workspace,

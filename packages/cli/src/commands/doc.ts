@@ -25,7 +25,7 @@ const addCmd: Command = {
   name: "add",
   summary: "Index a document in the doc map.",
   description:
-    "Adds an entry to .planning/docs/<source>/<doc-id>.md with the\n" +
+    "Adds an entry to .atelier/docs/<source>/<doc-id>.md with the\n" +
     "metadata you provide. The source must be registered (see\n" +
     "`atelier source list`). For Slice 6 we register entries manually;\n" +
     "Slice 8's sync engine will populate this automatically.\n\n" +
@@ -368,7 +368,7 @@ export const docCommand: Command = {
   description:
     "The doc map is Atelier's index of every document a feature might\n" +
     "reference: PRDs, RFCs, runbooks, policies. Each entry lives at\n" +
-    ".planning/docs/<source>/<doc-id>.md with structured metadata and\n" +
+    ".atelier/docs/<source>/<doc-id>.md with structured metadata and\n" +
     "the document body. Slice 8 will populate this automatically from\n" +
     "registered sources; today entries are added manually.",
   subcommands: [addCmd, listCmd, showCmd, updateCmd, removeCmd],

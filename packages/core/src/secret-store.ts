@@ -1,14 +1,21 @@
 import * as fs from "node:fs/promises";
+import { statSync } from "node:fs";
 import * as path from "node:path";
+import { ATELIER_DIR, LEGACY_PLANNING_DIR } from "./paths.js";
 
 /**
  * Local-only secret store for an Atelier workspace.
  *
  * Atelier never persists secret values to `sources.yaml` /
  * `repos.yaml` — those files are tracked by git and shared with
- * teammates. Secrets live in `.planning/.env` instead, which sits
- * next to those configs but is auto-added to `.planning/.gitignore`
+ * teammates. Secrets live in `.atelier/.env` instead, which sits
+ * next to those configs but is auto-added to `.atelier/.gitignore`
  * so it stays on the developer's machine.
+ *
+ * For workspaces that were init'd before the directory rename
+ * (`.planning/` → `.atelier/`), the constructor probes both names
+ * on disk and uses whichever already exists. New workspaces always
+ * write the new name.
  *
  * Why a per-workspace store rather than a global keychain or a
  * shell rc:
@@ -38,14 +45,19 @@ import * as path from "node:path";
 const ENV_FILE_BASENAME = ".env";
 
 export class SecretStore {
-  /** Absolute path to the workspace root (the directory CONTAINING `.planning/`). */
+  /** Absolute path to the workspace root (the directory CONTAINING `.atelier/`). */
   readonly workspaceRoot: string;
   /** Absolute path to the secret file. */
   readonly envPath: string;
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = workspaceRoot;
-    this.envPath = path.join(workspaceRoot, ".planning", ENV_FILE_BASENAME);
+    // Pick the existing workspace dir (legacy `.planning/` if a
+    // user hasn't migrated yet, else `.atelier/`). On a fresh
+    // workspace neither exists yet — default to the new name so
+    // first write creates `.atelier/`.
+    const dirName = pickExistingDir(workspaceRoot);
+    this.envPath = path.join(workspaceRoot, dirName, ENV_FILE_BASENAME);
   }
 
   /** Read one secret. Returns undefined when the file or key is missing. */
@@ -118,7 +130,7 @@ export class SecretStore {
    * gets the right value transparently.
    *
    * Returns the keys that were actually copied so callers can
-   * log "loaded N secrets from .planning/.env" for diagnostics.
+   * log "loaded N secrets from .atelier/.env" for diagnostics.
    */
   async loadIntoProcessEnv(
     env: Record<string, string | undefined> = process.env as Record<string, string | undefined>
@@ -135,7 +147,7 @@ export class SecretStore {
   }
 
   /**
-   * Ensure `.planning/.env` is in `.planning/.gitignore`. Idempotent;
+   * Ensure `.atelier/.env` is in `.atelier/.gitignore`. Idempotent;
    * appends one line if the entry is missing, leaves the file alone
    * otherwise. Creates `.gitignore` if it doesn't exist — newer
    * workspaces ship one (see workspace.ts) but very old ones may
@@ -231,6 +243,32 @@ function formatValue(v: string): string {
 
 function isValidEnvKey(key: string): boolean {
   return /^[A-Z_][A-Z0-9_]*$/i.test(key);
+}
+
+/**
+ * Pick which workspace directory name exists on disk so the
+ * SecretStore writes into the right place. New name wins when
+ * both are present; legacy name wins when only it exists; new
+ * name is the default for fresh workspaces.
+ *
+ * Sync because the SecretStore constructor is sync — the
+ * filesystem stat is a single cheap call and the result is
+ * cached for the lifetime of the instance.
+ */
+function pickExistingDir(workspaceRoot: string): string {
+  if (existsDir(path.join(workspaceRoot, ATELIER_DIR))) return ATELIER_DIR;
+  if (existsDir(path.join(workspaceRoot, LEGACY_PLANNING_DIR))) {
+    return LEGACY_PLANNING_DIR;
+  }
+  return ATELIER_DIR;
+}
+
+function existsDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function hasEnvIgnoreEntry(gitignore: string): boolean {

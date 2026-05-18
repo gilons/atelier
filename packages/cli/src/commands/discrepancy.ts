@@ -348,7 +348,7 @@ export const discrepancyCommand: Command = {
   description:
     "Discrepancies are recorded mismatches between what your documentation\n" +
     "claims and what the code actually does. The log lives at\n" +
-    ".planning/discrepancies.yaml. Today entries are added manually;\n" +
+    ".atelier/discrepancies.yaml. Today entries are added manually;\n" +
     "Phase 3 will populate them automatically as part of sync.",
   subcommands: [addCmd, listCmd, showCmd, resolveCmd, removeCmd],
 };

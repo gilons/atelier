@@ -1,60 +1,85 @@
 import * as path from "node:path";
 
 /**
- * Canonical paths inside a planning workspace.
+ * Canonical paths inside an Atelier workspace.
  *
  * Centralized here so command code never hard-codes filenames.
  * If a path convention changes later, this file is the single
  * point of edit.
+ *
+ * Note on naming: this directory was `.planning/` in v0. Switched
+ * to `.atelier/` so workspace state lines up with the product
+ * brand instead of describing the activity. `findWorkspaceRoot`
+ * still recognises the old name on disk (compat shim) so existing
+ * workspaces keep loading; new ones always init the new name.
  */
 
-/** The root directory name for Atelier's artifacts inside a workspace. */
-export const PLANNING_DIR = ".planning";
+/**
+ * Canonical workspace directory name. Atelier creates and looks
+ * for this directory; everything else lives under it.
+ */
+export const ATELIER_DIR = ".atelier";
+/**
+ * Pre-rename name. Recognised by {@link findWorkspaceRoot} so
+ * users coming from v0 don't have to manually migrate their
+ * `.planning/` directory before commands start working — they
+ * can `mv .planning .atelier` whenever it's convenient. New code
+ * never writes this name.
+ */
+export const LEGACY_PLANNING_DIR = ".planning";
 
 export interface WorkspacePaths {
-  /** Absolute path to the planning workspace root (parent of .planning/). */
+  /** Absolute path to the workspace root (parent of `.atelier/`). */
   root: string;
-  /** Absolute path to the .planning/ directory itself. */
-  planning: string;
-  /** `.planning/workspace.yaml` */
+  /** Absolute path to the `.atelier/` directory itself. */
+  atelier: string;
+  /** `.atelier/workspace.yaml` */
   workspaceConfig: string;
-  /** `.planning/sources.yaml` */
+  /** `.atelier/sources.yaml` */
   sourcesConfig: string;
-  /** `.planning/repos.yaml` */
+  /** `.atelier/repos.yaml` */
   reposConfig: string;
-  /** `.planning/features/` — feature map entries */
+  /** `.atelier/features/` — feature map entries */
   features: string;
-  /** `.planning/docs/` — doc map entries (nested by source id) */
+  /** `.atelier/docs/` — doc map entries (nested by source id) */
   docs: string;
-  /** `.planning/discrepancies.yaml` — running discrepancy log */
+  /** `.atelier/discrepancies.yaml` — running discrepancy log */
   discrepanciesLog: string;
-  /** `.planning/issues/` — issue folders */
+  /** `.atelier/issues/` — issue folders */
   issues: string;
-  /** `.planning/ui/` — UI map (page graphs, page descriptions) */
+  /** `.atelier/ui/` — UI map (page graphs, page descriptions) */
   ui: string;
-  /** `.planning/cache/` — gitignored local cache */
+  /** `.atelier/cache/` — gitignored local cache */
   cache: string;
-  /** `.planning/README.md` — human entry-point */
+  /** `.atelier/README.md` — human entry-point */
   readme: string;
 }
 
 /**
- * Compute all canonical paths for a workspace rooted at the given directory.
+ * Compute all canonical paths for a workspace rooted at the given
+ * directory. When the workspace was init'd before the rename, the
+ * directory on disk is `.planning/` — pass `legacy: true` to point
+ * at that instead of `.atelier/`. (Default is `.atelier/` which is
+ * the current name for every new workspace.)
  */
-export function workspacePaths(root: string): WorkspacePaths {
-  const planning = path.join(root, PLANNING_DIR);
+export function workspacePaths(
+  root: string,
+  opts: { legacy?: boolean } = {}
+): WorkspacePaths {
+  const dirName = opts.legacy ? LEGACY_PLANNING_DIR : ATELIER_DIR;
+  const atelier = path.join(root, dirName);
   return {
     root,
-    planning,
-    workspaceConfig: path.join(planning, "workspace.yaml"),
-    sourcesConfig: path.join(planning, "sources.yaml"),
-    reposConfig: path.join(planning, "repos.yaml"),
-    features: path.join(planning, "features"),
-    docs: path.join(planning, "docs"),
-    discrepanciesLog: path.join(planning, "discrepancies.yaml"),
-    issues: path.join(planning, "issues"),
-    ui: path.join(planning, "ui"),
-    cache: path.join(planning, "cache"),
-    readme: path.join(planning, "README.md"),
+    atelier,
+    workspaceConfig: path.join(atelier, "workspace.yaml"),
+    sourcesConfig: path.join(atelier, "sources.yaml"),
+    reposConfig: path.join(atelier, "repos.yaml"),
+    features: path.join(atelier, "features"),
+    docs: path.join(atelier, "docs"),
+    discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
+    issues: path.join(atelier, "issues"),
+    ui: path.join(atelier, "ui"),
+    cache: path.join(atelier, "cache"),
+    readme: path.join(atelier, "README.md"),
   };
 }

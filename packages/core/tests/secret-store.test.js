@@ -7,7 +7,7 @@ import { SecretStore, parseEnv, formatEnv } from "../dist/index.js";
 
 async function tmpWorkspace() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-secret-store-"));
-  await fs.mkdir(path.join(root, ".planning"), { recursive: true });
+  await fs.mkdir(path.join(root, ".atelier"), { recursive: true });
   return root;
 }
 
@@ -105,11 +105,11 @@ test("SecretStore.write creates the file and adds .env to .gitignore", async () 
     await store.write("SHAREPOINT_TOKEN", "eyJ.xyz");
 
     // File written with the secret.
-    const text = await fs.readFile(path.join(root, ".planning", ".env"), "utf8");
+    const text = await fs.readFile(path.join(root, ".atelier", ".env"), "utf8");
     assert.match(text, /SHAREPOINT_TOKEN=eyJ\.xyz/);
 
     // .gitignore has .env in it.
-    const gi = await fs.readFile(path.join(root, ".planning", ".gitignore"), "utf8");
+    const gi = await fs.readFile(path.join(root, ".atelier", ".gitignore"), "utf8");
     assert.match(gi, /^\.env$/m);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -122,7 +122,7 @@ test("SecretStore.write replaces an existing key in place", async () => {
     const store = new SecretStore(root);
     await store.write("FOO", "v1");
     await store.write("FOO", "v2");
-    const text = await fs.readFile(path.join(root, ".planning", ".env"), "utf8");
+    const text = await fs.readFile(path.join(root, ".atelier", ".env"), "utf8");
     // Only one FOO line.
     const matches = text.match(/^FOO=/gm) ?? [];
     assert.equal(matches.length, 1);
@@ -190,7 +190,7 @@ test("SecretStore.write doesn't duplicate the .gitignore entry on subsequent wri
     await store.write("A", "1");
     await store.write("B", "2");
     await store.write("C", "3");
-    const gi = await fs.readFile(path.join(root, ".planning", ".gitignore"), "utf8");
+    const gi = await fs.readFile(path.join(root, ".atelier", ".gitignore"), "utf8");
     const matches = gi.match(/^\.env$/gm) ?? [];
     assert.equal(matches.length, 1, "should only list .env once");
   } finally {
@@ -235,7 +235,7 @@ test("SecretStore preserves hand-edited values (read after manual edit)", async 
   const root = await tmpWorkspace();
   try {
     // Pretend a user hand-edited the file.
-    const envPath = path.join(root, ".planning", ".env");
+    const envPath = path.join(root, ".atelier", ".env");
     await fs.writeFile(envPath, "# my notes\nHAND_EDIT=42\n", "utf8");
     const store = new SecretStore(root);
     assert.equal(await store.read("HAND_EDIT"), "42");

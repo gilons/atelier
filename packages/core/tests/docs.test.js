@@ -177,7 +177,7 @@ test("validateDocEntryFrontMatter rejects unknown classification", () => {
 // addDoc / loadDoc / listDocs / removeDoc / updateDoc
 // ============================================================
 
-test("addDoc creates a file under .planning/docs/<source>/", async () => {
+test("addDoc creates a file under .atelier/docs/<source>/", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {
     await addSource(workspaceRoot, { kind: "notion", name: "Company Notion" });
@@ -191,7 +191,7 @@ test("addDoc creates a file under .planning/docs/<source>/", async () => {
     assert.equal(doc.docId, "page-abc");
     const filePath = path.join(
       workspaceRoot,
-      ".planning",
+      ".atelier",
       "docs",
       "company-notion",
       "page-abc.md"
@@ -214,7 +214,7 @@ test("addDoc encodes special chars in docId filenames", async () => {
       title: "X",
       skipSourceValidation: true,
     });
-    const dir = path.join(workspaceRoot, ".planning", "docs", "company-notion");
+    const dir = path.join(workspaceRoot, ".atelier", "docs", "company-notion");
     const files = await fs.readdir(dir);
     assert.equal(files.length, 1);
     assert.match(files[0], /^path%2Fto%2Fdoc%20with%20spaces\.md$/);
@@ -366,7 +366,7 @@ test("listDocs collects parse errors without stopping", async () => {
       title: "G",
       skipSourceValidation: true,
     });
-    const broken = path.join(workspaceRoot, ".planning", "docs", "s", "broken.md");
+    const broken = path.join(workspaceRoot, ".atelier", "docs", "s", "broken.md");
     await fs.writeFile(broken, "no front-matter\n", "utf8");
     const { docs, errors } = await listDocs(workspaceRoot);
     assert.equal(docs.length, 1);
@@ -379,7 +379,7 @@ test("listDocs collects parse errors without stopping", async () => {
 test("listDocs returns empty when docs dir missing", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {
-    await fs.rm(path.join(workspaceRoot, ".planning", "docs"), {
+    await fs.rm(path.join(workspaceRoot, ".atelier", "docs"), {
       recursive: true,
       force: true,
     });

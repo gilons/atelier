@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { workspacePaths, type WorkspacePaths, PLANNING_DIR } from "./paths.js";
+import { workspacePaths, type WorkspacePaths, ATELIER_DIR } from "./paths.js";
 import { writeYamlFile, readYamlFile } from "./yaml-io.js";
 import {
   validateSourcesConfig,
@@ -27,7 +27,7 @@ export class WorkspaceAlreadyInitializedError extends Error {
 
 export class WorkspaceNotInitializedError extends Error {
   constructor(public readonly root: string) {
-    super(`No planning workspace found at ${root} (expected ${PLANNING_DIR}/)`);
+    super(`No planning workspace found at ${root} (expected ${ATELIER_DIR}/)`);
     this.name = "WorkspaceNotInitializedError";
   }
 }
@@ -59,7 +59,7 @@ export interface InitResult {
 export async function workspaceExists(root: string): Promise<boolean> {
   const paths = workspacePaths(root);
   try {
-    const stat = await fs.stat(paths.planning);
+    const stat = await fs.stat(paths.atelier);
     return stat.isDirectory();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
@@ -81,11 +81,11 @@ export async function initWorkspace(
   const paths = workspacePaths(root);
 
   if (!opts.force && (await workspaceExists(root))) {
-    throw new WorkspaceAlreadyInitializedError(paths.planning);
+    throw new WorkspaceAlreadyInitializedError(paths.atelier);
   }
 
   // Create directory tree
-  await fs.mkdir(paths.planning, { recursive: true });
+  await fs.mkdir(paths.atelier, { recursive: true });
   await fs.mkdir(paths.features, { recursive: true });
   await fs.mkdir(paths.docs, { recursive: true });
   await fs.mkdir(paths.issues, { recursive: true });
@@ -143,8 +143,8 @@ export async function initWorkspace(
     "\n" +
     "# Local secrets written by `atelier source onboard`. Never commit.\n" +
     ".env\n";
-  await fs.writeFile(path.join(paths.planning, ".gitignore"), gitignore, "utf8");
-  created.push(path.join(paths.planning, ".gitignore"));
+  await fs.writeFile(path.join(paths.atelier, ".gitignore"), gitignore, "utf8");
+  created.push(path.join(paths.atelier, ".gitignore"));
 
   return { paths, createdFiles: created };
 }
