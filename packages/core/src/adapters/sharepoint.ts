@@ -674,13 +674,10 @@ const sharepointOnboarding: OnboardingFlow = {
   displayName: "SharePoint / OneDrive (Microsoft Graph)",
   description:
     "Atelier indexes SharePoint document libraries via Microsoft Graph. " +
-    "You need a bearer access token for `https://graph.microsoft.com/.default`. " +
-    "The simplest way to get one for testing is the Azure CLI:\n\n" +
-    "  az login\n" +
-    "  az account get-access-token --resource https://graph.microsoft.com\n\n" +
-    "(That gives you a delegated token tied to your account. Production " +
-    "deployments should use an Azure AD app + client_credentials flow — " +
-    "a follow-up on the adapter.)",
+    "Recommended setup: register an Azure AD app (one-time, takes 5min) " +
+    "and Atelier will mint + auto-refresh tokens for you. As a quick path " +
+    "you can also paste a bearer token from `az account get-access-token` " +
+    "— that token expires every ~1h so re-pasting becomes a chore.",
   async availableTransports(): Promise<TransportOption[]> {
     return [
       {
@@ -731,22 +728,23 @@ const sharepointOnboarding: OnboardingFlow = {
       },
       {
         key: "authType",
-        prompt: "How should Atelier authenticate to Microsoft Graph?",
-        help:
-          "Azure AD app (client_credentials) is recommended — Atelier mints + " +
-          "auto-refreshes tokens from your tenant/client id + secret, so you " +
-          "never have to paste a bearer again. Pasting a bearer token is the " +
-          "quick path: works once but the token expires every ~1h.",
-        choices: [
+        prompt: "Authenticate via?",
+        help: "Azure AD app auto-refreshes. Bearer token works once but expires hourly.",
+        // discoverChoices: the OnboardingStep contract doesn't
+        // ship a static `choices` field yet, so we synthesize one
+        // here. The function is called once per onboarding run;
+        // the values it returns power the multi/single-select
+        // picker pipeline that other steps already use.
+        discoverChoices: async () => [
           {
             label: "azure-app",
             value: "azure-app",
-            description: "Azure AD app (auto-refresh). Recommended.",
+            note: "auto-refresh, recommended",
           },
           {
-            label: "bearer",
+            label: "bearer token",
             value: "bearer",
-            description: "Paste a bearer token from `az` or similar. Expires hourly.",
+            note: "expires hourly, quick path",
           },
         ],
       },
@@ -809,25 +807,22 @@ const sharepointOnboarding: OnboardingFlow = {
       {
         key: "mode",
         prompt: "How do you want to add this SharePoint source?",
-        help:
-          "Pick the most natural for you. Most users paste a URL; search " +
-          "is useful when you don't have the URL handy; manual entry is the " +
-          "escape hatch.",
-        choices: [
+        help: "Paste a URL, search by name, or type addresses manually.",
+        discoverChoices: async () => [
           {
             label: "link",
             value: "link",
-            description: "Paste a SharePoint URL (site, library, folder, or single file).",
+            note: "paste a SharePoint URL — site / library / folder / file",
           },
           {
             label: "search",
             value: "search",
-            description: "Type a query — Atelier asks Graph to find matching sites / docs.",
+            note: "Graph searches matching sites + docs across the tenant",
           },
           {
             label: "manual",
             value: "manual",
-            description: "Type the hostname / site path / folder path by hand.",
+            note: "type hostname / site path / folder path by hand",
           },
         ],
       },

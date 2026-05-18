@@ -357,11 +357,8 @@ async function runOnboardingInner(
       const ctx = await getCtx();
       let choices = [] as Awaited<ReturnType<NonNullable<OnboardingStep["discoverChoices"]>>>;
       try {
-        choices = await ui.spinner(
-          ctx.orgs.length > 0
-            ? `Looking up choices in ${ctx.orgs.join(", ")}`
-            : "Looking up choices",
-          () => step.discoverChoices!(ctx, answers)
+        choices = await ui.spinner("Loading options", () =>
+          step.discoverChoices!(ctx, answers)
         );
       } catch {
         choices = [];
