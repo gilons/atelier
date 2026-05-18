@@ -21,10 +21,12 @@ import {
   type Source,
   type SyncReport,
 } from "@atelier/core";
-import type { Command } from "../command.js";
+import type { Command, InvocationMode } from "../command.js";
 import { ui } from "../ui.js";
 import { pickSourceOrAll } from "../source-picker.js";
 import { pickOne } from "../picker.js";
+import { startEditorSession } from "../editor/server.js";
+import { openUrlInDesktopWindow, describeLaunchMode } from "../editor/launcher.js";
 
 function validClassification(s: string): s is DocClassification {
   return (DOC_CLASSIFICATIONS as readonly string[]).includes(s);
@@ -100,7 +102,7 @@ const addCmd: Command = {
       });
     }
 
-    return await runManualAdd(workspaceRoot, values);
+    return await runManualAdd(workspaceRoot, values, mode);
   },
 };
 
@@ -320,6 +322,109 @@ function printSummaryRequestForAgent(sourceId: string, docId: string): void {
   ui.blank();
 }
 
+/**
+ * Editor-driven manual add. Spawns the localhost editor session,
+ * opens it in a chromeless desktop-style window, waits for save
+ * (or cancel), then writes the resulting markdown into
+ * `.atelier/docs/manual/<filename>/parsed.md`.
+ *
+ * Why source = "manual" hard-coded:
+ *   Editor docs aren't sync'd from anywhere; they're authored in
+ *   atelier itself. We bypass sources.yaml validation so the user
+ *   doesn't need to register a synthetic "manual" source to use
+ *   the editor. The `manual/` folder under `.atelier/docs/` gets
+ *   created on first save and picked up by `/doc list` naturally
+ *   (listDocs scans every source folder it finds on disk).
+ */
+async function runEditorAdd(
+  workspaceRoot: string,
+  mode: InvocationMode
+): Promise<number> {
+  const session = await startEditorSession();
+  let opened: Awaited<ReturnType<typeof openUrlInDesktopWindow>>;
+  try {
+    opened = await openUrlInDesktopWindow(session.url);
+  } catch (err) {
+    await session.close();
+    ui.error(`Couldn't open a browser window: ${(err as Error).message}`);
+    return 1;
+  }
+  ui.info(`Editor opened — ${describeLaunchMode(opened.mode)}.`);
+  ui.print(
+    `  ${ui.dim("Waiting for save… (cancel anytime — closing the window aborts the add)")}`
+  );
+  ui.blank();
+
+  const outcome = await session.done;
+  await session.close();
+
+  if (outcome.kind === "cancelled") {
+    ui.print(`  ${ui.dim("Cancelled.")}`);
+    return 0;
+  }
+  if (outcome.kind === "timeout") {
+    ui.warn("Editor session timed out — try again.");
+    return 1;
+  }
+
+  // outcome.kind === "saved"
+  const docId = normalizeFilenameToDocId(outcome.filename);
+  if (!docId) {
+    ui.error(`Filename "${outcome.filename}" doesn't produce a usable docId.`);
+    return 1;
+  }
+  try {
+    await addDoc(workspaceRoot, {
+      source: "manual",
+      docId,
+      title: outcome.title,
+      body: outcome.body,
+      fetchedAt: new Date().toISOString(),
+      skipSourceValidation: true,
+    });
+  } catch (err) {
+    if (err instanceof DocAlreadyExistsError) {
+      ui.error(
+        `A manual doc with id "${docId}" already exists. ` +
+          `Use a different filename, or remove the existing one with ` +
+          `\`/doc remove manual ${docId}\` first.`
+      );
+      return 1;
+    }
+    if (err instanceof DocReferenceValidationError) {
+      ui.error(err.message);
+      return 1;
+    }
+    throw err;
+  }
+  ui.success(`Added manual doc ${ui.bold(docId)}.`);
+  printSummaryRequestForAgent("manual", docId);
+  // Silence "mode" lint — we only need it for parity with
+  // runAddByUrl and we may use it later for follow-up hints.
+  void mode;
+  return 0;
+}
+
+/**
+ * Convert a user-typed filename into a docId. We normalize
+ * spaces → hyphens and strip any trailing extension so an entry
+ * the user types as "Onboarding PRD" lands as `onboarding-prd`
+ * rather than `Onboarding%20PRD`. Letters/digits/hyphens/dots/
+ * underscores survive; everything else is discarded.
+ */
+function normalizeFilenameToDocId(raw: string): string {
+  const trimmed = raw.trim();
+  // Drop a single trailing extension (`onboarding.md` → `onboarding`).
+  const withoutExt = trimmed.replace(/\.(md|txt)$/i, "");
+  const slug = withoutExt
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return slug;
+}
+
 /** Compact post-add summary — focuses on the single source we touched. */
 function printSyncSummaryForSource(report: SyncReport, sourceId: string): void {
   const ours = report.sources.find((s) => s.source === sourceId);
@@ -344,24 +449,44 @@ function printSyncSummaryForSource(report: SyncReport, sourceId: string): void {
 }
 
 /**
- * Original manual add flow — kept verbatim for scripts/tests that
- * authored doc entries before the URL flow existed. The URL form is
- * the recommended path for humans.
+ * Manual / "no URL" path.
+ *
+ * Two sub-modes, depending on what the user supplied:
+ *
+ *   - **Editor mode** (the human path). Triggered when the user
+ *     runs `/doc add` with NO URL and NO flags. Atelier spawns a
+ *     localhost HTTP server hosting a chromeless rich-text editor
+ *     and waits for the user to type/paste their content and hit
+ *     save. The resulting markdown lands in `.atelier/docs/manual/
+ *     <filename>/parsed.md` and the same agent follow-up block
+ *     prints as for the URL flow.
+ *
+ *   - **Scripted mode**. Triggered when the user passes
+ *     `--source / --doc-id / --title` explicitly. Useful for tests
+ *     and tooling that wants to pre-create entries; bypasses the
+ *     editor entirely.
  */
 async function runManualAdd(
   workspaceRoot: string,
-  values: Record<string, unknown>
+  values: Record<string, unknown>,
+  mode: InvocationMode
 ): Promise<number> {
   const source = values.source as string | undefined;
   const docId = values["doc-id"] as string | undefined;
   const title = values.title as string | undefined;
+  // Editor mode: no scripted-flow flags at all → open the editor.
+  if (!source && !docId && !title) {
+    return await runEditorAdd(workspaceRoot, mode);
+  }
+  // Partial flags are a user error — we don't want to half-fill
+  // a doc with editor output AND ignored CLI flags.
   if (!source || !docId || !title) {
     ui.error("Missing required option(s).");
     ui.print(
-      `  ${ui.dim("Tip: paste a URL instead — `/doc add <url>` is the simple path.")}`
+      `  ${ui.dim("Tip: paste a URL — `/doc add <url>` — or run `/doc add` with no args for the editor.")}`
     );
     ui.print(
-      `  ${ui.dim("Manual form: /doc add --source <id> --doc-id <id> --title <title> [options]")}`
+      `  ${ui.dim("Scripted form: /doc add --source <id> --doc-id <id> --title <title> [options]")}`
     );
     return 2;
   }
