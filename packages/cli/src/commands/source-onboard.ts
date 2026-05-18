@@ -8,6 +8,7 @@ import {
   githubOrgFromRemote,
   listRepos,
   listSources,
+  SecretStore,
   NotInsideWorkspaceError,
   SourceAlreadyRegisteredError,
   type OnboardingFlow,
@@ -531,6 +532,21 @@ async function runOnboardingInner(
         );
       }
     }
+    // Persist any envVarsToSet into the workspace-local secret store
+    // (.planning/.env) AND into the live process.env so the
+    // immediately-following verify / sync runs see them. The
+    // SecretStore guarantees the file is in .gitignore — secrets
+    // never leak into the tracked tree.
+    if (entry.envVarsToSet && entry.envVarsToSet.length > 0) {
+      const store = new SecretStore(workspaceRoot);
+      await ui.spinner(
+        `Saving ${entry.envVarsToSet.length} secret(s) to .planning/.env`,
+        () => store.writeMany(entry.envVarsToSet!.map((e) => ({ name: e.name, value: e.value })))
+      );
+      for (const v of entry.envVarsToSet) {
+        process.env[v.name] = v.value;
+      }
+    }
   } catch (err) {
     if (err instanceof SourceAlreadyRegisteredError) {
       ui.error(`A source with that id already exists: ${err.message}`);
@@ -642,13 +658,15 @@ function printNextSteps(
   let stepNum = 1;
 
   if (entry.envVarsToSet && entry.envVarsToSet.length > 0) {
-    ui.print(`  ${stepNum++}. Add these to your shell rc (.zshrc / .bashrc):`);
+    ui.print(`  ${stepNum++}. Secrets saved to ${ui.cyan(".planning/.env")} (gitignored):`);
     ui.blank();
     for (const v of entry.envVarsToSet) {
-      ui.print(`       ${ui.cyan(`export ${v.name}='${v.value}'`)}`);
+      ui.print(`       ${ui.cyan(v.name)}${ui.dim(" = (set)")}`);
       if (v.description) ui.print(`       ${ui.dim(v.description)}`);
     }
-    ui.print(`     ${ui.dim("(Atelier does not write to your rc file automatically.)")}`);
+    ui.print(
+      `     ${ui.dim("Atelier loads this file into env at startup. Override with `export ${NAME}=…` in your shell when you need to.")}`
+    );
     ui.blank();
   }
 

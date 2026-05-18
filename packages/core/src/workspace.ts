@@ -134,9 +134,15 @@ export async function initWorkspace(
   await fs.writeFile(paths.readme, readmeBody, "utf8");
   created.push(paths.readme);
 
-  // Write a local .gitignore inside .planning/ so the cache stays out of git
-  // even if the parent repo doesn't have a .gitignore.
-  const gitignore = "# Local cache — every developer rebuilds from sources.\ncache/\n";
+  // Write a local .gitignore inside .planning/ so the cache and any
+  // per-workspace secrets stay out of git even if the parent repo
+  // doesn't have its own .gitignore.
+  const gitignore =
+    "# Local cache — every developer rebuilds from sources.\n" +
+    "cache/\n" +
+    "\n" +
+    "# Local secrets written by `atelier source onboard`. Never commit.\n" +
+    ".env\n";
   await fs.writeFile(path.join(paths.planning, ".gitignore"), gitignore, "utf8");
   created.push(path.join(paths.planning, ".gitignore"));
 

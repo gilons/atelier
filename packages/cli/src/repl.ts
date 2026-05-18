@@ -13,6 +13,7 @@ import {
   discoverManyOrgs,
   addRepo,
   GhAdapter,
+  SecretStore,
   type LocalRepoCandidate,
   type DiscoveredRepo,
   type DiscoveryResult,
@@ -113,6 +114,19 @@ export async function runRepl(
     workspaceRoot: await findNearbyWorkspace(cwd),
     fallbackSession: null,
   };
+  // Pull `.planning/.env` into process.env as early as possible so
+  // every downstream command (source onboard, sync, …) sees the
+  // workspace's local secrets without the user having to export
+  // them in their shell rc.
+  if (ctx.workspaceRoot) {
+    try {
+      await new SecretStore(ctx.workspaceRoot).loadIntoProcessEnv();
+    } catch {
+      // Best-effort: bad .env content shouldn't kill the REPL.
+      // The next sync that needs a secret will surface a clear
+      // error message of its own.
+    }
+  }
 
   const stdinIsTty = (process.stdin as NodeJS.ReadStream).isTTY === true;
   const stdoutIsTty = (process.stdout as NodeJS.WriteStream).isTTY === true;

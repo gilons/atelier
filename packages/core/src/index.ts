@@ -24,6 +24,11 @@ export * from "./cli-transport.js";
 export * from "./onboarding.js";
 export * from "./classify.js";
 export * from "./local-discovery.js";
+export {
+  SecretStore,
+  parseEnv,
+  formatEnv,
+} from "./secret-store.js";
 // Register the built-in adapters (side-effect imports).
 import "./adapters/notion.js";
 import "./adapters/sharepoint.js";
