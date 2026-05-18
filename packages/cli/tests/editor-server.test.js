@@ -80,6 +80,52 @@ test("editor server resolves with cancelled after a POST /cancel", async () => {
   }
 });
 
+test("editor server accepts POST /cancel?token=... (pagehide-beacon path)", async () => {
+  // navigator.sendBeacon can't set custom headers, so the
+  // editor's window-close beacon rides the token in the URL
+  // query instead. The server must accept that form for
+  // /cancel specifically — /save still requires the header.
+  const session = await startEditorSession({ timeoutMs: 5000 });
+  try {
+    const token = await fetchToken(session.url);
+    const r = await fetch(
+      new URL("/cancel?token=" + encodeURIComponent(token), session.url),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        // No X-Atelier-Token header — that's the whole point of
+        // this code path.
+      }
+    );
+    assert.equal(r.status, 204);
+    const outcome = await session.done;
+    assert.equal(outcome.kind, "cancelled");
+  } finally {
+    await session.close();
+  }
+});
+
+test("editor server rejects POST /save?token=... (header-only required for /save)", async () => {
+  // /save shouldn't accept the query-token shortcut — it
+  // carries user content we want authenticated strictly.
+  const session = await startEditorSession({ timeoutMs: 5000 });
+  try {
+    const token = await fetchToken(session.url);
+    const r = await fetch(
+      new URL("/save?token=" + encodeURIComponent(token), session.url),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: "x", body: "y" }),
+      }
+    );
+    assert.equal(r.status, 403);
+  } finally {
+    await session.close();
+  }
+});
+
 test("editor server rejects POST /save without the correct token", async () => {
   const session = await startEditorSession({ timeoutMs: 5000 });
   try {

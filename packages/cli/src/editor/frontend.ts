@@ -504,6 +504,13 @@ const EDITOR_JS = /* javascript */ `
     return r;
   }
 
+  // True once the user has either saved successfully or actively
+  // cancelled. Used to suppress the pagehide beacon below — once
+  // the session has settled we don't want a duplicate /cancel
+  // arriving after a successful save (it would race the close
+  // handler on the server side).
+  let settled = false;
+
   async function save() {
     const filename = filenameInput.value.trim();
     if (!filename) {
@@ -522,6 +529,7 @@ const EDITOR_JS = /* javascript */ `
     setStatus("Saving…");
     try {
       await postJson("/save", { filename, title, body: markdown });
+      settled = true;
       setStatus("Saved. You can close this window.", "success");
       // Atelier's HTTP handler closes the server next tick; the
       // window's --app= host will see the connection drop and the
@@ -536,11 +544,57 @@ const EDITOR_JS = /* javascript */ `
 
   async function cancel() {
     setStatus("Cancelling…");
+    settled = true;
     try {
       await postJson("/cancel", {});
     } catch { /* ignore — we're closing anyway */ }
     setTimeout(() => { window.close(); }, 200);
   }
+
+  // ============================================================
+  // Window-close detection
+  //
+  // If the user closes the window via the OS chrome (the red X
+  // on macOS, ⌘W, etc.) instead of the Cancel button, we don't
+  // get to await a /cancel response — the page is being torn
+  // down. Use \`navigator.sendBeacon\` from a \`pagehide\`
+  // listener: the browser guarantees the beacon will be sent
+  // even during unload, fire-and-forget, no network blocking.
+  //
+  // sendBeacon can't set custom headers, so the token rides in
+  // the URL query for this one endpoint. The server only allows
+  // query-token auth on /cancel; /save still requires the
+  // header so it stays strict.
+  //
+  // The \`settled\` flag prevents this from firing after a real
+  // save — we don't want a phantom /cancel racing the close
+  // handler on the server.
+  // ============================================================
+  function fireCancelBeacon() {
+    if (settled) return;
+    settled = true;
+    const url = "/cancel?token=" + encodeURIComponent(TOKEN);
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob(["{}"], { type: "application/json" }));
+      } else {
+        // Older browsers: synchronous XHR is the last resort.
+        // Still works during unload, just blocks the page for a
+        // tick. Modern Chrome/Edge/Brave all have sendBeacon
+        // so this path almost never fires.
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url, false);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.send("{}");
+      }
+    } catch { /* nothing useful to do during unload */ }
+  }
+  window.addEventListener("pagehide", fireCancelBeacon);
+  // Some browsers (older Safari, mostly) don't fire pagehide
+  // reliably for app-mode windows but DO fire beforeunload.
+  // Listening to both is harmless — the \`settled\` flag makes
+  // the second one a no-op.
+  window.addEventListener("beforeunload", fireCancelBeacon);
 
   function setStatus(msg, kind) {
     status.textContent = msg || "";

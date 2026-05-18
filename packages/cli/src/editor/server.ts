@@ -95,9 +95,28 @@ export async function startEditorSession(
       res.end(renderEditorHtml({ token }));
       return;
     }
-    if (req.method === "POST" && (url === "/save" || url === "/cancel")) {
-      const auth = req.headers["x-atelier-token"];
-      if (auth !== token) {
+    // /cancel accepts the token via either the header (normal
+    // fetch path from the editor) OR a `?token=` query (the
+    // pagehide beacon path — `navigator.sendBeacon` can't set
+    // custom headers, so we let the token ride in the URL for
+    // that one endpoint). /save always requires the header
+    // because it carries user content we want to authenticate
+    // strictly.
+    const isSavePost = req.method === "POST" && req.url?.split("?")[0] === "/save";
+    const isCancelPost = req.method === "POST" && req.url?.split("?")[0] === "/cancel";
+    if (isSavePost || isCancelPost) {
+      const headerToken = req.headers["x-atelier-token"];
+      let queryToken: string | undefined;
+      if (isCancelPost && req.url) {
+        try {
+          const parsed = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+          queryToken = parsed.searchParams.get("token") ?? undefined;
+        } catch {
+          /* ignore */
+        }
+      }
+      const provided = headerToken ?? queryToken;
+      if (provided !== token) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         res.end("forbidden");
         return;
@@ -108,7 +127,7 @@ export async function startEditorSession(
         try {
           const raw = Buffer.concat(chunks).toString("utf8");
           const payload = raw ? JSON.parse(raw) : {};
-          if (url === "/cancel") {
+          if (isCancelPost) {
             res.writeHead(204);
             res.end();
             settle({ kind: "cancelled" });
