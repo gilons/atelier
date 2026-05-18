@@ -32,7 +32,12 @@ import * as path from "node:path";
  */
 
 export interface OpenOptions {
-  /** Initial window size as "W,H". Default 880x780. */
+  /**
+   * Initial window size as "W,H". Default 440x390 — about half the
+   * area of a comfortable web app window. The editor fits in this
+   * footprint (toolbar wraps if needed; the contenteditable body
+   * scrolls). Users can resize from the OS chrome.
+   */
   windowSize?: string;
 }
 
@@ -72,7 +77,7 @@ export async function openUrlInDesktopWindow(
   url: string,
   opts: OpenOptions = {}
 ): Promise<OpenResult> {
-  const windowSize = opts.windowSize ?? "880,780";
+  const windowSize = opts.windowSize ?? "440,390";
   const platform = process.platform;
   const candidates = chromiumCandidates(platform);
 

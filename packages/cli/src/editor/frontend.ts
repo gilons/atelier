@@ -174,16 +174,16 @@ const EDITOR_CSS = /* css */ `
   .editor {
     max-width: 760px;
     margin: 0 auto;
-    padding: 28px 28px 32px;
+    padding: 16px 18px 18px;
   }
   .editor__header h1 {
-    margin: 0 0 4px;
-    font-size: 20px;
+    margin: 0 0 2px;
+    font-size: 16px;
     font-weight: 600;
     letter-spacing: -0.01em;
   }
-  .editor__sub { margin: 0 0 24px; color: var(--muted); font-size: 13px; }
-  .editor__form { display: grid; gap: 18px; }
+  .editor__sub { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+  .editor__form { display: grid; gap: 12px; }
   .field { display: grid; gap: 6px; }
   .field__label { font-size: 12px; font-weight: 600; color: var(--fg); text-transform: uppercase; letter-spacing: 0.04em; }
   .field__optional { color: var(--muted); text-transform: none; font-weight: 400; letter-spacing: 0; }
@@ -236,10 +236,10 @@ const EDITOR_CSS = /* css */ `
   .toolbar__sep { width: 1px; background: var(--border); margin: 3px 4px; }
 
   .body {
-    min-height: 280px;
-    max-height: 60vh;
+    min-height: 140px;
+    max-height: 50vh;
     overflow-y: auto;
-    padding: 14px 16px;
+    padding: 10px 12px;
     background: #fff;
     border: 1px solid var(--border);
     border-radius: 0 0 6px 6px;
