@@ -192,6 +192,137 @@ export async function searchSharePointFiles(
 }
 
 /**
+ * Drive-item listing for a specific folder. Used by the
+ * onboarding link-mode drill-down: when the user pastes a
+ * folder URL (or a site/library root), we don't assume they
+ * want every doc under it — we list the contents and let them
+ * multi-select the specific files they care about.
+ *
+ * Returns each file (not folder) as a `FileSearchResult` so the
+ * downstream code path is identical to the Graph search picker.
+ * The wizard wraps these into `driveItem` pins.
+ *
+ * The endpoint:
+ *   `GET /sites/{host}:{sitePath}:/drive/root:/{folder}:/children`
+ *
+ * (Or the driveId form when `driveName` resolves to something
+ * other than the default library.) Bounded to `limit` items
+ * total — a folder with 10k files isn't fun to pick from, and
+ * if a user really wants the whole thing they have the explicit
+ * "Pull entire folder" opt-in.
+ */
+export async function listFilesInSharePointFolder(
+  token: string,
+  args: {
+    hostname: string;
+    sitePath: string;
+    driveName?: string;
+    /** Path inside the drive, with leading slash. Empty means drive root. */
+    folderPath?: string;
+  },
+  opts: { fetchImpl?: typeof fetch; limit?: number } = {}
+): Promise<FileSearchResult[]> {
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  const limit = opts.limit ?? 250;
+
+  // Resolve the site id first — Graph addresses sites by
+  // `{host}:{path}:`; getting the id once and reusing it for
+  // the drive lookup is a single round-trip vs threading a
+  // colon-syntax through every endpoint.
+  const cleanSitePath = args.sitePath.startsWith("/")
+    ? args.sitePath
+    : `/${args.sitePath}`;
+  const siteResp = await fetchImpl(
+    `${GRAPH_BASE}/sites/${encodeURIComponent(args.hostname)}:${encodeURIComponent(cleanSitePath)}`.replace(/%2F/g, "/"),
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!siteResp.ok) {
+    throw new Error(
+      `Graph /sites returned ${siteResp.status} ${siteResp.statusText} for ${args.hostname}${cleanSitePath}`
+    );
+  }
+  const site = (await siteResp.json()) as { id?: string };
+  if (!site.id) {
+    throw new Error("Graph returned no site id");
+  }
+
+  // Build the drive-item children URL. Prefer the default drive
+  // when no driveName given (matches the URL-resolver default
+  // for "Shared Documents"). When a named drive is requested,
+  // resolve its id first.
+  let drivePrefix: string;
+  if (args.driveName) {
+    const drivesResp = await fetchImpl(`${GRAPH_BASE}/sites/${site.id}/drives`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!drivesResp.ok) {
+      throw new Error(
+        `Graph /sites/{id}/drives returned ${drivesResp.status}`
+      );
+    }
+    const drives = (await drivesResp.json()) as {
+      value: Array<{ id: string; name: string }>;
+    };
+    const match = drives.value.find((d) => d.name === args.driveName);
+    if (!match) {
+      throw new Error(
+        `Drive "${args.driveName}" not found on ${args.hostname}${cleanSitePath}. Available: ${drives.value.map((d) => d.name).join(", ")}`
+      );
+    }
+    drivePrefix = `/drives/${match.id}`;
+  } else {
+    drivePrefix = `/sites/${site.id}/drive`;
+  }
+
+  const folder = args.folderPath?.replace(/^\/+|\/+$/g, "") ?? "";
+  const childrenUrl =
+    folder.length === 0
+      ? `${GRAPH_BASE}${drivePrefix}/root/children?$top=${limit}`
+      : `${GRAPH_BASE}${drivePrefix}/root:/${encodeURIComponent(folder).replace(/%2F/g, "/")}:/children?$top=${limit}`;
+
+  const childrenResp = await fetchImpl(childrenUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!childrenResp.ok) {
+    throw new Error(
+      `Graph drive-items request returned ${childrenResp.status} ${childrenResp.statusText}`
+    );
+  }
+  const data = (await childrenResp.json()) as {
+    value?: Array<{
+      id: string;
+      name: string;
+      webUrl?: string;
+      lastModifiedDateTime?: string;
+      size?: number;
+      file?: { mimeType?: string };
+      folder?: { childCount?: number };
+      parentReference?: { driveId?: string };
+    }>;
+  };
+
+  const out: FileSearchResult[] = [];
+  for (const item of data.value ?? []) {
+    // Skip folders — the picker is for files. (A future
+    // enhancement could let the user drill into subfolders;
+    // for now we keep the picker flat.)
+    if (!item.file) continue;
+    const driveId = item.parentReference?.driveId ?? "";
+    if (!driveId) continue;
+    out.push({
+      itemId: item.id,
+      driveId,
+      name: item.name,
+      webUrl: item.webUrl ?? "",
+      lastModified: item.lastModifiedDateTime,
+      sitePath: cleanSitePath,
+      hostname: args.hostname,
+    });
+  }
+  return out;
+}
+
+/**
  * Resolve an opaque SharePoint share URL (the `/:X:/s/...?e=...`
  * tokenized form) into a real driveItem reference via Graph's
  * `/shares/{encodedUrl}/driveItem` endpoint. Called only when the

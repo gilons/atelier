@@ -49,6 +49,7 @@ export {
 export {
   searchSharePointSites,
   searchSharePointFiles,
+  listFilesInSharePointFolder,
   resolveOpaqueShareUrl,
   type SiteSearchResult,
   type FileSearchResult,

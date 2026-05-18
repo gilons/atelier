@@ -5,7 +5,7 @@ import {
   type FetchLike,
 } from "../http-transport.js";
 import { classifyDoc } from "../classify.js";
-import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
+import { registerAdapter, type OnboardingChoice, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
 import {
   resolveSharePointLink,
   InvalidSharePointUrlError,
@@ -14,6 +14,7 @@ import {
 import {
   searchSharePointSites,
   searchSharePointFiles,
+  listFilesInSharePointFolder,
 } from "./sharepoint-search.js";
 import {
   AzureClientCredentialsProvider,
@@ -847,6 +848,112 @@ const sharepointOnboarding: OnboardingFlow = {
         applies: (a) => a.values.mode === "link",
         validate: /^https?:\/\//,
       },
+      {
+        // Drill-down step: when the pasted URL points at a folder
+        // (or library / site), list its files and let the user
+        // pick which specific ones to track. Single-file URLs
+        // bypass this step entirely — there's nothing to choose
+        // between.
+        //
+        // The default behavior used to be "register the folder
+        // and sync everything in it." That works fine when the
+        // user genuinely wants a wholesale mirror, but it's the
+        // wrong default for the common case: "I want THIS spec
+        // and THAT transcript onboarded, not the 248 files
+        // sitting in the folder." Atelier should treat
+        // documents as the unit of curation.
+        key: "linkPicks",
+        prompt: "Which files in this folder should Atelier track?",
+        help:
+          "Pick specific docs (space to toggle, a for all, / to filter). " +
+          "Or pick 'Pull entire folder' at the top if you really do want " +
+          "everything that lands there now and in the future.",
+        applies: (a) => {
+          if (a.values.mode !== "link" || !a.values.linkUrl) return false;
+          try {
+            const r = resolveSharePointLink(a.values.linkUrl);
+            // Drill down only when there's something to enumerate.
+            // file → single pin, done. opaqueShare → handled
+            // elsewhere with a clear error.
+            return (
+              r.kind === "folder" || r.kind === "library" || r.kind === "site"
+            );
+          } catch {
+            return false;
+          }
+        },
+        multiSelect: true,
+        validate: /.+/,
+        discoverChoices: async (_ctx, answers) => {
+          const url = answers.values.linkUrl;
+          if (!url) return [];
+          let r: SharePointLinkResolution;
+          try {
+            r = resolveSharePointLink(url);
+          } catch {
+            return [];
+          }
+          if (r.kind !== "folder" && r.kind !== "library" && r.kind !== "site") {
+            return [];
+          }
+          const folderPath = r.kind === "folder" ? r.folderPath : "";
+          const driveName =
+            r.kind === "folder" || r.kind === "library" ? r.driveName : undefined;
+          // The drill-down needs a live token. azure-app users
+          // have it set via the env var; bearer users typed it
+          // earlier in this same flow.
+          const token =
+            answers.values.token ||
+            process.env[
+              answers.values.azureClientSecretEnvVar ||
+                "SHAREPOINT_CLIENT_SECRET"
+            ];
+          if (!token) return [];
+          let files;
+          try {
+            files = await listFilesInSharePointFolder(
+              token,
+              {
+                hostname: r.hostname,
+                sitePath: r.sitePath,
+                driveName,
+                folderPath,
+              },
+              { limit: 250 }
+            );
+          } catch {
+            return [];
+          }
+          // First option = wholesale folder sync. Sentinel value
+          // round-trips through JSON so scopeFromLinkPicks can
+          // tell it apart from a real file pick.
+          const all: OnboardingChoice = {
+            label: "Pull entire folder (everything matching file types)",
+            value: encodePick({
+              kind: "wholeFolder",
+              hostname: r.hostname,
+              sitePath: r.sitePath,
+              driveName,
+              folderPath,
+            }),
+            note: `${files.length}${files.length === 250 ? "+" : ""} files — re-sync detects new ones`,
+          };
+          const fileChoices: OnboardingChoice[] = files.map((f) => ({
+            label: f.name,
+            value: encodePick({
+              kind: "driveItem",
+              hostname: f.hostname ?? r.hostname,
+              driveId: f.driveId,
+              itemId: f.itemId,
+              name: f.name,
+            }),
+            note: f.lastModified
+              ? `updated ${f.lastModified.slice(0, 10)}`
+              : undefined,
+          }));
+          return [all, ...fileChoices];
+        },
+      },
       // ----- search mode -----
       {
         key: "searchQuery",
@@ -1105,7 +1212,7 @@ function scopeFromAnswers(
 ): SharePointScope {
   const mode = values.mode || "manual";
   if (mode === "link") {
-    return scopeFromLink(values.linkUrl);
+    return scopeFromLink(values.linkUrl, values.linkPicks);
   }
   if (mode === "search") {
     return scopeFromSearchPicks(values.searchPins);
@@ -1127,7 +1234,10 @@ function scopeFromAnswers(
   };
 }
 
-function scopeFromLink(url: string | undefined): SharePointScope {
+function scopeFromLink(
+  url: string | undefined,
+  picksCsv: string | undefined
+): SharePointScope {
   if (!url) throw new Error("Link mode: linkUrl is required.");
   let r: SharePointLinkResolution;
   try {
@@ -1144,51 +1254,94 @@ function scopeFromLink(url: string | undefined): SharePointScope {
       `That URL is a tokenized share link (/:f:/s/...). Atelier can't resolve it locally yet — paste the canonical URL from the file's "Open in browser" link instead, or use search mode.`
     );
   }
-  if (r.kind === "site" || r.kind === "library") {
-    // Treat as "the default library's root folder."
+  // Single-file URL: skip the drill-down (it didn't apply) and
+  // register exactly the file the user pasted.
+  if (r.kind === "file") {
     return {
       hostname: r.hostname,
       pins: [
         {
-          kind: "folder",
-          sitePath: r.sitePath,
-          driveName: r.kind === "library" ? r.driveName : undefined,
-          folderPath: "",
-        },
-      ],
-    };
-  }
-  if (r.kind === "folder") {
-    return {
-      hostname: r.hostname,
-      pins: [
-        {
-          kind: "folder",
+          kind: "file",
           sitePath: r.sitePath,
           driveName: r.driveName,
-          folderPath: r.folderPath,
+          itemPath: r.itemPath,
         },
       ],
     };
   }
-  // file
-  return {
-    hostname: r.hostname,
-    pins: [
-      {
-        kind: "file",
-        sitePath: r.sitePath,
-        driveName: r.driveName,
-        itemPath: r.itemPath,
-      },
-    ],
-  };
+  // Folder / library / site URL: the drill-down picker must have
+  // produced linkPicks. Each pick is either a specific file
+  // (most common) or the sentinel "wholeFolder" choice (the
+  // explicit opt-in for wholesale sync).
+  return scopeFromLinkPicks(r, picksCsv);
+}
+
+function scopeFromLinkPicks(
+  resolved: Extract<
+    SharePointLinkResolution,
+    { kind: "folder" | "library" | "site" }
+  >,
+  picksCsv: string | undefined
+): SharePointScope {
+  if (!picksCsv) {
+    throw new Error(
+      "Link mode: pick at least one file (or 'Pull entire folder') from the picker."
+    );
+  }
+  const pins: SharePointPin[] = [];
+  for (const part of picksCsv.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    let decoded: Record<string, unknown>;
+    try {
+      decoded = decodePick(trimmed);
+    } catch {
+      throw new Error(
+        `Link mode: couldn't decode a picked file: ${trimmed.slice(0, 80)}`
+      );
+    }
+    if (decoded.kind === "wholeFolder") {
+      pins.push({
+        kind: "folder",
+        sitePath: String(decoded.sitePath ?? resolved.sitePath),
+        driveName:
+          decoded.driveName !== undefined && decoded.driveName !== null
+            ? String(decoded.driveName)
+            : undefined,
+        folderPath: String(decoded.folderPath ?? ""),
+        recursive: true,
+      });
+      continue;
+    }
+    if (decoded.kind === "driveItem") {
+      pins.push({
+        kind: "driveItem",
+        driveId: String(decoded.driveId),
+        itemId: String(decoded.itemId),
+        name: decoded.name ? String(decoded.name) : undefined,
+      });
+      continue;
+    }
+    throw new Error(
+      `Link mode: unknown pick kind "${String(decoded.kind ?? "?")}".`
+    );
+  }
+  if (pins.length === 0) {
+    throw new Error(
+      "Link mode: at least one file (or 'Pull entire folder') must be picked."
+    );
+  }
+  return { hostname: resolved.hostname, pins };
 }
 
 function scopeFromSearchPicks(csv: string | undefined): SharePointScope {
   if (!csv) throw new Error("Search mode: at least one result must be picked.");
-  // Each picked value is a JSON-encoded pin produced by
-  // `searchAndShape` below. Decode and aggregate.
+  // Each picked value is a base64-encoded JSON pin produced by
+  // `searchAndShape`. We can't ship raw JSON through the wizard
+  // because the multi-select picker joins values with commas,
+  // and JSON itself contains commas — splitting would shred
+  // them. Base64 is alphanumeric + `=` / `+` / `/`, none of
+  // which conflict with CSV.
   const pins: SharePointPin[] = [];
   let hostname = "";
   for (const part of csv.split(",")) {
@@ -1196,7 +1349,10 @@ function scopeFromSearchPicks(csv: string | undefined): SharePointScope {
     if (!trimmed) continue;
     let decoded: { hostname: string; pin: SharePointPin };
     try {
-      decoded = JSON.parse(trimmed);
+      decoded = decodePick(trimmed) as unknown as {
+        hostname: string;
+        pin: SharePointPin;
+      };
     } catch {
       throw new Error(
         `Search mode: couldn't decode a picked result: ${trimmed.slice(0, 80)}`
@@ -1238,7 +1394,7 @@ async function searchAndShape(
       };
       out.push({
         label: `[site] ${s.displayName}`,
-        value: JSON.stringify({ hostname: s.hostname, pin }),
+        value: encodePick({ hostname: s.hostname, pin }),
         note: s.webUrl,
       });
     }
@@ -1257,7 +1413,7 @@ async function searchAndShape(
       };
       out.push({
         label: `[file] ${f.name}`,
-        value: JSON.stringify({
+        value: encodePick({
           hostname: f.hostname ?? "",
           pin,
         }),
@@ -1276,6 +1432,24 @@ function pinKey(p: SharePointPin): string {
     return `f:${p.sitePath}:${p.driveName ?? ""}:${p.itemPath}`;
   }
   return `fo:${p.sitePath}:${p.driveName ?? ""}:${p.folderPath}`;
+}
+
+/**
+ * Encode a pick payload for the multi-select picker.
+ *
+ * The picker joins selected values with `,`. JSON-encoded
+ * objects contain `,`s natively, so passing raw JSON through
+ * the picker would shatter each pick into pieces on the way
+ * back. Base64 keeps every pick atomic — its alphabet
+ * (`A-Za-z0-9+/=`) never conflicts with CSV.
+ */
+function encodePick(payload: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+}
+
+function decodePick(encoded: string): Record<string, unknown> {
+  const text = Buffer.from(encoded, "base64").toString("utf8");
+  return JSON.parse(text) as Record<string, unknown>;
 }
 
 function unique<T>(xs: T[]): T[] {

@@ -474,7 +474,40 @@ test("sharepointOnboarding.toRegistryEntry (manual mode) packs scope as pins[]",
   assert.equal(entry.envVarsToSet[0].name, "SHAREPOINT_TOKEN");
 });
 
-test("sharepointOnboarding.toRegistryEntry (link mode) resolves a folder URL into a pin", () => {
+test("sharepointOnboarding.toRegistryEntry (link mode) — folder URL requires drill-down picks", () => {
+  // Folder URLs no longer auto-register as folder pins. The
+  // wizard's drill-down picker forces the user to choose
+  // specific files (or explicitly opt into "Pull entire folder").
+  // Calling toRegistryEntry with a folder URL but no linkPicks
+  // means the user got past validation in a state that should
+  // be impossible from the wizard — throw to surface the bug.
+  assert.throws(
+    () =>
+      sharepointOnboarding.toRegistryEntry({
+        transport: "rest",
+        values: {
+          mode: "link",
+          linkUrl:
+            "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3-Plans",
+          envVar: "SHAREPOINT_TOKEN",
+          token: "eyJ...",
+        },
+      }),
+    /pick at least one file/
+  );
+});
+
+test("sharepointOnboarding.toRegistryEntry (link mode) packs driveItem pins from drill-down picks", () => {
+  // Simulate the wizard: user pasted a folder URL and picked
+  // two files in the drill-down. Each pick is a base64-JSON
+  // payload (encoding keeps the picker's comma-joined CSV from
+  // shattering objects that have commas in them). The CSV form
+  // is what the multi-select picker writes to
+  // answers.values.linkPicks.
+  const pick = (driveId, itemId, name) =>
+    Buffer.from(
+      JSON.stringify({ kind: "driveItem", driveId, itemId, name })
+    ).toString("base64");
   const entry = sharepointOnboarding.toRegistryEntry({
     transport: "rest",
     values: {
@@ -483,6 +516,10 @@ test("sharepointOnboarding.toRegistryEntry (link mode) resolves a folder URL int
       mode: "link",
       linkUrl:
         "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3-Plans",
+      linkPicks: [
+        pick("d1", "i1", "spec.docx"),
+        pick("d1", "i2", "roadmap.pdf"),
+      ].join(","),
       envVar: "SHAREPOINT_TOKEN",
       token: "eyJ...",
     },
@@ -490,14 +527,59 @@ test("sharepointOnboarding.toRegistryEntry (link mode) resolves a folder URL int
   assert.deepEqual(entry.source.scope, {
     hostname: "contoso.sharepoint.com",
     pins: [
-      {
-        kind: "folder",
-        sitePath: "/sites/Marketing",
-        driveName: undefined,
-        folderPath: "/Q3-Plans",
-      },
+      { kind: "driveItem", driveId: "d1", itemId: "i1", name: "spec.docx" },
+      { kind: "driveItem", driveId: "d1", itemId: "i2", name: "roadmap.pdf" },
     ],
   });
+});
+
+test("sharepointOnboarding.toRegistryEntry (link mode) honors 'Pull entire folder' sentinel", () => {
+  // The drill-down's first option is an explicit opt-in for
+  // wholesale folder sync. When picked, the wizard writes a
+  // sentinel value that scopeFromLinkPicks decodes back into a
+  // recursive folder pin.
+  const wholeFolder = Buffer.from(
+    JSON.stringify({
+      kind: "wholeFolder",
+      hostname: "contoso.sharepoint.com",
+      sitePath: "/sites/Marketing",
+      sourcePath: undefined,
+      folderPath: "/Q3-Plans",
+    })
+  ).toString("base64");
+  const entry = sharepointOnboarding.toRegistryEntry({
+    transport: "rest",
+    values: {
+      mode: "link",
+      linkUrl:
+        "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3-Plans",
+      linkPicks: wholeFolder,
+      envVar: "SHAREPOINT_TOKEN",
+      token: "x",
+    },
+  });
+  assert.equal(entry.source.scope.pins.length, 1);
+  assert.equal(entry.source.scope.pins[0].kind, "folder");
+  assert.equal(entry.source.scope.pins[0].folderPath, "/Q3-Plans");
+  assert.equal(entry.source.scope.pins[0].recursive, true);
+});
+
+test("sharepointOnboarding.toRegistryEntry (link mode) — single-file URL still works without drill-down", () => {
+  // File URLs skip the drill-down step (it doesn't apply).
+  // The file pin is built straight from the URL resolver.
+  const entry = sharepointOnboarding.toRegistryEntry({
+    transport: "rest",
+    values: {
+      mode: "link",
+      linkUrl:
+        "https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3/spec.docx",
+      envVar: "SHAREPOINT_TOKEN",
+      token: "x",
+    },
+  });
+  assert.equal(entry.source.scope.pins.length, 1);
+  assert.equal(entry.source.scope.pins[0].kind, "file");
+  assert.equal(entry.source.scope.pins[0].itemPath, "/Q3/spec.docx");
 });
 
 test("sharepointOnboarding.toRegistryEntry (link mode) refuses an opaque /:f:/s/ share URL", () => {
