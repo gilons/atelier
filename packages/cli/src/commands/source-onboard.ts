@@ -678,12 +678,18 @@ function printNextSteps(
   if (!isDryRun) {
     ui.print(`  ${stepNum++}. Try a sync:`);
     ui.blank();
-    ui.print(`       ${ui.cyan(`${prefix}sync --source ${sourceId} --dry-run`)}`);
-    ui.print(`       ${ui.cyan(`${prefix}sync --source ${sourceId}`)}`);
+    ui.print(`       ${ui.cyan(`${prefix}sync --dry-run`)}`);
+    ui.print(`       ${ui.cyan(`${prefix}sync`)}`);
+    ui.print(
+      `     ${ui.dim("Atelier offers a source picker when --source isn't given. Pick this one or 'All sources'.")}`
+    );
     ui.blank();
     ui.print(`  ${stepNum++}. Inspect what landed:`);
     ui.blank();
-    ui.print(`       ${ui.cyan(`${prefix}doc list --source ${sourceId}`)}`);
+    ui.print(`       ${ui.cyan(`${prefix}doc list`)}`);
+    ui.print(
+      `     ${ui.dim(`Same picker — or pass --source ${sourceId} to skip it.`)}`
+    );
     ui.blank();
   }
 }

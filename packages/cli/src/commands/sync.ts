@@ -7,6 +7,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { pickSourceOrAll } from "../source-picker.js";
 
 /**
  * `atelier sync` — pull every enabled source's doc index, diff
@@ -54,7 +55,7 @@ export const syncCommand: Command = {
     "dry-run": { type: "boolean" },
     verbose: { type: "boolean", short: "v" },
   },
-  async run({ values, cwd }) {
+  async run({ values, cwd, mode }) {
     let workspaceRoot: string;
     try {
       workspaceRoot = await requireWorkspaceRoot(cwd);
@@ -69,13 +70,32 @@ export const syncCommand: Command = {
     const dryRun = values["dry-run"] === true;
     const removeOrphans = values["remove-orphans"] === true;
 
+    // Resolve the source filter. Explicit --source wins. When
+    // missing AND we're interactive in the REPL, offer a picker
+    // so the user never has to remember source ids. With 0 or 1
+    // sources the picker is skipped (nothing meaningful to pick
+    // between) and we fall through to the default "all sources"
+    // behavior.
+    let sourceFilter = values.source as string | undefined;
+    if (sourceFilter === undefined && mode === "repl") {
+      const picked = await pickSourceOrAll(workspaceRoot, {
+        question: "Which source do you want to sync?",
+        help: "Pick a registered source, or leave on 'All sources' to sync everything.",
+      });
+      if (picked === null) {
+        ui.print(`  ${ui.dim("Aborted.")}`);
+        return 0;
+      }
+      sourceFilter = picked;
+    }
+
     if (dryRun) {
       ui.info("Dry run — no changes will be written.");
       ui.blank();
     }
 
     const report = await syncWorkspace(workspaceRoot, {
-      source: values.source as string | undefined,
+      source: sourceFilter,
       dryRun,
       removeOrphans,
     });

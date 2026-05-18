@@ -16,6 +16,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { pickSourceOrAll } from "../source-picker.js";
 
 function validClassification(s: string): s is DocClassification {
   return (DOC_CLASSIFICATIONS as readonly string[]).includes(s);
@@ -121,7 +122,7 @@ const listCmd: Command = {
     classification: { type: "string", short: "c" },
   },
   async run({ values, cwd, mode }) {
-    const sourceFilter = values.source as string | undefined;
+    let sourceFilter = values.source as string | undefined;
     const classFilter = values.classification as string | undefined;
     if (classFilter !== undefined && !validClassification(classFilter)) {
       ui.error(
@@ -139,6 +140,21 @@ const listCmd: Command = {
         return 1;
       }
       throw err;
+    }
+
+    // Interactive picker when run from the REPL without an
+    // explicit --source: lets the user pick a source (or
+    // "All sources") instead of having to remember the id.
+    if (sourceFilter === undefined && mode === "repl") {
+      const picked = await pickSourceOrAll(workspaceRoot, {
+        question: "Filter to which source?",
+        help: "Pick a source to narrow the list, or leave on 'All sources' for everything.",
+      });
+      if (picked === null) {
+        ui.print(`  ${ui.dim("Aborted.")}`);
+        return 0;
+      }
+      sourceFilter = picked;
     }
 
     const { docs, errors } = await listDocs(workspaceRoot, sourceFilter);
