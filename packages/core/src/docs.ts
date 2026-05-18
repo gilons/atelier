@@ -642,3 +642,104 @@ export async function updateDoc(
   }
   return next;
 }
+
+/**
+ * Rename a doc — change its docId. Used by `/doc rename`, which
+ * is the agent-suggested step after a manual /doc add when the
+ * doc's filename should reflect its body better.
+ *
+ * Mechanics:
+ *   1. Validate the new docId doesn't conflict with an existing
+ *      doc in the same source.
+ *   2. Move the folder atomically: `<source>/<old-encoded>/` →
+ *      `<source>/<new-encoded>/`. fs.rename is atomic on the same
+ *      filesystem; we never end up with a half-moved state.
+ *   3. Rewrite parsed.md so the front-matter's `docId` field
+ *      reflects the new id. (The folder name + the docId have to
+ *      agree — otherwise listDocs would show one and loadDoc
+ *      would address the other.)
+ *
+ * Legacy flat-file docs: if the existing doc lives at
+ * `<source>/<old-encoded>.md` (pre-folder layout), we route
+ * through updateDoc-style migration: write the new folder
+ * layout, delete the legacy file. Same effect as updateDoc's
+ * migration path.
+ */
+export async function renameDoc(
+  workspaceRoot: string,
+  source: string,
+  oldDocId: string,
+  newDocId: string
+): Promise<DocEntry> {
+  if (!oldDocId) throw new Error("oldDocId is required");
+  if (!newDocId) throw new Error("newDocId is required");
+  if (oldDocId === newDocId) {
+    // No-op rename — return the existing doc so callers can
+    // proceed without special-casing.
+    return await loadDoc(workspaceRoot, source, oldDocId);
+  }
+
+  const existing = await loadDoc(workspaceRoot, source, oldDocId);
+
+  // Conflict check: refuse to clobber an existing doc at the
+  // target. We probe BOTH layouts (new folder + legacy flat) so
+  // a half-migrated workspace can't silently lose data.
+  const targetFolder = docFolderPath(workspaceRoot, source, newDocId);
+  const targetLegacy = legacyDocFilePath(workspaceRoot, source, newDocId);
+  for (const p of [targetFolder, targetLegacy]) {
+    try {
+      await fs.access(p);
+      throw new DocAlreadyExistsError(source, newDocId);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+
+  const next: DocEntry = {
+    ...existing,
+    docId: newDocId,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Move the folder if it exists at the new layout. fs.rename
+  // is atomic across-renames-within-fs; if the source dir was a
+  // legacy flat file we skip this and write the new folder
+  // fresh from `next` below.
+  const oldFolder = docFolderPath(workspaceRoot, source, oldDocId);
+  let oldFolderExists = false;
+  try {
+    const stat = await fs.stat(oldFolder);
+    oldFolderExists = stat.isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  if (oldFolderExists) {
+    await fs.rename(oldFolder, targetFolder);
+  } else {
+    // Legacy flat-file source — make sure the parent source dir
+    // exists, then write the new folder from scratch below.
+    await ensureDocFolder(workspaceRoot, source, newDocId);
+  }
+
+  // Rewrite parsed.md with the updated front-matter (docId,
+  // updatedAt).
+  await fs.writeFile(
+    docParsedPath(workspaceRoot, source, newDocId),
+    serializeDocFile(next),
+    "utf8"
+  );
+
+  // Clean up the legacy flat file if it existed — same logic as
+  // updateDoc's migration cleanup.
+  await fs.rm(legacyDocFilePath(workspaceRoot, source, oldDocId), { force: true });
+  if (existing.originalFile && !existing.originalFile.startsWith("original.")) {
+    const ext = existing.originalFile.split(".").pop() ?? "";
+    await fs.rm(
+      legacyDocOriginalPath(workspaceRoot, source, oldDocId, ext),
+      { force: true }
+    );
+  }
+
+  return next;
+}

@@ -55,8 +55,11 @@ test("REPL: /doc add with no URL spawns $EDITOR and ingests the saved content", 
     a.send("Onboarding PRD\r");
     await a.expect(/Opening .+ on .+\.md/);
     await a.expect(/Added manual doc/, { timeout: 5000 });
-    // Follow-up agent instructions still print on the manual path.
+    // Follow-up agent instructions still print on the manual path,
+    // and now include a step suggesting the agent rename the doc
+    // if the filename doesn't reflect the content well.
     await a.expect("Next step for the assistant");
+    await a.expect(/\/doc rename manual onboarding-prd/);
     await a.expect(/\.atelier\/docs\/manual\/onboarding-prd\/summary\.md/);
 
     // The doc actually landed on disk with the editor's content.

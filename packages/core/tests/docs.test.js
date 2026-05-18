@@ -675,3 +675,150 @@ test("listDocs scans both the new folder layout and the legacy flat layout in on
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
+
+// ============================================================
+// renameDoc — change a doc's docId / folder name
+// ============================================================
+
+test("renameDoc moves the folder and rewrites parsed.md front-matter", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addDoc(workspaceRoot, {
+      source: "manual",
+      docId: "untitled-1",
+      title: "Notes",
+      body: "Some body.",
+      skipSourceValidation: true,
+    });
+    const next = await import("../dist/index.js").then((m) =>
+      m.renameDoc(workspaceRoot, "manual", "untitled-1", "onboarding-prd")
+    );
+    assert.equal(next.docId, "onboarding-prd");
+    // New folder exists with parsed.md inside.
+    const newPath = path.join(
+      workspaceRoot,
+      ".atelier",
+      "docs",
+      "manual",
+      "onboarding-prd",
+      "parsed.md"
+    );
+    const text = await fs.readFile(newPath, "utf8");
+    assert.match(text, /docId: onboarding-prd/);
+    // Old folder is gone.
+    const oldPath = path.join(workspaceRoot, ".atelier", "docs", "manual", "untitled-1");
+    await assert.rejects(() => fs.access(oldPath));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("renameDoc preserves the original binary alongside parsed.md", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addDoc(workspaceRoot, {
+      source: "manual",
+      docId: "draft",
+      title: "Draft",
+      body: "body",
+      original: { bytes: Buffer.from("binary-blob"), extension: "docx" },
+      skipSourceValidation: true,
+    });
+    const { renameDoc } = await import("../dist/index.js");
+    await renameDoc(workspaceRoot, "manual", "draft", "q3-plan");
+    const binary = await fs.readFile(
+      path.join(
+        workspaceRoot,
+        ".atelier",
+        "docs",
+        "manual",
+        "q3-plan",
+        "original.docx"
+      ),
+      "utf8"
+    );
+    assert.equal(binary, "binary-blob");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("renameDoc refuses to clobber an existing doc at the target", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addDoc(workspaceRoot, {
+      source: "manual",
+      docId: "doc-a",
+      title: "A",
+      skipSourceValidation: true,
+    });
+    await addDoc(workspaceRoot, {
+      source: "manual",
+      docId: "doc-b",
+      title: "B",
+      skipSourceValidation: true,
+    });
+    const { renameDoc } = await import("../dist/index.js");
+    await assert.rejects(
+      () => renameDoc(workspaceRoot, "manual", "doc-a", "doc-b"),
+      (err) => err instanceof DocAlreadyExistsError
+    );
+    // doc-a is untouched.
+    const stillThere = await loadDoc(workspaceRoot, "manual", "doc-a");
+    assert.equal(stillThere.title, "A");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("renameDoc migrates a legacy flat-file doc into the new folder layout", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    // Hand-write a legacy flat doc the pre-folder layout used.
+    const sourceDir = path.join(workspaceRoot, ".atelier", "docs", "manual");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sourceDir, "legacy-doc.md"),
+      [
+        "---",
+        "source: manual",
+        "docId: legacy-doc",
+        "title: Legacy",
+        "createdAt: 2026-01-01T00:00:00Z",
+        "updatedAt: 2026-01-01T00:00:00Z",
+        "---",
+        "",
+        "Old body.",
+      ].join("\n"),
+      "utf8"
+    );
+    const { renameDoc } = await import("../dist/index.js");
+    await renameDoc(workspaceRoot, "manual", "legacy-doc", "renamed");
+    // New folder + parsed.md exist; legacy flat file is gone.
+    await fs.access(path.join(sourceDir, "renamed", "parsed.md"));
+    await assert.rejects(() => fs.access(path.join(sourceDir, "legacy-doc.md")));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("renameDoc with the same id is a no-op (returns the existing doc unchanged)", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await addDoc(workspaceRoot, {
+      source: "manual",
+      docId: "untouched",
+      title: "Untouched",
+      skipSourceValidation: true,
+    });
+    const { renameDoc } = await import("../dist/index.js");
+    const result = await renameDoc(workspaceRoot, "manual", "untouched", "untouched");
+    assert.equal(result.docId, "untouched");
+    // Folder + parsed.md still there.
+    await fs.access(
+      path.join(workspaceRoot, ".atelier", "docs", "manual", "untouched", "parsed.md")
+    );
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});

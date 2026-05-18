@@ -8,6 +8,7 @@ import {
   listDocs,
   loadDoc,
   removeDoc,
+  renameDoc,
   updateDoc,
   encodeDocFilenameStem,
   DOC_CLASSIFICATIONS,
@@ -251,7 +252,11 @@ async function runAddByUrl(
  *     transcript can see what the agent is supposed to do next,
  *     and can intervene if it doesn't.
  */
-function printSummaryRequestForAgent(sourceId: string, docId: string): void {
+function printSummaryRequestForAgent(
+  sourceId: string,
+  docId: string,
+  opts: { manual?: boolean } = {}
+): void {
   const folder = `.atelier/docs/${sourceId}/${encodeDocFilenameStem(docId)}`;
   // The docId is opaque (often a Graph ID with `::` separators);
   // when suggesting `--doc source:docId` we have to escape any
@@ -262,8 +267,35 @@ function printSummaryRequestForAgent(sourceId: string, docId: string): void {
   const docRef = `${sourceId}:${docId}`;
   ui.blank();
   ui.print(ui.bold("Next step for the assistant"));
+  let step = 1;
+  // Step 1 (manual docs only): suggest a more descriptive filename
+  // based on the body. Manually-typed names tend to be placeholders
+  // ("notes", "draft", "untitled-1"); the agent can read the body
+  // and propose a slug that reflects the content. The rename has
+  // to happen BEFORE summary.md is written, since summary.md goes
+  // into the renamed folder.
+  if (opts.manual) {
+    ui.print(
+      `  ${step}. Read the doc body. If the filename ${ui.cyan(`"${docId}"`)} looks generic`
+    );
+    ui.print(
+      "     or doesn't reflect the content, propose a more descriptive slug:"
+    );
+    ui.print(
+      `       ${ui.cyan(`/doc rename ${sourceId} ${docId} <better-slug>`)}`
+    );
+    ui.print(
+      "     Use lowercase letters, digits, and hyphens. Confirm with the user"
+    );
+    ui.print(
+      "     before running. If you rename, continue the remaining steps with"
+    );
+    ui.print("     the new docId in the paths below.");
+    ui.blank();
+    step++;
+  }
   ui.print(
-    `  1. Read the doc and write a summary at:  ${ui.cyan(`${folder}/summary.md`)}`
+    `  ${step}. Read the doc and write a summary at:  ${ui.cyan(`${folder}/summary.md`)}`
   );
   ui.blank();
   ui.print("     The summary should include:");
@@ -286,8 +318,9 @@ function printSummaryRequestForAgent(sourceId: string, docId: string): void {
     `       ${ui.dim(folder + "/original.<ext>")} — original source file (only consult if parsed.md is incomplete)`
   );
   ui.blank();
+  step++;
   ui.print(
-    `  2. Suggest how this doc maps to the workspace's features and specs.`
+    `  ${step}. Suggest how this doc maps to the workspace's features and specs.`
   );
   ui.print(
     `     Skim the keywords + anchors from step 1 against existing entries:`
@@ -536,7 +569,7 @@ async function runEditorAdd(
     throw err;
   }
   ui.success(`Added manual doc ${ui.bold(docId)}.`);
-  printSummaryRequestForAgent("manual", docId);
+  printSummaryRequestForAgent("manual", docId, { manual: true });
   void mode; // parity with runAddByUrl; may use later for next-step hints
   return 0;
 }
@@ -928,6 +961,54 @@ const removeCmd: Command = {
   },
 };
 
+const renameCmd: Command = {
+  name: "rename",
+  summary: "Rename a doc (change its docId / filename).",
+  description:
+    "Moves the doc's folder under .atelier/docs/<source>/ and rewrites the\n" +
+    "parsed.md front-matter so docId matches the new name. Most useful for\n" +
+    "manual docs where the initial filename was a placeholder — atelier's\n" +
+    "/doc add flow prints an agent follow-up that suggests calling this\n" +
+    "after the doc body has been written.",
+  positionals: ["source", "oldDocId", "newDocId"],
+  async run({ positionals, cwd }) {
+    const [source, oldDocId, newDocId] = positionals;
+    if (!source || !oldDocId || !newDocId) {
+      ui.error("Usage: atelier doc rename <source> <oldDocId> <newDocId>");
+      return 2;
+    }
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+    try {
+      const doc = await renameDoc(workspaceRoot, source, oldDocId, newDocId);
+      ui.success(
+        `Renamed ${ui.bold(oldDocId)} → ${ui.bold(doc.docId)} in source ${ui.bold(doc.source)}`
+      );
+      return 0;
+    } catch (err) {
+      if (err instanceof DocNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      if (err instanceof DocAlreadyExistsError) {
+        ui.error(
+          `Can't rename: a doc with id "${newDocId}" already exists in source "${source}".`
+        );
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
 const updateCmd: Command = {
   name: "update",
   summary: "Update a doc's metadata or body.",
@@ -1012,5 +1093,5 @@ export const docCommand: Command = {
     "document body. The recommended workflow is to onboard a source once\n" +
     "(`/source onboard <kind>`) and then add documents one at a time by\n" +
     "pasting their URLs (`/doc add <url>`).",
-  subcommands: [addCmd, listCmd, showCmd, updateCmd, removeCmd],
+  subcommands: [addCmd, listCmd, showCmd, updateCmd, renameCmd, removeCmd],
 };
