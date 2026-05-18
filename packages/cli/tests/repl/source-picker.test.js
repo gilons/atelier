@@ -141,6 +141,31 @@ test("REPL: /sync --source <id> skips the picker (explicit value bypasses)", asy
 // /doc list with multiple sources: same picker.
 // ============================================================
 
+// ============================================================
+// /sync emits visible progress within a few seconds — no
+// "did anything happen?" silence. The actual SharePoint /
+// Notion fetches can take 30+ seconds; without a spinner the
+// terminal looks hung.
+// ============================================================
+
+test("REPL: /sync emits a progress spinner so the user sees that work is happening", async () => {
+  const root = await makeWorkspace({
+    sources: [{ id: "only-one", kind: "local-folder", scope: { rootPath: "/tmp/x" } }],
+  });
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/sync\r");
+    // The spinner label must appear within 2 seconds. The body
+    // (folder scan) is fast; the spinner just needs to render
+    // its label so the user has feedback that something started.
+    await a.expect(/Syncing/, { timeout: 3000 });
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
 test("REPL: /doc list with multiple sources shows the same source picker", async () => {
   const root = await makeWorkspace({
     sources: [

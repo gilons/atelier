@@ -94,11 +94,27 @@ export const syncCommand: Command = {
       ui.blank();
     }
 
-    const report = await syncWorkspace(workspaceRoot, {
-      source: sourceFilter,
-      dryRun,
-      removeOrphans,
-    });
+    // Wrap the actual sync in a spinner. Without this the CLI
+    // stares back at the user with zero output for the entire
+    // run — anywhere from a few seconds (one small source) to
+    // a minute+ (SharePoint with hundreds of files, where the
+    // adapter has to mint a token, walk the folder tree, then
+    // fetch every doc's plain-text conversion). 30 seconds of
+    // silence reads as "hung" to anyone watching.
+    //
+    // The label adapts to what's being synced so it tells the
+    // user something they didn't already know: "Syncing
+    // sharepoint" vs "Syncing all 3 sources".
+    const label = sourceFilter
+      ? `Syncing ${sourceFilter}`
+      : "Syncing all sources";
+    const report = await ui.spinner(label, () =>
+      syncWorkspace(workspaceRoot, {
+        source: sourceFilter,
+        dryRun,
+        removeOrphans,
+      })
+    );
 
     if (report.sources.length === 0 && report.skipped.length === 0) {
       ui.info("No enabled sources to sync.");
