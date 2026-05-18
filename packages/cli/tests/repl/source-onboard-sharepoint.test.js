@@ -125,11 +125,11 @@ test("REPL: client-secret prompt is skipped when the env var is preloaded from .
     a.send("00000000-0000-0000-0000-000000000000\r");
     await a.expect("App (client) id");
     a.send("00000000-0000-0000-0000-000000000000\r");
-    // Atelier should now jump straight to the mode picker —
-    // NOT prompt for the secret.
+    // Atelier should now jump straight to the hostname text
+    // prompt — NOT prompt for the secret.
     const r = await a.expectAny(
       [
-        "How do you want to add this SharePoint source",
+        "SharePoint hostname",
         "Paste the client secret",
       ],
       { timeout: 5000 }
@@ -149,15 +149,15 @@ test("REPL: client-secret prompt is skipped when the env var is preloaded from .
 });
 
 // ============================================================
-// Bug 4: linkUrl prompt used to be 110+ chars with an inline
-// example. Pasting a long URL into readline's line-editor
-// triggered per-chunk re-renders and the prompt wrapped twice
-// over its own tail. The fix shortened it. This test asserts
-// the prompt is short enough to not wrap on a typical 100-col
-// terminal.
+// Bug 4: hostname prompt is short enough not to wrap. (Used to
+// be the linkUrl prompt back when onboarding asked for a doc
+// URL; that step is gone now — documents are added via
+// `/doc add <url>` after onboarding finishes. The hostname
+// prompt is the only text input near the end of the wizard,
+// so it inherits the "must not wrap" requirement.)
 // ============================================================
 
-test("REPL: link-mode URL prompt is short enough not to wrap (≤80 chars before the colon)", async () => {
+test("REPL: hostname prompt is short enough not to wrap (≤80 chars before the colon)", async () => {
   const root = await makeWorkspace({
     env: { SHAREPOINT_CLIENT_SECRET: "x" },
   });
@@ -173,15 +173,10 @@ test("REPL: link-mode URL prompt is short enough not to wrap (≤80 chars before
     a.send("00000000-0000-0000-0000-000000000000\r");
     await a.expect("App (client) id");
     a.send("00000000-0000-0000-0000-000000000000\r");
-    await a.expect("How do you want to add this SharePoint");
-    a.enter(); // pick first (link)
-    // The link mode prompt should appear once, on one line. We
-    // can't perfectly assert "no wrap" but we can require the
-    // prompt text be short.
-    const m = await a.expect(/SharePoint URL[^\n]{0,40}:/, { timeout: 5000 });
+    const m = await a.expect(/SharePoint hostname[^\n]{0,40}:/, { timeout: 5000 });
     assert.ok(
       m.length <= 80,
-      `linkUrl prompt is ${m.length} chars wide — long prompts trigger readline wrap-storms during paste. Keep it under 80.`
+      `hostname prompt is ${m.length} chars wide — long prompts trigger readline wrap-storms during paste. Keep it under 80.`
     );
   } finally {
     await a.close();
@@ -191,14 +186,14 @@ test("REPL: link-mode URL prompt is short enough not to wrap (≤80 chars before
 
 // ============================================================
 // Bug 5: stale empties leaking into LATER prompts. The
-// previous fixes caught the tenant-id prompt (immediately after
-// the auth picker) but missed the URL prompt (after a mode
-// picker, two steps later). Per-prompt stale-empty filtering
-// in PromptSession.ask covers any prompt that comes after any
-// picker.
+// previous fixes caught the prompt immediately after the auth
+// picker; this scenario covers the hostname prompt at the END
+// of the wizard, which is two pickers + several text prompts
+// further on. Per-prompt stale-empty filtering in
+// PromptSession.ask should keep ALL prompts patient.
 // ============================================================
 
-test("REPL: link-mode URL prompt is patient (no stale-newline empty after mode picker)", async () => {
+test("REPL: hostname prompt is patient (no stale-newline empty deep in the wizard)", async () => {
   const root = await makeWorkspace({
     env: { SHAREPOINT_CLIENT_SECRET: "x" },
   });
@@ -214,15 +209,13 @@ test("REPL: link-mode URL prompt is patient (no stale-newline empty after mode p
     a.send("00000000-0000-0000-0000-000000000000\r");
     await a.expect("App (client) id");
     a.send("00000000-0000-0000-0000-000000000000\r");
-    await a.expect("How do you want to add this SharePoint");
-    a.enter(); // pick link
-    await a.expect(/SharePoint URL.*:/);
+    await a.expect(/SharePoint hostname.*:/);
     // Same rigorous check as the tenant-id test: wait + assert
     // the empty-error never fired.
     await new Promise((r) => setTimeout(r, 400));
     a.assertNotPresent(
       "This answer can't be empty",
-      "stale empty leaked into the URL prompt — PromptSession.ask filter regressed?"
+      "stale empty leaked into the hostname prompt — PromptSession.ask filter regressed?"
     );
   } finally {
     await a.close();
@@ -251,11 +244,7 @@ test("REPL: registering an azure-app source writes credentials that load back cl
         "--answer azureTenantId=00000000-0000-0000-0000-000000000000 " +
         "--answer azureClientId=00000000-0000-0000-0000-000000000000 " +
         "--answer azureClientSecretEnvVar=SHAREPOINT_CLIENT_SECRET " +
-        "--answer mode=manual " +
         "--answer hostname=contoso.sharepoint.com " +
-        "--answer sitePath=/sites/X " +
-        "--answer driveName= " +
-        "--answer folderPath= " +
         "--skip-verify --yes\r"
     );
     // Source registered. Atelier should then read sources.yaml
@@ -299,21 +288,19 @@ test("REPL: text prompt after a picker doesn't render its prompt text twice", as
     a.send("00000000-0000-0000-0000-000000000000\r");
     await a.expect("App (client) id");
     a.send("00000000-0000-0000-0000-000000000000\r");
-    await a.expect("How do you want to add this SharePoint");
-    a.enter(); // pick link
-    await a.expect("SharePoint URL");
-    a.send("https://contoso.sharepoint.com/sites/X/Shared Documents\r");
+    await a.expect("SharePoint hostname");
+    a.send("contoso.sharepoint.com\r");
     // Give readline a beat to settle (paste echo, line emit,
     // any auto-prompt re-render).
     await new Promise((r) => setTimeout(r, 400));
     // The prompt label should appear at most once in the
     // accumulated screen buffer. Two occurrences means readline
     // auto-prompted after the line event and produced a
-    // duplicate "SharePoint URL: <value>" pair.
-    const occurrences = (a.buffer.match(/SharePoint URL:/g) ?? []).length;
+    // duplicate "SharePoint hostname: <value>" pair.
+    const occurrences = (a.buffer.match(/SharePoint hostname:/g) ?? []).length;
     assert.ok(
       occurrences <= 1,
-      `"SharePoint URL:" appeared ${occurrences} times — readline is double-rendering the prompt after Enter.`
+      `"SharePoint hostname:" appeared ${occurrences} times — readline is double-rendering the prompt after Enter.`
     );
   } finally {
     await a.close();

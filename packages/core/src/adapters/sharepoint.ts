@@ -5,17 +5,7 @@ import {
   type FetchLike,
 } from "../http-transport.js";
 import { classifyDoc } from "../classify.js";
-import { registerAdapter, type OnboardingChoice, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
-import {
-  resolveSharePointLink,
-  InvalidSharePointUrlError,
-  type SharePointLinkResolution,
-} from "./sharepoint-resolve.js";
-import {
-  searchSharePointSites,
-  searchSharePointFiles,
-  listFilesInSharePointFolder,
-} from "./sharepoint-search.js";
+import { registerAdapter, type OnboardingFlow, type OnboardingStep, type TransportOption } from "../onboarding.js";
 import {
   AzureClientCredentialsProvider,
   BearerTokenProvider,
@@ -218,13 +208,13 @@ export class SharePointAdapter implements SourceAdapter {
         "SharePointAdapter requires scope.hostname (e.g. {hostname: 'contoso.sharepoint.com', pins: [...]})."
       );
     }
+    // pins[] may be empty for freshly-onboarded sources that
+    // don't track any documents yet. Sync over such a source is
+    // a no-op; the user adds documents one URL at a time via
+    // `/doc add <url>`, which appends to pins. The old "at least
+    // one pin" guard prevented this onboarding-first-then-add-
+    // docs workflow, so it's gone.
     this.pins = normalizePins(opts.scope);
-    if (this.pins.length === 0) {
-      throw new Error(
-        "SharePointAdapter requires at least one pin (or legacy sitePath). Got: " +
-          JSON.stringify(opts.scope)
-      );
-    }
     this.client = new HttpClient({
       baseUrl: GRAPH_API_BASE,
       userAgent: "atelier",
@@ -241,24 +231,42 @@ export class SharePointAdapter implements SourceAdapter {
   }
 
   async checkAvailability(): Promise<AdapterAvailability> {
-    // Resolve the FIRST pin to surface auth / hostname errors early.
-    // We don't loop every pin here — sync will surface per-pin
-    // problems when it walks them.
+    // Probe the tenant root site for the configured hostname. This
+    // proves three things at once:
+    //
+    //   - The token provider is working (mint succeeded if it's
+    //     azure-app, or the bearer is non-empty).
+    //   - Graph accepts the token for this tenant.
+    //   - The app has at least Sites.Read.All consented (returning
+    //     site metadata requires that scope).
+    //
+    // Per-pin issues (folder doesn't exist, drive renamed, etc.)
+    // surface during the actual listForPin run at sync time — no
+    // value in pre-walking every pin here.
     try {
-      await this.resolveDriveIdForPin(this.pins[0]);
+      await this.client.request<GraphSite>({
+        path: `/sites/${this.opts.scope.hostname}`,
+      });
       return { available: true };
     } catch (err) {
       const e = err as Error;
       if (e instanceof HttpError && e.status === 401) {
         return {
           available: false,
-          reason: "Graph rejected the token (401). It may have expired — get a fresh one via `az account get-access-token --resource https://graph.microsoft.com`.",
+          reason:
+            "Graph rejected the token (401). For Azure AD client_credentials, double-check the secret hasn't expired and that admin consent is still in place for the Sites.Read.All + Files.Read.All permissions.",
+        };
+      }
+      if (e instanceof HttpError && e.status === 403) {
+        return {
+          available: false,
+          reason: `Graph returned 403 for ${this.opts.scope.hostname}. The app probably lacks Sites.Read.All or hasn't been granted admin consent yet.`,
         };
       }
       if (e instanceof HttpError && e.status === 404) {
         return {
           available: false,
-          reason: `SharePoint pin not found on ${this.opts.scope.hostname}: ${describePin(this.pins[0])}. Check the URL and that the app has read access.`,
+          reason: `Graph couldn't find the SharePoint tenant at ${this.opts.scope.hostname}. Check the hostname — should be something like \`<tenant>.sharepoint.com\`.`,
         };
       }
       return { available: false, reason: e.message };
@@ -818,186 +826,19 @@ const sharepointOnboarding: OnboardingFlow = {
           "Used for verification + the env-var hint shown at the end. " +
           "Atelier doesn't persist this value in sources.yaml.",
       },
-      {
-        key: "mode",
-        prompt: "How do you want to add this SharePoint source?",
-        help: "Paste a URL, search by name, or type addresses manually.",
-        discoverChoices: async () => [
-          {
-            label: "link",
-            value: "link",
-            note: "paste a SharePoint URL — site / library / folder / file",
-          },
-          {
-            label: "search",
-            value: "search",
-            note: "Graph searches matching sites + docs across the tenant",
-          },
-          {
-            label: "manual",
-            value: "manual",
-            note: "type hostname / site path / folder path by hand",
-          },
-        ],
-      },
-      // ----- link mode -----
-      {
-        key: "linkUrl",
-        prompt: "SharePoint URL",
-        help: "Site, library, folder, or single file — paste any URL from your tenant.",
-        applies: (a) => a.values.mode === "link",
-        validate: /^https?:\/\//,
-      },
-      {
-        // Drill-down step: when the pasted URL points at a folder
-        // (or library / site), list its files and let the user
-        // pick which specific ones to track. Single-file URLs
-        // bypass this step entirely — there's nothing to choose
-        // between.
-        //
-        // The default behavior used to be "register the folder
-        // and sync everything in it." That works fine when the
-        // user genuinely wants a wholesale mirror, but it's the
-        // wrong default for the common case: "I want THIS spec
-        // and THAT transcript onboarded, not the 248 files
-        // sitting in the folder." Atelier should treat
-        // documents as the unit of curation.
-        key: "linkPicks",
-        prompt: "Which files in this folder should Atelier track?",
-        help:
-          "Pick specific docs (space to toggle, a for all, / to filter). " +
-          "Or pick 'Pull entire folder' at the top if you really do want " +
-          "everything that lands there now and in the future.",
-        applies: (a) => {
-          if (a.values.mode !== "link" || !a.values.linkUrl) return false;
-          try {
-            const r = resolveSharePointLink(a.values.linkUrl);
-            // Drill down only when there's something to enumerate.
-            // file → single pin, done. opaqueShare → handled
-            // elsewhere with a clear error.
-            return (
-              r.kind === "folder" || r.kind === "library" || r.kind === "site"
-            );
-          } catch {
-            return false;
-          }
-        },
-        multiSelect: true,
-        validate: /.+/,
-        discoverChoices: async (_ctx, answers) => {
-          const url = answers.values.linkUrl;
-          if (!url) return [];
-          let r: SharePointLinkResolution;
-          try {
-            r = resolveSharePointLink(url);
-          } catch {
-            return [];
-          }
-          if (r.kind !== "folder" && r.kind !== "library" && r.kind !== "site") {
-            return [];
-          }
-          const folderPath = r.kind === "folder" ? r.folderPath : "";
-          const driveName =
-            r.kind === "folder" || r.kind === "library" ? r.driveName : undefined;
-          // The drill-down needs a live token. azure-app users
-          // have it set via the env var; bearer users typed it
-          // earlier in this same flow.
-          const token =
-            answers.values.token ||
-            process.env[
-              answers.values.azureClientSecretEnvVar ||
-                "SHAREPOINT_CLIENT_SECRET"
-            ];
-          if (!token) return [];
-          let files;
-          try {
-            files = await listFilesInSharePointFolder(
-              token,
-              {
-                hostname: r.hostname,
-                sitePath: r.sitePath,
-                driveName,
-                folderPath,
-              },
-              { limit: 250 }
-            );
-          } catch {
-            return [];
-          }
-          // First option = wholesale folder sync. Sentinel value
-          // round-trips through JSON so scopeFromLinkPicks can
-          // tell it apart from a real file pick.
-          const all: OnboardingChoice = {
-            label: "Pull entire folder (everything matching file types)",
-            value: encodePick({
-              kind: "wholeFolder",
-              hostname: r.hostname,
-              sitePath: r.sitePath,
-              driveName,
-              folderPath,
-            }),
-            note: `${files.length}${files.length === 250 ? "+" : ""} files — re-sync detects new ones`,
-          };
-          const fileChoices: OnboardingChoice[] = files.map((f) => ({
-            label: f.name,
-            value: encodePick({
-              kind: "driveItem",
-              hostname: f.hostname ?? r.hostname,
-              driveId: f.driveId,
-              itemId: f.itemId,
-              name: f.name,
-            }),
-            note: f.lastModified
-              ? `updated ${f.lastModified.slice(0, 10)}`
-              : undefined,
-          }));
-          return [all, ...fileChoices];
-        },
-      },
-      // ----- search mode -----
-      {
-        key: "searchQuery",
-        prompt: "Search SharePoint by name (2+ chars)",
-        applies: (a) => a.values.mode === "search",
-        validate: /.{2,}/,
-      },
-      {
-        key: "searchPins",
-        prompt: "Pick one or more results to onboard",
-        applies: (a) => a.values.mode === "search",
-        multiSelect: true,
-        validate: /.+/,
-        discoverChoices: async (_ctx, answers) =>
-          searchAndShape(
-            answers.values.token,
-            answers.values.searchQuery
-          ),
-      },
-      // ----- manual mode (legacy) -----
+      // Hostname is the only scope info we need at onboarding.
+      // Specific documents land in scope.pins later via
+      // /doc add <url>. This keeps registration to a one-line
+      // question + a credentials check — no file pickers, no
+      // mode selection. Documents are added one URL at a time
+      // once the source is wired up.
       {
         key: "hostname",
-        prompt: "SharePoint hostname (e.g. contoso.sharepoint.com)",
-        applies: (a) => a.values.mode === "manual",
+        prompt: "SharePoint hostname",
+        help:
+          "Your tenant's SharePoint root, e.g. contoso.sharepoint.com. " +
+          "Found in the URL of any of your sites — everything before the first /.",
         validate: /^[a-z0-9.-]+\.[a-z]{2,}$/i,
-      },
-      {
-        key: "sitePath",
-        prompt: "Site path (e.g. /sites/marketing — or / for the root site)",
-        applies: (a) => a.values.mode === "manual",
-        default: "/",
-        validate: /^\/.*$/,
-      },
-      {
-        key: "driveName",
-        prompt: "Drive name (leave blank for the default document library)",
-        applies: (a) => a.values.mode === "manual",
-        default: "",
-      },
-      {
-        key: "folderPath",
-        prompt: "Folder path inside the drive (leave blank for the drive root)",
-        applies: (a) => a.values.mode === "manual",
-        default: "",
       },
     ];
   },
@@ -1011,27 +852,28 @@ const sharepointOnboarding: OnboardingFlow = {
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
-    let scope: SharePointScope;
-    try {
-      scope = scopeFromAnswers(answers.values);
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
-    }
+    // Verify is a credentials-only check now. We don't probe pins
+    // because new sources start empty — documents come in later
+    // via `/doc add <url>`. checkAvailability does exactly what
+    // we want: mints a token, queries the tenant root site,
+    // returns a clear message on 401/403/404.
     try {
       const adapter = new SharePointAdapter({
         tokenProvider,
-        scope: { ...scope, maxItems: 5 },
+        scope: {
+          hostname: answers.values.hostname,
+          pins: [],
+        },
       });
       const a = await adapter.checkAvailability();
       if (!a.available) return { ok: false, error: a.reason };
-      const docs = await adapter.listDocs();
       const authMsg =
         answers.values.authType === "azure-app"
-          ? "(token auto-minted from Azure AD app — refreshes on expiry)"
-          : "(static bearer token — expires hourly)";
+          ? "Token auto-minted from Azure AD app — refreshes on expiry."
+          : "Static bearer token — expires hourly.";
       return {
         ok: true,
-        message: `Found ${docs.length} file(s) across ${scope.pins?.length ?? 0} pin(s) (probe capped at 5). ${authMsg}`,
+        message: `Reached ${answers.values.hostname}. ${authMsg} Add docs with \`/doc add <url>\`.`,
       };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
@@ -1207,223 +1049,20 @@ function providerFromAnswers(values: Record<string, string>): TokenProvider {
   return new BearerTokenProvider(values.token);
 }
 
-function scopeFromAnswers(
-  values: Record<string, string>
-): SharePointScope {
-  const mode = values.mode || "manual";
-  if (mode === "link") {
-    return scopeFromLink(values.linkUrl, values.linkPicks);
-  }
-  if (mode === "search") {
-    return scopeFromSearchPicks(values.searchPins);
-  }
-  // Manual / legacy.
-  if (!values.hostname) {
-    throw new Error("Manual mode: hostname is required.");
-  }
-  return {
-    hostname: values.hostname,
-    pins: [
-      {
-        kind: "folder",
-        sitePath: values.sitePath || "/",
-        driveName: values.driveName || undefined,
-        folderPath: values.folderPath || "",
-      },
-    ],
-  };
-}
-
-function scopeFromLink(
-  url: string | undefined,
-  picksCsv: string | undefined
-): SharePointScope {
-  if (!url) throw new Error("Link mode: linkUrl is required.");
-  let r: SharePointLinkResolution;
-  try {
-    r = resolveSharePointLink(url);
-  } catch (err) {
-    if (err instanceof InvalidSharePointUrlError) {
-      throw new Error(`Couldn't parse "${url}": ${err.message}`);
-    }
-    throw err;
-  }
-  if (r.kind === "opaqueShare") {
-    // Could be resolved via Graph /shares — that's a follow-up.
-    throw new Error(
-      `That URL is a tokenized share link (/:f:/s/...). Atelier can't resolve it locally yet — paste the canonical URL from the file's "Open in browser" link instead, or use search mode.`
-    );
-  }
-  // Single-file URL: skip the drill-down (it didn't apply) and
-  // register exactly the file the user pasted.
-  if (r.kind === "file") {
-    return {
-      hostname: r.hostname,
-      pins: [
-        {
-          kind: "file",
-          sitePath: r.sitePath,
-          driveName: r.driveName,
-          itemPath: r.itemPath,
-        },
-      ],
-    };
-  }
-  // Folder / library / site URL: the drill-down picker must have
-  // produced linkPicks. Each pick is either a specific file
-  // (most common) or the sentinel "wholeFolder" choice (the
-  // explicit opt-in for wholesale sync).
-  return scopeFromLinkPicks(r, picksCsv);
-}
-
-function scopeFromLinkPicks(
-  resolved: Extract<
-    SharePointLinkResolution,
-    { kind: "folder" | "library" | "site" }
-  >,
-  picksCsv: string | undefined
-): SharePointScope {
-  if (!picksCsv) {
-    throw new Error(
-      "Link mode: pick at least one file (or 'Pull entire folder') from the picker."
-    );
-  }
-  const pins: SharePointPin[] = [];
-  for (const part of picksCsv.split(",")) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    let decoded: Record<string, unknown>;
-    try {
-      decoded = decodePick(trimmed);
-    } catch {
-      throw new Error(
-        `Link mode: couldn't decode a picked file: ${trimmed.slice(0, 80)}`
-      );
-    }
-    if (decoded.kind === "wholeFolder") {
-      pins.push({
-        kind: "folder",
-        sitePath: String(decoded.sitePath ?? resolved.sitePath),
-        driveName:
-          decoded.driveName !== undefined && decoded.driveName !== null
-            ? String(decoded.driveName)
-            : undefined,
-        folderPath: String(decoded.folderPath ?? ""),
-        recursive: true,
-      });
-      continue;
-    }
-    if (decoded.kind === "driveItem") {
-      pins.push({
-        kind: "driveItem",
-        driveId: String(decoded.driveId),
-        itemId: String(decoded.itemId),
-        name: decoded.name ? String(decoded.name) : undefined,
-      });
-      continue;
-    }
-    throw new Error(
-      `Link mode: unknown pick kind "${String(decoded.kind ?? "?")}".`
-    );
-  }
-  if (pins.length === 0) {
-    throw new Error(
-      "Link mode: at least one file (or 'Pull entire folder') must be picked."
-    );
-  }
-  return { hostname: resolved.hostname, pins };
-}
-
-function scopeFromSearchPicks(csv: string | undefined): SharePointScope {
-  if (!csv) throw new Error("Search mode: at least one result must be picked.");
-  // Each picked value is a base64-encoded JSON pin produced by
-  // `searchAndShape`. We can't ship raw JSON through the wizard
-  // because the multi-select picker joins values with commas,
-  // and JSON itself contains commas — splitting would shred
-  // them. Base64 is alphanumeric + `=` / `+` / `/`, none of
-  // which conflict with CSV.
-  const pins: SharePointPin[] = [];
-  let hostname = "";
-  for (const part of csv.split(",")) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    let decoded: { hostname: string; pin: SharePointPin };
-    try {
-      decoded = decodePick(trimmed) as unknown as {
-        hostname: string;
-        pin: SharePointPin;
-      };
-    } catch {
-      throw new Error(
-        `Search mode: couldn't decode a picked result: ${trimmed.slice(0, 80)}`
-      );
-    }
-    if (!hostname) hostname = decoded.hostname;
-    if (hostname !== decoded.hostname) {
-      throw new Error(
-        `Search picks span multiple hostnames (${hostname} + ${decoded.hostname}). A single source can only target one hostname — split into separate sources.`
-      );
-    }
-    pins.push(decoded.pin);
-  }
-  return { hostname, pins };
-}
-
 /**
- * Run a Graph search for the user's query and shape the results
- * into picker choices. Each choice's `value` is a JSON-encoded
- * `{hostname, pin}` blob — the picker round-trips it through
- * `scopeFromSearchPicks`. (We could store an integer index and a
- * side map, but JSON-in-value keeps the discoverChoices return
- * type pure and stateless.)
+ * Build the scope a freshly-onboarded source persists. The new
+ * onboarding model only captures `hostname` — specific
+ * documents land in `pins` later, one URL at a time, via
+ * `/doc add <url>`. So this scope starts with an empty pin list
+ * and the user's tenant root.
  */
-async function searchAndShape(
-  token: string | undefined,
-  query: string | undefined
-): Promise<Array<{ label: string; value: string; note?: string }>> {
-  if (!token || !query || query.length < 2) return [];
-  const out: Array<{ label: string; value: string; note?: string }> = [];
-  // Sites first, then files, capped to a reasonable picker size.
-  try {
-    const sites = await searchSharePointSites(token, query, { limit: 10 });
-    for (const s of sites) {
-      const pin: SharePointPin = {
-        kind: "folder",
-        sitePath: s.sitePath,
-        folderPath: "",
-      };
-      out.push({
-        label: `[site] ${s.displayName}`,
-        value: encodePick({ hostname: s.hostname, pin }),
-        note: s.webUrl,
-      });
-    }
-  } catch {
-    /* surface a "no site results" silently — file search may still work */
+function scopeFromAnswers(values: Record<string, string>): SharePointScope {
+  if (!values.hostname) {
+    throw new Error(
+      "SharePoint onboarding: hostname is required (e.g. contoso.sharepoint.com)."
+    );
   }
-  try {
-    const files = await searchSharePointFiles(token, query, { limit: 15 });
-    for (const f of files) {
-      if (!f.driveId || !f.itemId) continue;
-      const pin: SharePointPin = {
-        kind: "driveItem",
-        driveId: f.driveId,
-        itemId: f.itemId,
-        name: f.name,
-      };
-      out.push({
-        label: `[file] ${f.name}`,
-        value: encodePick({
-          hostname: f.hostname ?? "",
-          pin,
-        }),
-        note: f.webUrl ?? "",
-      });
-    }
-  } catch {
-    /* same — both being empty just yields an empty picker */
-  }
-  return out;
+  return { hostname: values.hostname, pins: [] };
 }
 
 function pinKey(p: SharePointPin): string {
@@ -1432,24 +1071,6 @@ function pinKey(p: SharePointPin): string {
     return `f:${p.sitePath}:${p.driveName ?? ""}:${p.itemPath}`;
   }
   return `fo:${p.sitePath}:${p.driveName ?? ""}:${p.folderPath}`;
-}
-
-/**
- * Encode a pick payload for the multi-select picker.
- *
- * The picker joins selected values with `,`. JSON-encoded
- * objects contain `,`s natively, so passing raw JSON through
- * the picker would shatter each pick into pieces on the way
- * back. Base64 keeps every pick atomic — its alphabet
- * (`A-Za-z0-9+/=`) never conflicts with CSV.
- */
-function encodePick(payload: Record<string, unknown>): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
-}
-
-function decodePick(encoded: string): Record<string, unknown> {
-  const text = Buffer.from(encoded, "base64").toString("utf8");
-  return JSON.parse(text) as Record<string, unknown>;
 }
 
 function unique<T>(xs: T[]): T[] {

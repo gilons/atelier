@@ -24,6 +24,16 @@ export * from "./cli-transport.js";
 export * from "./onboarding.js";
 export * from "./classify.js";
 export * from "./local-discovery.js";
+export { classifyDocUrl, type ClassifiedDocUrl } from "./url-classifier.js";
+export {
+  resolveDocUrlCandidates,
+  addDocByUrl,
+  NoMatchingSourceError,
+  UnsupportedDocUrlError,
+  type DocUrlCandidates,
+  type AddDocByUrlOptions,
+  type AddDocByUrlResult,
+} from "./doc-add-by-url.js";
 export {
   SecretStore,
   parseEnv,
@@ -39,6 +49,7 @@ export {
   sharepointOnboarding,
   renderVttAsMarkdown,
   type SharePointScope,
+  type SharePointPin,
 } from "./adapters/sharepoint.js";
 export {
   resolveSharePointLink,
