@@ -1,4 +1,7 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { spawn } from "node:child_process";
 import {
   requireWorkspaceRoot,
   addDoc,
@@ -25,8 +28,7 @@ import type { Command, InvocationMode } from "../command.js";
 import { ui } from "../ui.js";
 import { pickSourceOrAll } from "../source-picker.js";
 import { pickOne } from "../picker.js";
-import { startEditorSession } from "../editor/server.js";
-import { openUrlInDesktopWindow, describeLaunchMode } from "../editor/launcher.js";
+import { PromptSession } from "../prompt.js";
 
 function validClassification(s: string): s is DocClassification {
   return (DOC_CLASSIFICATIONS as readonly string[]).includes(s);
@@ -323,62 +325,103 @@ function printSummaryRequestForAgent(sourceId: string, docId: string): void {
 }
 
 /**
- * Editor-driven manual add. Spawns the localhost editor session,
- * opens it in a chromeless desktop-style window, waits for save
- * (or cancel), then writes the resulting markdown into
- * `.atelier/docs/manual/<filename>/parsed.md`.
+ * Editor-driven manual add. Like `git commit` without `-m`:
+ *
+ *   1. Prompt for the filename (required) and an optional title.
+ *   2. Drop a markdown scaffold (`# <title>\n\n`) into a temp file.
+ *   3. Spawn `$EDITOR` (or $VISUAL, falling back to `vi` / `notepad`)
+ *      on the temp file with `stdio: "inherit"` — the editor owns
+ *      the terminal until the user saves and quits.
+ *   4. Read the result, write it as `.atelier/docs/manual/<docId>/
+ *      parsed.md` via the normal addDoc path. Empty / unchanged
+ *      content gets a friendly "did your editor exit before saving?"
+ *      hint (common when `$EDITOR=code` without `-w`).
  *
  * Why source = "manual" hard-coded:
- *   Editor docs aren't sync'd from anywhere; they're authored in
- *   atelier itself. We bypass sources.yaml validation so the user
- *   doesn't need to register a synthetic "manual" source to use
- *   the editor. The `manual/` folder under `.atelier/docs/` gets
- *   created on first save and picked up by `/doc list` naturally
- *   (listDocs scans every source folder it finds on disk).
+ *   These docs aren't sync'd from anywhere — they're authored in
+ *   the workspace itself. We bypass sources.yaml validation so the
+ *   user doesn't need to register a synthetic "manual" source to
+ *   use the editor. The `manual/` folder under `.atelier/docs/`
+ *   gets created on first save and is picked up by `/doc list`
+ *   naturally (listDocs scans every source folder it finds).
+ *
+ * Why terminal-native over a GUI editor: terminals can't actually
+ * render rich text, AND pasting from Word into a terminal strips
+ * formatting at the OS level (only `text/plain` reaches the app —
+ * the `text/html` clipboard variant never gets there). Whatever
+ * editor the user has set up — vim, nano, code -w, helix — handles
+ * paste and markdown editing far better than we could roll ourselves,
+ * and it works in SSH / headless sessions where a GUI can't.
  */
 async function runEditorAdd(
   workspaceRoot: string,
   mode: InvocationMode
 ): Promise<number> {
-  const session = await startEditorSession();
-  let opened: Awaited<ReturnType<typeof openUrlInDesktopWindow>>;
+  // Filename + title prompts. We accept hyphenated/spaced names;
+  // the normalizer slugifies before it hits the docId encoder.
+  const session = new PromptSession();
+  let filename: string;
+  let title: string;
   try {
-    opened = await openUrlInDesktopWindow(session.url);
+    filename = (await session.ask("File name")).trim();
+    if (!filename) {
+      ui.error("File name is required.");
+      return 2;
+    }
+    title = (await session.ask("Title (optional)", { default: filename })).trim();
+  } finally {
+    session.close();
+  }
+
+  const docId = normalizeFilenameToDocId(filename);
+  if (!docId) {
+    ui.error(`File name "${filename}" doesn't produce a usable docId.`);
+    return 2;
+  }
+
+  // Temp file pre-seeded with a markdown scaffold so the user
+  // starts with structure, not a blank page. Lives under tmpdir
+  // so unsaved drafts don't litter the workspace.
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-edit-"));
+  const tmpFile = path.join(tmpDir, docId + ".md");
+  const scaffold = `# ${title}\n\n`;
+  await fs.writeFile(tmpFile, scaffold, "utf8");
+
+  ui.print(`  ${ui.dim(`Opening ${editorCommandHint()} on ${tmpFile}…`)}`);
+  try {
+    await runEditorOnFile(tmpFile);
   } catch (err) {
-    await session.close();
-    ui.error(`Couldn't open a browser window: ${(err as Error).message}`);
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    ui.error(`Editor failed: ${(err as Error).message}`);
     return 1;
   }
-  ui.info(`Editor opened — ${describeLaunchMode(opened.mode)}.`);
-  ui.print(
-    `  ${ui.dim("Waiting for save… (cancel anytime — closing the window aborts the add)")}`
-  );
-  ui.blank();
 
-  const outcome = await session.done;
-  await session.close();
+  const content = await fs.readFile(tmpFile, "utf8");
+  await fs.rm(tmpDir, { recursive: true, force: true });
 
-  if (outcome.kind === "cancelled") {
-    ui.print(`  ${ui.dim("Cancelled.")}`);
+  // Distinguish "user closed the editor with no edits" from
+  // "user genuinely typed nothing". If the content equals the
+  // scaffold, they didn't edit. If it's empty entirely, the editor
+  // probably exited before saving (e.g. `code` without `-w`).
+  if (content === scaffold || content.trim().length === 0) {
+    ui.info("Nothing saved.");
+    if (!hasWaitingEditor()) {
+      ui.print(
+        `  ${ui.dim("Hint: if your editor opens but returns immediately (VS Code, Sublime),")}`
+      );
+      ui.print(
+        `  ${ui.dim('set EDITOR="code -w" or "subl -w" so atelier waits for you to save and close.')}`
+      );
+    }
     return 0;
   }
-  if (outcome.kind === "timeout") {
-    ui.warn("Editor session timed out — try again.");
-    return 1;
-  }
 
-  // outcome.kind === "saved"
-  const docId = normalizeFilenameToDocId(outcome.filename);
-  if (!docId) {
-    ui.error(`Filename "${outcome.filename}" doesn't produce a usable docId.`);
-    return 1;
-  }
   try {
     await addDoc(workspaceRoot, {
       source: "manual",
       docId,
-      title: outcome.title,
-      body: outcome.body,
+      title,
+      body: content,
       fetchedAt: new Date().toISOString(),
       skipSourceValidation: true,
     });
@@ -399,10 +442,68 @@ async function runEditorAdd(
   }
   ui.success(`Added manual doc ${ui.bold(docId)}.`);
   printSummaryRequestForAgent("manual", docId);
-  // Silence "mode" lint — we only need it for parity with
-  // runAddByUrl and we may use it later for follow-up hints.
-  void mode;
+  void mode; // parity with runAddByUrl; may use later for next-step hints
   return 0;
+}
+
+/**
+ * Spawn `$EDITOR` (or $VISUAL) on `file` with `stdio: "inherit"`.
+ * Resolves when the editor exits with status 0; rejects on any
+ * other exit code or spawn error.
+ *
+ * Tokenizing the env var with a simple `split` covers the common
+ * cases (`code -w`, `subl -w`, `nvim --noplugin`). Embedded
+ * quoted args won't survive the naive split — users with exotic
+ * setups can wrap their editor in a shell script if they need
+ * more complex argv.
+ */
+function runEditorOnFile(file: string): Promise<void> {
+  const editorCmd = pickEditor();
+  const [cmd, ...args] = editorCmd.split(/\s+/).filter(Boolean);
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(cmd, [...args, file], { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0 || code === null) resolve();
+      else
+        reject(
+          new Error(
+            `editor "${editorCmd}" exited with ${signal ? "signal " + signal : "code " + code}`
+          )
+        );
+    });
+  });
+}
+
+/** Resolve which editor command to run. Honors $VISUAL → $EDITOR
+ *  → platform default. Returns the command-line string verbatim
+ *  so callers can split + spawn. */
+function pickEditor(): string {
+  // `||` (not `??`) so an empty string in either env var falls
+  // through to the next option. That matches what every other
+  // tool that respects $EDITOR does — a literal `EDITOR=""` is
+  // treated the same as not setting it.
+  const fromEnv = ((process.env.VISUAL || process.env.EDITOR) ?? "").trim();
+  if (fromEnv) return fromEnv;
+  return process.platform === "win32" ? "notepad" : "vi";
+}
+
+/** Friendly label for the status line printed before the editor opens. */
+function editorCommandHint(): string {
+  const e = pickEditor();
+  return e === "vi" || e === "notepad" ? `the default editor (${e})` : `\`${e}\``;
+}
+
+/** Best-effort detection of editors that we know wait for the
+ *  file to close before exiting. Used to decide whether to print
+ *  the "set EDITOR=code -w" hint when nothing was saved. */
+function hasWaitingEditor(): boolean {
+  const e = pickEditor();
+  // vi/vim/nvim/nano/emacs/pico/helix all block by default.
+  if (/^(vi|vim|nvim|nano|emacs|pico|hx|helix|micro|notepad)/.test(e)) return true;
+  // VS Code / Sublime / Atom variants need -w or --wait.
+  if (/\b(-w|--wait)\b/.test(e)) return true;
+  return false;
 }
 
 /**
