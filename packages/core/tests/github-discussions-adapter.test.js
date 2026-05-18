@@ -314,31 +314,43 @@ test("GitHubDiscussionsAdapter.checkAvailability surfaces gh-auth failure", asyn
 // Constructor + onboarding
 // ============================================================
 
-test("GitHubDiscussionsAdapter constructor rejects empty repos list", () => {
-  assert.throws(
-    () => new GitHubDiscussionsAdapter({ scope: { repos: [] } }),
-    /at least one/
-  );
+test("GitHubDiscussionsAdapter constructor accepts an empty repos list (freshly onboarded)", () => {
+  // Onboarding registers a github-discussions source with no repos
+  // yet. `/doc add <url>` is what fills scope.repos and
+  // scope.discussionIds. The old "at least one repo" guard
+  // prevented this credentials-first flow.
+  const adapter = new GitHubDiscussionsAdapter({ scope: { repos: [] } });
+  assert.equal(adapter.kind, "github-discussions");
 });
 
-test("githubDiscussionsOnboarding.toRegistryEntry packs scope from CSV answers", () => {
+test("GitHubDiscussionsAdapter.listDocs returns [] when scope has no repos", async () => {
+  // No gh calls expected — listDocs short-circuits on an empty
+  // repos list. We pass a spawn that throws so any accidental
+  // call would surface as a test failure.
+  const adapter = new GitHubDiscussionsAdapter({
+    scope: { repos: [] },
+    spawnImpl: () => {
+      throw new Error("spawn should not be called for empty-scope listDocs");
+    },
+  });
+  const docs = await adapter.listDocs();
+  assert.deepEqual(docs, []);
+});
+
+test("githubDiscussionsOnboarding.toRegistryEntry persists a credentials-only source with empty repos", () => {
+  // Onboarding no longer asks for repos / categories / maxPerRepo.
+  // The wizard collects id + name; everything else lands in scope
+  // later via /doc add <url>.
   const entry = githubDiscussionsOnboarding.toRegistryEntry({
     transport: "cli",
     values: {
       id: "gh-discussions",
       name: "GH Discussions",
-      repos: "acme/web, acme/api",
-      categories: "Ideas, Q&A",
-      maxPerRepo: "50",
     },
   });
   assert.equal(entry.source.kind, "github-discussions");
   assert.equal(entry.source.transport, "cli");
-  assert.deepEqual(entry.source.scope, {
-    repos: ["acme/web", "acme/api"],
-    categories: ["Ideas", "Q&A"],
-    maxPerRepo: 50,
-  });
+  assert.deepEqual(entry.source.scope, { repos: [] });
 });
 
 test("githubDiscussionsOnboarding.availableTransports lists only cli", async () => {

@@ -163,6 +163,58 @@ test("REPL: /doc add <sharepoint file URL> --no-sync appends a file pin to the m
 });
 
 // ============================================================
+// /doc add <discussion URL> — no matching source registered
+// ============================================================
+
+test("REPL: /doc add <discussion URL> with no GH source tells the user to onboard first", async () => {
+  const root = await makeWorkspace();
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/doc add https://github.com/my-org/my-repo/discussions/42\r");
+    await a.expect(/No registered github-discussions source/, { timeout: 5000 });
+    await a.expect(/source onboard github-discussions/);
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
+// /doc add <discussion URL> auto-pins into a freshly-onboarded
+// (empty-scope) GH source — proves that you don't need to
+// pre-configure repos at onboarding time.
+// ============================================================
+
+test("REPL: /doc add <discussion URL> --no-sync pins into a credentials-only GH source", async () => {
+  const root = await makeWorkspace();
+  await writeSources(root, [
+    {
+      id: "gh",
+      kind: "github-discussions",
+      name: "GH",
+      transport: "cli",
+      scope: { repos: [] },
+    },
+  ]);
+  const a = await launchAtelier({ cwd: root });
+  try {
+    await a.expect("atelier ❯");
+    a.send("/doc add https://github.com/my-org/my-repo/discussions/42 --no-sync\r");
+    await a.expect(/Added to source/, { timeout: 5000 });
+    const cfg = await readSources(root);
+    const scope = cfg.sources[0].scope;
+    // Both fields populated: scope.repos picks up the owner/name,
+    // scope.discussionIds pins the specific thread.
+    assert.deepEqual(scope.repos, ["my-org/my-repo"]);
+    assert.deepEqual(scope.discussionIds, ["my-org/my-repo#42"]);
+  } finally {
+    await a.close();
+    await rm(root);
+  }
+});
+
+// ============================================================
 // /doc add <SharePoint URL> with two matching SP sources →
 // interactive picker. The user picks one and the pin lands
 // there only.
