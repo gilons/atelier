@@ -115,8 +115,8 @@ async function runChoicePicker(
 }
 
 /**
- * Discard any stdin bytes the picker's raw-mode handoff leaked
- * back into the kernel tty buffer.
+ * Discard pending whitespace bytes the picker's raw-mode handoff
+ * leaked back into the kernel tty buffer.
  *
  * On macOS / tmux setups, an Enter pressed inside the raw-mode
  * picker is sometimes re-delivered as a stray `\n` once raw mode
@@ -126,18 +126,32 @@ async function runChoicePicker(
  * "✗ This answer can't be empty" fires once (or twice, after two
  * pickers) before the actual prompt is reached.
  *
- * Pausing stdin briefly + calling `.read()` until null drains
- * whatever Node's internal buffer holds. We resume via the
- * caller's `session.resume()` immediately after.
+ * Important: we ONLY discard bytes that are whitespace / line
+ * terminators. An earlier version of this drain called read()
+ * unconditionally and ate the first character of a user paste
+ * that landed in Node's buffer faster than the next prompt
+ * registered — producing an invalid secret value downstream.
+ * Whitespace-only filtering keeps the bug fix while preserving
+ * legitimate input.
  */
 function drainStdinResidue(): void {
   const stdin = process.stdin as NodeJS.ReadStream;
   if (!stdin.isTTY) return;
   stdin.pause();
-  // Loop is bounded by Node's internal buffer size — `read()`
-  // returns null as soon as nothing's pending.
-  // eslint-disable-next-line no-empty
-  while (stdin.read() !== null) {}
+  while (true) {
+    const chunk = stdin.read();
+    if (chunk === null) return;
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    // If the whole chunk is whitespace (CR/LF/space/tab), it's
+    // safe to discard — that's the typical raw→canonical handoff
+    // residue. If it has any non-whitespace, push it back so the
+    // next reader (readline) sees it.
+    if (/^\s*$/.test(text)) continue;
+    // `unshift` puts the chunk back at the head of the internal
+    // buffer; the next emit cycle picks it up as normal data.
+    stdin.unshift(chunk);
+    return;
+  }
 }
 
 /** Ask a single onboarding step. Honors `secret`, `default`, `validate`. */

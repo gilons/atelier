@@ -799,7 +799,20 @@ const sharepointOnboarding: OnboardingFlow = {
         key: "azureClientSecret",
         prompt: "Paste the client secret VALUE",
         secret: true,
-        applies: (a) => a.values.authType === "azure-app",
+        // Only ask when the env var isn't already populated. The
+        // common case after first-onboarding is: secret already
+        // lives in `.atelier/.env` (loaded into process.env at
+        // bootstrap), so re-pasting is both annoying and
+        // dangerous — a paste-mode terminal can echo the
+        // characters in clear text before raw mode engages, and
+        // any leading-byte drift across the raw/canonical mode
+        // boundary produces an invalid secret. Skipping when
+        // already-set sidesteps both.
+        applies: (a) => {
+          if (a.values.authType !== "azure-app") return false;
+          const envVar = a.values.azureClientSecretEnvVar || "SHAREPOINT_CLIENT_SECRET";
+          return !process.env[envVar];
+        },
         help:
           "Used for verification + the env-var hint shown at the end. " +
           "Atelier doesn't persist this value in sources.yaml.",
@@ -829,8 +842,8 @@ const sharepointOnboarding: OnboardingFlow = {
       // ----- link mode -----
       {
         key: "linkUrl",
-        prompt:
-          "Paste a SharePoint URL (e.g. https://contoso.sharepoint.com/sites/Marketing/Shared%20Documents/Q3-Plans)",
+        prompt: "SharePoint URL",
+        help: "Site, library, folder, or single file — paste any URL from your tenant.",
         applies: (a) => a.values.mode === "link",
         validate: /^https?:\/\//,
       },
@@ -1059,15 +1072,26 @@ const sharepointOnboarding: OnboardingFlow = {
 function providerFromAnswers(values: Record<string, string>): TokenProvider {
   const authType = values.authType || "bearer";
   if (authType === "azure-app") {
-    if (!values.azureTenantId || !values.azureClientId || !values.azureClientSecret) {
+    if (!values.azureTenantId || !values.azureClientId) {
+      throw new Error("Azure auth: tenantId and clientId are both required.");
+    }
+    // Secret comes from either: (a) what the user just typed, or
+    // (b) the env var pointed at by `azureClientSecretEnvVar`,
+    // already loaded by SecretStore.loadIntoProcessEnv() at
+    // startup. Prefer the typed value when it's there so the
+    // verify step sees what the user JUST entered.
+    const envVar =
+      values.azureClientSecretEnvVar || "SHAREPOINT_CLIENT_SECRET";
+    const secret = values.azureClientSecret || process.env[envVar] || "";
+    if (!secret) {
       throw new Error(
-        "Azure auth: tenantId, clientId, and clientSecret are all required."
+        `Azure auth: client secret not found. Either type it during onboarding or set $${envVar} (also written to .atelier/.env automatically).`
       );
     }
     return new AzureClientCredentialsProvider({
       tenantId: values.azureTenantId,
       clientId: values.azureClientId,
-      clientSecret: values.azureClientSecret,
+      clientSecret: secret,
     });
   }
   if (!values.token) {
