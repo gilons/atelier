@@ -468,7 +468,7 @@ export async function createSpec(
       resolvedDocs.push({
         ref,
         title: doc.title,
-        summary: doc.summary,
+        summary: doc.overview,
         classification: doc.classification,
         found: true,
       });

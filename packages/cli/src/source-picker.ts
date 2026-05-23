@@ -69,13 +69,12 @@ function sourceToChoice(s: Source): {
   value: string;
   note?: string;
 } {
-  // The id is what the user wants to *act on*. The kind + name is
-  // what helps them recognize which source it is. Showing both
-  // covers "I remember it was the github one" and "I remember the
-  // id" cases.
+  // The id is what the user wants to *act on*. The name is what
+  // helps them recognize which source it is — we show it as a
+  // secondary note when it differs from the id.
   return {
     label: s.id,
     value: s.id,
-    note: `${s.kind}${s.name && s.name !== s.id ? ` · ${s.name}` : ""}`,
+    note: s.name && s.name !== s.id ? s.name : undefined,
   };
 }

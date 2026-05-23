@@ -41,6 +41,8 @@ export interface WorkspacePaths {
   reposConfig: string;
   /** `.atelier/features/` — feature map entries */
   features: string;
+  /** `.atelier/sources/` — per-source setup runbooks (sources/<id>/setup.md) */
+  sources: string;
   /** `.atelier/docs/` — doc map entries (nested by source id) */
   docs: string;
   /** `.atelier/discrepancies.yaml` — running discrepancy log */
@@ -75,6 +77,7 @@ export function workspacePaths(
     sourcesConfig: path.join(atelier, "sources.yaml"),
     reposConfig: path.join(atelier, "repos.yaml"),
     features: path.join(atelier, "features"),
+    sources: path.join(atelier, "sources"),
     docs: path.join(atelier, "docs"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
     issues: path.join(atelier, "issues"),

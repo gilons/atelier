@@ -7,46 +7,60 @@ import {
 } from "../dist/index.js";
 
 test("validateSourcesConfig accepts a minimal valid config", () => {
-  const r = validateSourcesConfig({ version: 1, sources: [] });
+  const r = validateSourcesConfig({ version: 2, sources: [] });
   assert.equal(r.ok, true);
-  assert.deepEqual(r.value, { version: 1, sources: [] });
+  assert.deepEqual(r.value, { version: 2, sources: [] });
 });
 
-test("validateSourcesConfig accepts a config with a source", () => {
+test("validateSourcesConfig accepts a config with a source (new agent-driven shape)", () => {
   const r = validateSourcesConfig({
-    version: 1,
+    version: 2,
     sources: [
-      { id: "company-notion", kind: "notion", name: "Company Notion", enabled: true },
+      {
+        id: "company-notion",
+        name: "Company Notion",
+        enabled: true,
+        config: { mcp_server: "notion-mcp", workspace: "acme" },
+        setupFile: "sources/company-notion/setup.md",
+      },
     ],
   });
   assert.equal(r.ok, true);
   assert.equal(r.value.sources.length, 1);
-  assert.equal(r.value.sources[0].kind, "notion");
+  assert.equal(r.value.sources[0].name, "Company Notion");
+  assert.deepEqual(r.value.sources[0].config, {
+    mcp_server: "notion-mcp",
+    workspace: "acme",
+  });
 });
 
-test("validateSourcesConfig rejects unknown source kind", () => {
+test("validateSourcesConfig rejects sources missing required fields", () => {
   const r = validateSourcesConfig({
-    version: 1,
-    sources: [{ id: "x", kind: "tiktok", name: "X", enabled: true }],
+    version: 2,
+    sources: [{ id: "x" /* no name, no enabled */ }],
   });
   assert.equal(r.ok, false);
-  assert.ok(r.issues.some((i) => i.path === "$.sources[0].kind"));
+  assert.ok(r.issues.some((i) => i.path === "$.sources[0].name"));
+  assert.ok(r.issues.some((i) => i.path === "$.sources[0].enabled"));
 });
 
 test("validateSourcesConfig rejects duplicate source ids", () => {
   const r = validateSourcesConfig({
-    version: 1,
+    version: 2,
     sources: [
-      { id: "dup", kind: "notion", name: "A", enabled: true },
-      { id: "dup", kind: "confluence", name: "B", enabled: true },
+      { id: "dup", name: "A", enabled: true },
+      { id: "dup", name: "B", enabled: true },
     ],
   });
   assert.equal(r.ok, false);
   assert.ok(r.issues.some((i) => i.message.includes("duplicate")));
 });
 
-test("validateSourcesConfig rejects wrong version", () => {
-  const r = validateSourcesConfig({ version: 2, sources: [] });
+test("validateSourcesConfig rejects the legacy version 1 schema", () => {
+  // V1 is the pre-agent model that had kind/transport/credentials.
+  // The validator points the user at a clear error rather than
+  // silently dropping fields it no longer knows about.
+  const r = validateSourcesConfig({ version: 1, sources: [] });
   assert.equal(r.ok, false);
   assert.ok(r.issues.some((i) => i.path === "$.version"));
 });

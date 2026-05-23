@@ -1,3 +1,13 @@
+/**
+ * Public surface of @atelier/core.
+ *
+ * Atelier's job is to track the user's workspace state — sources,
+ * documents (as agent-curated summaries), features, specs, repos,
+ * discrepancies. It does NOT talk to source systems; agents do
+ * (via MCP / browser extensions / whatever's already wired up).
+ * So this barrel only re-exports workspace primitives + the data
+ * model. No adapters, no transports, no parsers, no sync engine.
+ */
 export * from "./types.js";
 export * from "./paths.js";
 export * from "./yaml-io.js";
@@ -13,72 +23,6 @@ export * from "./features.js";
 export * from "./docs.js";
 export * from "./discrepancies.js";
 export * from "./front-matter.js";
-export * from "./source-adapters.js";
-export * from "./local-folder-adapter.js";
-export * from "./mcp-config.js";
-export * from "./mcp-adapter.js";
-export * from "./sync.js";
 export * from "./specs.js";
-export * from "./http-transport.js";
-export * from "./cli-transport.js";
-export * from "./onboarding.js";
-export * from "./classify.js";
 export * from "./local-discovery.js";
-export { classifyDocUrl, type ClassifiedDocUrl } from "./url-classifier.js";
-export {
-  resolveDocUrlCandidates,
-  addDocByUrl,
-  NoMatchingSourceError,
-  UnsupportedDocUrlError,
-  type DocUrlCandidates,
-  type AddDocByUrlOptions,
-  type AddDocByUrlResult,
-} from "./doc-add-by-url.js";
-export {
-  SecretStore,
-  parseEnv,
-  formatEnv,
-} from "./secret-store.js";
-// Register the built-in adapters (side-effect imports).
-import "./adapters/notion.js";
-import "./adapters/sharepoint.js";
-import "./adapters/github-discussions.js";
-export { NotionAdapter, notionOnboarding } from "./adapters/notion.js";
-export {
-  SharePointAdapter,
-  sharepointOnboarding,
-  renderVttAsMarkdown,
-  type SharePointScope,
-  type SharePointPin,
-} from "./adapters/sharepoint.js";
-export {
-  resolveSharePointLink,
-  encodeShareUrlForGraph,
-  InvalidSharePointUrlError,
-  type SharePointLinkResolution,
-} from "./adapters/sharepoint-resolve.js";
-export {
-  searchSharePointSites,
-  searchSharePointFiles,
-  listFilesInSharePointFolder,
-  resolveOpaqueShareUrl,
-  type SiteSearchResult,
-  type FileSearchResult,
-} from "./adapters/sharepoint-search.js";
-export {
-  BearerTokenProvider,
-  AzureClientCredentialsProvider,
-  buildTokenProviderFromCredentials,
-  type TokenProvider,
-  type AzureClientCredentialsOptions,
-} from "./adapters/sharepoint-auth.js";
-export {
-  GitHubDiscussionsAdapter,
-  githubDiscussionsOnboarding,
-  type GitHubDiscussionsScope,
-} from "./adapters/github-discussions.js";
-export { extractDocxText, wordXmlToText } from "./docx-text.js";
-export { extractXlsxText } from "./xlsx-text.js";
-export { extractPptxText, renderSlideMarkdown } from "./pptx-text.js";
-export { extractPdfText } from "./pdf-text.js";
 export { ATELIER_VERSION } from "./version.js";

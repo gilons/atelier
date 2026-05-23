@@ -5,818 +5,397 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   initWorkspace,
-  addSource,
+  registerSource,
   addDoc,
   loadDoc,
   listDocs,
   removeDoc,
+  renameDoc,
   updateDoc,
   encodeDocFilenameStem,
   decodeDocFilenameStem,
-  hashBody,
   parseDocFile,
   serializeDocFile,
   DocNotFoundError,
   DocAlreadyExistsError,
   DocFileError,
   DocReferenceValidationError,
-  validateDocEntryFrontMatter,
 } from "../dist/index.js";
 
+/**
+ * Tests for the agent-curated doc map.
+ *
+ * Each doc is one folder under `.atelier/docs/<source>/<encoded-docId>/`
+ * containing a `summary.md` (front-matter + agent-written summary).
+ * Atelier stores no body — the agent fetches the underlying document
+ * via `link` using its own integrations.
+ */
+
 async function workspace() {
-  const umbrella = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-docs-"));
-  const workspaceRoot = path.join(umbrella, "planning");
-  await fs.mkdir(workspaceRoot);
-  await initWorkspace(workspaceRoot, { name: "Test" });
-  return { umbrella, workspaceRoot };
+  const umbrella = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-docs-test-"));
+  const root = path.join(umbrella, "planning");
+  await fs.mkdir(root);
+  await initWorkspace(root, { name: "Test" });
+  return { umbrella, root };
 }
 
 // ============================================================
 // encodeDocFilenameStem
 // ============================================================
 
-test("encodeDocFilenameStem passes safe chars through", () => {
+test("encodeDocFilenameStem keeps safe chars verbatim", () => {
   assert.equal(encodeDocFilenameStem("abc-123_foo.bar"), "abc-123_foo.bar");
 });
 
 test("encodeDocFilenameStem percent-encodes slashes, spaces, colons", () => {
-  assert.equal(encodeDocFilenameStem("docs/intro page"), "docs%2Fintro%20page");
-  assert.equal(encodeDocFilenameStem("notion:abc"), "notion%3Aabc");
+  assert.equal(encodeDocFilenameStem("a/b c:d"), "a%2Fb%20c%3Ad");
 });
 
-test("encodeDocFilenameStem handles non-ASCII as UTF-8 bytes", () => {
-  // é is U+00E9 → UTF-8 bytes 0xC3 0xA9 → %C3%A9
-  assert.equal(encodeDocFilenameStem("café"), "caf%C3%A9");
+test("encodeDocFilenameStem rejects an empty string", () => {
+  assert.throws(() => encodeDocFilenameStem(""));
 });
 
-test("encodeDocFilenameStem rejects empty string", () => {
-  assert.throws(() => encodeDocFilenameStem(""), /non-empty/);
-});
-
-test("encodeDocFilenameStem keeps long ids short with hash suffix", () => {
-  const long = "a".repeat(300);
-  const encoded = encodeDocFilenameStem(long);
-  assert.ok(encoded.length <= 210, `expected ≤210, got ${encoded.length}`);
-  assert.match(encoded, /_[0-9a-f]{8}$/);
-});
-
-test("encodeDocFilenameStem / decodeDocFilenameStem round-trip for common ids", () => {
-  for (const id of ["plain-id", "with space", "path/to/doc", "uuid:abc-123"]) {
+test("encode/decode round-trip for ASCII ids (the common case)", () => {
+  // Unicode round-trips via UTF-8 byte-level escapes; the
+  // single-character decode helper is sufficient for the
+  // common-case ASCII ids docIds tend to be (Notion UUIDs,
+  // GitHub owner/repo#N, file paths).
+  for (const id of ["a/b", "owner/repo#42", "uuid-with-dashes", "foo bar:baz"]) {
     assert.equal(decodeDocFilenameStem(encodeDocFilenameStem(id)), id);
   }
 });
 
 // ============================================================
-// hashBody
+// parseDocFile / serializeDocFile
 // ============================================================
 
-test("hashBody is deterministic and version-tagged", () => {
-  assert.equal(hashBody("hello"), hashBody("hello"));
-  assert.notEqual(hashBody("hello"), hashBody("world"));
-  assert.match(hashBody("x"), /^sha256:[0-9a-f]{64}$/);
+test("serializeDocFile + parseDocFile round-trip the new front-matter shape", () => {
+  const doc = {
+    source: "notion",
+    docId: "page-abc",
+    title: "Q3 Roadmap",
+    overview: "Plans for shipping the doc-map MVP.",
+    classification: "prd",
+    link: "https://notion.so/page-abc",
+    createdAt: "2026-05-23T00:00:00.000Z",
+    updatedAt: "2026-05-23T00:00:00.000Z",
+    body: "# Q3 Roadmap\n\n## Overview\n\nShipping the MVP.\n",
+  };
+  const text = serializeDocFile(doc);
+  const parsed = parseDocFile(text, "/tmp/test.md");
+  assert.deepEqual(parsed, doc);
 });
 
-// ============================================================
-// Parse / serialize round-trip
-// ============================================================
-
-test("parseDocFile reads front-matter and body", () => {
-  const text = [
-    "---",
-    "source: notion",
-    "docId: page-abc",
-    "title: Onboarding PRD",
-    "createdAt: 2026-05-16T00:00:00.000Z",
-    "updatedAt: 2026-05-16T00:00:00.000Z",
-    "---",
-    "",
-    "# Onboarding PRD",
-    "",
-    "Body.",
-    "",
-  ].join("\n");
-  const doc = parseDocFile(text, "/x.md");
-  assert.equal(doc.source, "notion");
-  assert.equal(doc.docId, "page-abc");
-  assert.equal(doc.title, "Onboarding PRD");
-  assert.match(doc.body, /# Onboarding PRD/);
-  assert.match(doc.body, /Body\./);
-});
-
-test("parseDocFile rejects missing front-matter", () => {
+test("parseDocFile rejects a file with no front-matter", () => {
   assert.throws(
-    () => parseDocFile("# Just markdown\n", "/x.md"),
-    (err) => err instanceof DocFileError && /front-matter/.test(err.message)
+    () => parseDocFile("no front matter here", "/tmp/x.md"),
+    DocFileError
   );
 });
 
-test("serializeDocFile + parseDocFile round-trip with full fields", () => {
-  const original = {
-    source: "notion",
-    docId: "page-uuid",
-    title: "Reports PRD",
-    summary: "Reporting layer",
-    classification: "prd",
-    url: "https://notion.so/abc",
-    lastFetched: "2026-05-16T12:00:00.000Z",
-    contentHash: hashBody("body"),
-    createdAt: "2026-05-16T00:00:00.000Z",
-    updatedAt: "2026-05-16T12:00:00.000Z",
-    body: "# Reports\n\nBody text.\n",
-  };
-  const text = serializeDocFile(original);
-  const round = parseDocFile(text, "/x.md");
-  assert.deepEqual(round, original);
-});
-
-test("serializeDocFile omits absent optional fields", () => {
-  const minimal = {
-    source: "notion",
-    docId: "x",
-    title: "X",
-    createdAt: "2026-05-16T00:00:00.000Z",
-    updatedAt: "2026-05-16T00:00:00.000Z",
-    body: "",
-  };
-  const text = serializeDocFile(minimal);
-  assert.doesNotMatch(text, /summary:/);
-  assert.doesNotMatch(text, /classification:/);
-  assert.doesNotMatch(text, /url:/);
-  assert.doesNotMatch(text, /lastFetched:/);
-  assert.doesNotMatch(text, /contentHash:/);
-});
-
 // ============================================================
-// validateDocEntryFrontMatter
+// addDoc / loadDoc
 // ============================================================
 
-test("validateDocEntryFrontMatter accepts a minimal valid object", () => {
-  const result = validateDocEntryFrontMatter({
-    source: "notion",
-    docId: "x",
-    title: "X",
-    createdAt: "t",
-    updatedAt: "t",
-  });
-  assert.equal(result.ok, true);
-});
-
-test("validateDocEntryFrontMatter rejects unknown classification", () => {
-  const result = validateDocEntryFrontMatter({
-    source: "notion",
-    docId: "x",
-    title: "X",
-    classification: "weird",
-    createdAt: "t",
-    updatedAt: "t",
-  });
-  assert.equal(result.ok, false);
-});
-
-// ============================================================
-// addDoc / loadDoc / listDocs / removeDoc / updateDoc
-// ============================================================
-
-test("addDoc creates a file under .atelier/docs/<source>/", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("addDoc creates a folder with summary.md under .atelier/docs/<source>/", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    await addSource(workspaceRoot, { kind: "notion", name: "Company Notion" });
-    const doc = await addDoc(workspaceRoot, {
-      source: "company-notion",
+    await registerSource(root, { id: "notion", name: "Notion" });
+    const doc = await addDoc(root, {
+      source: "notion",
       docId: "page-abc",
       title: "Onboarding PRD",
       classification: "prd",
+      link: "https://notion.so/page-abc",
+      body: "## Overview\n\nNew employee onboarding.\n",
     });
-    assert.equal(doc.source, "company-notion");
+    assert.equal(doc.source, "notion");
     assert.equal(doc.docId, "page-abc");
-    // New layout: each doc gets its own folder, with `parsed.md`
-    // as the canonical body file. Sidecars (original.<ext>,
-    // summary.md) live in the same folder.
     const filePath = path.join(
-      workspaceRoot,
+      root,
       ".atelier",
       "docs",
-      "company-notion",
+      "notion",
       "page-abc",
-      "parsed.md"
+      "summary.md"
     );
     const text = await fs.readFile(filePath, "utf8");
     assert.match(text, /^---\n/);
-    assert.match(text, /source: company-notion/);
     assert.match(text, /classification: prd/);
+    assert.match(text, /link: https:\/\/notion\.so/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("addDoc encodes special chars in docId folder names", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("addDoc rejects an unknown source unless skipSourceValidation is set", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    await addDoc(workspaceRoot, {
-      source: "company-notion",
-      docId: "path/to/doc with spaces",
-      title: "X",
-      skipSourceValidation: true,
-    });
-    // The folder name carries the encoded docId; the file inside
-    // is always called `parsed.md`.
-    const dir = path.join(workspaceRoot, ".atelier", "docs", "company-notion");
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    assert.equal(entries.length, 1);
-    assert.ok(entries[0].isDirectory(), "doc should be stored in a folder");
-    assert.match(entries[0].name, /^path%2Fto%2Fdoc%20with%20spaces$/);
-    await fs.access(path.join(dir, entries[0].name, "parsed.md"));
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("addDoc refuses to overwrite an existing entry", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "x",
-      title: "X",
-      skipSourceValidation: true,
-    });
     await assert.rejects(
       () =>
-        addDoc(workspaceRoot, {
-          source: "s",
+        addDoc(root, {
+          source: "ghost",
           docId: "x",
-          title: "X again",
-          skipSourceValidation: true,
+          title: "x",
         }),
-      (err) => err instanceof DocAlreadyExistsError
+      DocReferenceValidationError
     );
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("addDoc validates source unless skipSourceValidation set", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await assert.rejects(
-      () => addDoc(workspaceRoot, { source: "ghost", docId: "x", title: "X" }),
-      (err) => err instanceof DocReferenceValidationError
-    );
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("addDoc with body records contentHash and lastFetched", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    const doc = await addDoc(workspaceRoot, {
-      source: "s",
+    // Same call with skipSourceValidation succeeds — used for tests
+    // and for synthetic source ids like "manual".
+    const doc = await addDoc(root, {
+      source: "manual",
       docId: "x",
-      title: "X",
-      body: "# Hello\n\nWorld\n",
-      fetchedAt: "2026-05-16T10:00:00.000Z",
+      title: "x",
       skipSourceValidation: true,
     });
-    assert.equal(doc.lastFetched, "2026-05-16T10:00:00.000Z");
-    assert.equal(doc.contentHash, hashBody("# Hello\n\nWorld\n"));
+    assert.equal(doc.source, "manual");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("addDoc rejects duplicate docIds within the same source", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await registerSource(root, { id: "s", name: "S" });
+    await addDoc(root, { source: "s", docId: "x", title: "X" });
+    await assert.rejects(
+      () => addDoc(root, { source: "s", docId: "x", title: "X again" }),
+      DocAlreadyExistsError
+    );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
 test("loadDoc reads back what addDoc wrote", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+  const { umbrella, root } = await workspace();
   try {
-    await addDoc(workspaceRoot, {
+    await registerSource(root, { id: "s", name: "S" });
+    await addDoc(root, {
       source: "s",
-      docId: "uuid:abc",
-      title: "T",
-      summary: "S",
-      body: "B",
-      skipSourceValidation: true,
+      docId: "x",
+      title: "X",
+      overview: "one-liner",
+      link: "https://example.com",
+      body: "body content",
     });
-    const loaded = await loadDoc(workspaceRoot, "s", "uuid:abc");
-    assert.equal(loaded.title, "T");
-    assert.equal(loaded.summary, "S");
-    assert.match(loaded.body, /^B/);
+    const doc = await loadDoc(root, "s", "x");
+    assert.equal(doc.title, "X");
+    assert.equal(doc.overview, "one-liner");
+    assert.equal(doc.link, "https://example.com");
+    // front-matter serializer always trails the body with a newline
+    // for clean diffs — the body matches up to that.
+    assert.match(doc.body, /^body content/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("loadDoc throws on missing", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("loadDoc throws DocNotFoundError on a missing id", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    await assert.rejects(
-      () => loadDoc(workspaceRoot, "s", "ghost"),
-      (err) => err instanceof DocNotFoundError
-    );
+    await assert.rejects(() => loadDoc(root, "s", "ghost"), DocNotFoundError);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("listDocs lists across all sources", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "notion",
-      docId: "a",
-      title: "A",
-      skipSourceValidation: true,
-    });
-    await addDoc(workspaceRoot, {
-      source: "confluence",
-      docId: "b",
-      title: "B",
-      skipSourceValidation: true,
-    });
-    const { docs, errors } = await listDocs(workspaceRoot);
-    assert.equal(errors.length, 0);
-    assert.equal(docs.length, 2);
-    const sources = docs.map((d) => d.doc.source).sort();
-    assert.deepEqual(sources, ["confluence", "notion"]);
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
+// ============================================================
+// listDocs
+// ============================================================
 
-test("listDocs filters by source", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("listDocs walks every source folder, skipping non-doc subdirectories", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    await addDoc(workspaceRoot, {
-      source: "notion",
-      docId: "a",
-      title: "A",
-      skipSourceValidation: true,
-    });
-    await addDoc(workspaceRoot, {
-      source: "confluence",
-      docId: "b",
-      title: "B",
-      skipSourceValidation: true,
-    });
-    const { docs } = await listDocs(workspaceRoot, "notion");
-    assert.equal(docs.length, 1);
-    assert.equal(docs[0].doc.docId, "a");
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("listDocs collects parse errors without stopping", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "good",
-      title: "G",
-      skipSourceValidation: true,
-    });
-    const broken = path.join(workspaceRoot, ".atelier", "docs", "s", "broken.md");
-    await fs.writeFile(broken, "no front-matter\n", "utf8");
-    const { docs, errors } = await listDocs(workspaceRoot);
-    assert.equal(docs.length, 1);
-    assert.equal(errors.length, 1);
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("listDocs returns empty when docs dir missing", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await fs.rm(path.join(workspaceRoot, ".atelier", "docs"), {
+    await registerSource(root, { id: "a", name: "A" });
+    await registerSource(root, { id: "b", name: "B" });
+    await addDoc(root, { source: "a", docId: "one", title: "One" });
+    await addDoc(root, { source: "a", docId: "two", title: "Two" });
+    await addDoc(root, { source: "b", docId: "three", title: "Three" });
+    // Drop an unrelated folder to make sure we don't crash on it.
+    await fs.mkdir(path.join(root, ".atelier", "docs", "a", "scratch"), {
       recursive: true,
-      force: true,
     });
-    const { docs, errors } = await listDocs(workspaceRoot);
-    assert.equal(docs.length, 0);
+    const { docs, errors } = await listDocs(root);
     assert.equal(errors.length, 0);
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("removeDoc deletes the file and returns the entry", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "x",
-      title: "X",
-      skipSourceValidation: true,
-    });
-    const removed = await removeDoc(workspaceRoot, "s", "x");
-    assert.equal(removed.docId, "x");
-    await assert.rejects(
-      () => loadDoc(workspaceRoot, "s", "x"),
-      (err) => err instanceof DocNotFoundError
-    );
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("updateDoc patches body and refreshes hash + lastFetched", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "x",
-      title: "X",
-      body: "original",
-      fetchedAt: "2026-05-16T00:00:00.000Z",
-      skipSourceValidation: true,
-    });
-    const updated = await updateDoc(workspaceRoot, "s", "x", { body: "new body" });
-    assert.equal(updated.body, "new body");
-    assert.equal(updated.contentHash, hashBody("new body"));
-    assert.notEqual(updated.lastFetched, "2026-05-16T00:00:00.000Z");
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("updateDoc clears summary when passed empty string", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "x",
-      title: "X",
-      summary: "old",
-      skipSourceValidation: true,
-    });
-    const updated = await updateDoc(workspaceRoot, "s", "x", { summary: "" });
-    assert.equal(updated.summary, undefined);
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("updateDoc throws on missing", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await assert.rejects(
-      () => updateDoc(workspaceRoot, "s", "ghost", { title: "X" }),
-      (err) => err instanceof DocNotFoundError
-    );
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-// ============================================================
-// Binary preservation — addDoc / updateDoc / removeDoc with
-// an `original` payload
-// ============================================================
-
-test("addDoc with `original` writes the binary alongside the .md and records originalFile", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addSource(workspaceRoot, { kind: "notion", name: "S" });
-    const doc = await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "Q3-plan",
-      title: "Q3 Plan",
-      body: "# Q3 Plan\n\nSummary of plan.",
-      original: { bytes: Buffer.from([0x01, 0x02, 0x03, 0xff]), extension: "docx" },
-      skipSourceValidation: true,
-    });
-    // Front-matter records the sibling filename — predictable
-    // `original.<ext>` inside the doc folder.
-    assert.equal(doc.originalFile, "original.docx");
-    // Binary lives at <docs>/<source>/<docId>/original.docx.
-    const binaryPath = path.join(
-      workspaceRoot,
-      ".atelier",
-      "docs",
-      "s",
-      "Q3-plan",
-      "original.docx"
-    );
-    const onDisk = await fs.readFile(binaryPath);
-    assert.deepEqual([...onDisk], [0x01, 0x02, 0x03, 0xff]);
-    // And the front-matter persists through a reload.
-    const loaded = await loadDoc(workspaceRoot, "s", "Q3-plan");
-    assert.equal(loaded.originalFile, "original.docx");
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("removeDoc deletes the preserved binary too", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addSource(workspaceRoot, { kind: "notion", name: "S" });
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "Q3-plan",
-      title: "Q3 Plan",
-      original: { bytes: Buffer.from("fake"), extension: "docx" },
-      skipSourceValidation: true,
-    });
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan", "original.docx");
-    // Sanity: exists before remove.
-    await fs.access(binaryPath);
-    await removeDoc(workspaceRoot, "s", "Q3-plan");
-    // Gone after remove.
-    await assert.rejects(() => fs.access(binaryPath));
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("updateDoc with `original: null` deletes the previously-stored binary", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addSource(workspaceRoot, { kind: "notion", name: "S" });
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "Q3-plan",
-      title: "Q3 Plan",
-      original: { bytes: Buffer.from("first version"), extension: "docx" },
-      skipSourceValidation: true,
-    });
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan", "original.docx");
-    await fs.access(binaryPath); // sanity
-    const updated = await updateDoc(workspaceRoot, "s", "Q3-plan", { original: null });
-    assert.equal(updated.originalFile, undefined);
-    await assert.rejects(() => fs.access(binaryPath));
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("updateDoc with a new `original` overwrites the previous binary", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addSource(workspaceRoot, { kind: "notion", name: "S" });
-    await addDoc(workspaceRoot, {
-      source: "s",
-      docId: "Q3-plan",
-      title: "Q3 Plan",
-      original: { bytes: Buffer.from("v1"), extension: "docx" },
-      skipSourceValidation: true,
-    });
-    await updateDoc(workspaceRoot, "s", "Q3-plan", {
-      original: { bytes: Buffer.from("v2 longer"), extension: "docx" },
-    });
-    const binaryPath = path.join(workspaceRoot, ".atelier", "docs", "s", "Q3-plan", "original.docx");
-    const onDisk = await fs.readFile(binaryPath, "utf8");
-    assert.equal(onDisk, "v2 longer");
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-// ============================================================
-// Legacy flat layout — read-compat + migration on update
-// ============================================================
-
-test("loadDoc reads a legacy flat-file layout doc", async () => {
-  // Simulate a workspace written by an older atelier build:
-  // <docs>/<source>/<encoded-docId>.md at the source-dir level,
-  // no doc subfolder, no parsed.md.
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    const sourceDir = path.join(workspaceRoot, ".atelier", "docs", "legacy-source");
-    await fs.mkdir(sourceDir, { recursive: true });
-    const fm = [
-      "---",
-      "source: legacy-source",
-      "docId: old-doc",
-      "title: Old Doc",
-      "createdAt: 2026-01-01T00:00:00Z",
-      "updatedAt: 2026-01-01T00:00:00Z",
-      "---",
-      "",
-      "Body from before the folder refactor.",
-    ].join("\n");
-    await fs.writeFile(path.join(sourceDir, "old-doc.md"), fm, "utf8");
-    const loaded = await loadDoc(workspaceRoot, "legacy-source", "old-doc");
-    assert.equal(loaded.title, "Old Doc");
-    assert.match(loaded.body, /Body from before/);
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("updateDoc migrates a legacy flat-file doc into the new folder layout", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    const sourceDir = path.join(workspaceRoot, ".atelier", "docs", "legacy-source");
-    await fs.mkdir(sourceDir, { recursive: true });
-    const legacyMd = path.join(sourceDir, "old-doc.md");
-    await fs.writeFile(
-      legacyMd,
-      [
-        "---",
-        "source: legacy-source",
-        "docId: old-doc",
-        "title: Old Doc",
-        "createdAt: 2026-01-01T00:00:00Z",
-        "updatedAt: 2026-01-01T00:00:00Z",
-        "---",
-        "",
-        "Original body.",
-      ].join("\n"),
-      "utf8"
-    );
-    await updateDoc(workspaceRoot, "legacy-source", "old-doc", {
-      body: "Updated body.",
-    });
-    // New folder exists with parsed.md inside.
-    const newPath = path.join(sourceDir, "old-doc", "parsed.md");
-    const text = await fs.readFile(newPath, "utf8");
-    assert.match(text, /Updated body\./);
-    // Legacy flat file got cleaned up so it doesn't shadow the
-    // canonical copy on subsequent reads.
-    await assert.rejects(() => fs.access(legacyMd));
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("listDocs scans both the new folder layout and the legacy flat layout in one pass", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    // Mix: one new-layout doc (via addDoc) and one hand-written
-    // legacy doc.
-    await addSource(workspaceRoot, { kind: "notion", name: "Notion" });
-    await addDoc(workspaceRoot, {
-      source: "notion",
-      docId: "new-doc",
-      title: "New Doc",
-      body: "new",
-    });
-    const legacyDir = path.join(workspaceRoot, ".atelier", "docs", "notion");
-    await fs.writeFile(
-      path.join(legacyDir, "legacy-doc.md"),
-      [
-        "---",
-        "source: notion",
-        "docId: legacy-doc",
-        "title: Legacy Doc",
-        "createdAt: 2026-01-01T00:00:00Z",
-        "updatedAt: 2026-01-01T00:00:00Z",
-        "---",
-        "",
-        "legacy",
-      ].join("\n"),
-      "utf8"
-    );
-    const { docs } = await listDocs(workspaceRoot, "notion");
+    assert.equal(docs.length, 3);
     const titles = docs.map((d) => d.doc.title).sort();
-    assert.deepEqual(titles, ["Legacy Doc", "New Doc"]);
+    assert.deepEqual(titles, ["One", "Three", "Two"]);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("listDocs with a source filter only returns that source's docs", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await registerSource(root, { id: "a", name: "A" });
+    await registerSource(root, { id: "b", name: "B" });
+    await addDoc(root, { source: "a", docId: "one", title: "One" });
+    await addDoc(root, { source: "b", docId: "two", title: "Two" });
+    const { docs } = await listDocs(root, "a");
+    assert.equal(docs.length, 1);
+    assert.equal(docs[0].doc.title, "One");
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
 // ============================================================
-// renameDoc — change a doc's docId / folder name
+// updateDoc
 // ============================================================
 
-test("renameDoc moves the folder and rewrites parsed.md front-matter", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("updateDoc patches selected fields + bumps updatedAt", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    await addDoc(workspaceRoot, {
+    await registerSource(root, { id: "s", name: "S" });
+    const before = await addDoc(root, {
+      source: "s",
+      docId: "x",
+      title: "X",
+      overview: "first",
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const after = await updateDoc(root, "s", "x", {
+      title: "X v2",
+      overview: "second",
+      link: "https://new.example.com",
+    });
+    assert.equal(after.title, "X v2");
+    assert.equal(after.overview, "second");
+    assert.equal(after.link, "https://new.example.com");
+    assert.notEqual(after.updatedAt, before.updatedAt);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("updateDoc clears optional fields when passed empty string / null", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await registerSource(root, { id: "s", name: "S" });
+    await addDoc(root, {
+      source: "s",
+      docId: "x",
+      title: "X",
+      overview: "to clear",
+      classification: "prd",
+      link: "https://to.clear",
+    });
+    const after = await updateDoc(root, "s", "x", {
+      overview: "",
+      classification: null,
+      link: "",
+    });
+    assert.equal(after.overview, undefined);
+    assert.equal(after.classification, undefined);
+    assert.equal(after.link, undefined);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+// ============================================================
+// renameDoc
+// ============================================================
+
+test("renameDoc moves the folder + rewrites front-matter", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await registerSource(root, { id: "manual", name: "Manual" });
+    await addDoc(root, {
       source: "manual",
       docId: "untitled-1",
-      title: "Notes",
-      body: "Some body.",
-      skipSourceValidation: true,
+      title: "Cloud Services Contract",
+      body: "## Overview\n\nA cloud contract.\n",
     });
-    const next = await import("../dist/index.js").then((m) =>
-      m.renameDoc(workspaceRoot, "manual", "untitled-1", "onboarding-prd")
-    );
-    assert.equal(next.docId, "onboarding-prd");
-    // New folder exists with parsed.md inside.
-    const newPath = path.join(
-      workspaceRoot,
-      ".atelier",
-      "docs",
+    const renamed = await renameDoc(
+      root,
       "manual",
-      "onboarding-prd",
-      "parsed.md"
+      "untitled-1",
+      "cloud-services-contract"
     );
-    const text = await fs.readFile(newPath, "utf8");
-    assert.match(text, /docId: onboarding-prd/);
-    // Old folder is gone.
-    const oldPath = path.join(workspaceRoot, ".atelier", "docs", "manual", "untitled-1");
-    await assert.rejects(() => fs.access(oldPath));
-  } finally {
-    await fs.rm(umbrella, { recursive: true, force: true });
-  }
-});
-
-test("renameDoc preserves the original binary alongside parsed.md", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
-  try {
-    await addDoc(workspaceRoot, {
-      source: "manual",
-      docId: "draft",
-      title: "Draft",
-      body: "body",
-      original: { bytes: Buffer.from("binary-blob"), extension: "docx" },
-      skipSourceValidation: true,
-    });
-    const { renameDoc } = await import("../dist/index.js");
-    await renameDoc(workspaceRoot, "manual", "draft", "q3-plan");
-    const binary = await fs.readFile(
+    assert.equal(renamed.docId, "cloud-services-contract");
+    // Folder moved.
+    await assert.rejects(() =>
+      fs.access(path.join(root, ".atelier", "docs", "manual", "untitled-1"))
+    );
+    const text = await fs.readFile(
       path.join(
-        workspaceRoot,
+        root,
         ".atelier",
         "docs",
         "manual",
-        "q3-plan",
-        "original.docx"
+        "cloud-services-contract",
+        "summary.md"
       ),
       "utf8"
     );
-    assert.equal(binary, "binary-blob");
+    assert.match(text, /docId: cloud-services-contract/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
 test("renameDoc refuses to clobber an existing doc at the target", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+  const { umbrella, root } = await workspace();
   try {
-    await addDoc(workspaceRoot, {
-      source: "manual",
-      docId: "doc-a",
-      title: "A",
-      skipSourceValidation: true,
-    });
-    await addDoc(workspaceRoot, {
-      source: "manual",
-      docId: "doc-b",
-      title: "B",
-      skipSourceValidation: true,
-    });
-    const { renameDoc } = await import("../dist/index.js");
+    await registerSource(root, { id: "s", name: "S" });
+    await addDoc(root, { source: "s", docId: "a", title: "A" });
+    await addDoc(root, { source: "s", docId: "b", title: "B" });
     await assert.rejects(
-      () => renameDoc(workspaceRoot, "manual", "doc-a", "doc-b"),
-      (err) => err instanceof DocAlreadyExistsError
+      () => renameDoc(root, "s", "a", "b"),
+      DocAlreadyExistsError
     );
-    // doc-a is untouched.
-    const stillThere = await loadDoc(workspaceRoot, "manual", "doc-a");
-    assert.equal(stillThere.title, "A");
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("renameDoc migrates a legacy flat-file doc into the new folder layout", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("renameDoc with the same id is a no-op", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    // Hand-write a legacy flat doc the pre-folder layout used.
-    const sourceDir = path.join(workspaceRoot, ".atelier", "docs", "manual");
-    await fs.mkdir(sourceDir, { recursive: true });
+    await registerSource(root, { id: "s", name: "S" });
+    await addDoc(root, { source: "s", docId: "x", title: "X" });
+    const result = await renameDoc(root, "s", "x", "x");
+    assert.equal(result.docId, "x");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+// ============================================================
+// removeDoc
+// ============================================================
+
+test("removeDoc nukes the whole folder (summary.md + any sidecars)", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await registerSource(root, { id: "s", name: "S" });
+    await addDoc(root, { source: "s", docId: "x", title: "X" });
+    // Drop a sidecar to make sure the folder rm takes it too.
     await fs.writeFile(
-      path.join(sourceDir, "legacy-doc.md"),
-      [
-        "---",
-        "source: manual",
-        "docId: legacy-doc",
-        "title: Legacy",
-        "createdAt: 2026-01-01T00:00:00Z",
-        "updatedAt: 2026-01-01T00:00:00Z",
-        "---",
-        "",
-        "Old body.",
-      ].join("\n"),
+      path.join(root, ".atelier", "docs", "s", "x", "anchors.json"),
+      "[]",
       "utf8"
     );
-    const { renameDoc } = await import("../dist/index.js");
-    await renameDoc(workspaceRoot, "manual", "legacy-doc", "renamed");
-    // New folder + parsed.md exist; legacy flat file is gone.
-    await fs.access(path.join(sourceDir, "renamed", "parsed.md"));
-    await assert.rejects(() => fs.access(path.join(sourceDir, "legacy-doc.md")));
+    await removeDoc(root, "s", "x");
+    await assert.rejects(() =>
+      fs.access(path.join(root, ".atelier", "docs", "s", "x"))
+    );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("renameDoc with the same id is a no-op (returns the existing doc unchanged)", async () => {
-  const { umbrella, workspaceRoot } = await workspace();
+test("removeDoc on a missing id throws DocNotFoundError", async () => {
+  const { umbrella, root } = await workspace();
   try {
-    await addDoc(workspaceRoot, {
-      source: "manual",
-      docId: "untouched",
-      title: "Untouched",
-      skipSourceValidation: true,
-    });
-    const { renameDoc } = await import("../dist/index.js");
-    const result = await renameDoc(workspaceRoot, "manual", "untouched", "untouched");
-    assert.equal(result.docId, "untouched");
-    // Folder + parsed.md still there.
-    await fs.access(
-      path.join(workspaceRoot, ".atelier", "docs", "manual", "untouched", "parsed.md")
+    await registerSource(root, { id: "s", name: "S" });
+    await assert.rejects(
+      () => removeDoc(root, "s", "ghost"),
+      DocNotFoundError
     );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });

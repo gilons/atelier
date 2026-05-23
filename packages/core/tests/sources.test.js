@@ -5,16 +5,25 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   initWorkspace,
-  addSource,
+  registerSource,
   removeSource,
   setSourceEnabled,
   listSources,
   loadSourcesConfig,
+  readSourceSetup,
+  updateSourceSetup,
+  deriveSourceId,
   SourceAlreadyRegisteredError,
   SourceNotFoundError,
-  InvalidSourceKindError,
-  SOURCE_KINDS_LIST,
 } from "../dist/index.js";
+
+/**
+ * Tests for the agent-driven source registry.
+ *
+ * A source in the new model is just an id + name + free-form
+ * config + optional setup.md runbook. Atelier never talks to
+ * source systems; the agent does, using whatever's in `config`.
+ */
 
 async function workspace() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-sources-test-"));
@@ -22,182 +31,137 @@ async function workspace() {
   return root;
 }
 
-test("SOURCE_KINDS_LIST exposes the canonical kinds", () => {
-  assert.ok(SOURCE_KINDS_LIST.includes("notion"));
-  assert.ok(SOURCE_KINDS_LIST.includes("confluence"));
-  assert.ok(SOURCE_KINDS_LIST.length >= 8);
+test("deriveSourceId slugifies a human name", () => {
+  assert.equal(deriveSourceId("Company Notion"), "company-notion");
+  assert.equal(deriveSourceId("Stephan's OneDrive"), "stephan-s-onedrive");
+  assert.equal(deriveSourceId(""), "source");
 });
 
-test("addSource registers a basic notion source", async () => {
+test("registerSource persists id + name + enabled", async () => {
   const root = await workspace();
-  try {
-    const source = await addSource(root, {
-      kind: "notion",
-      name: "Company Notion",
-      mcpServer: "company-notion",
-    });
-    assert.equal(source.kind, "notion");
-    assert.equal(source.name, "Company Notion");
-    assert.equal(source.mcpServer, "company-notion");
-    assert.equal(source.enabled, true);
-    // id auto-derived from name
-    assert.equal(source.id, "company-notion");
+  const source = await registerSource(root, {
+    id: "company-notion",
+    name: "Company Notion",
+  });
+  assert.equal(source.id, "company-notion");
+  assert.equal(source.name, "Company Notion");
+  assert.equal(source.enabled, true);
 
-    const cfg = await loadSourcesConfig(root);
-    assert.equal(cfg.sources.length, 1);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  const cfg = await loadSourcesConfig(root);
+  assert.equal(cfg.version, 2);
+  assert.equal(cfg.sources.length, 1);
+  assert.equal(cfg.sources[0].id, "company-notion");
 });
 
-test("addSource refuses unknown kind", async () => {
+test("registerSource stores the free-form config blob verbatim", async () => {
   const root = await workspace();
-  try {
-    await assert.rejects(
-      () => addSource(root, { kind: "tiktok", name: "TikTok" }),
-      (e) => e instanceof InvalidSourceKindError
-    );
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  const source = await registerSource(root, {
+    id: "gh",
+    name: "GitHub",
+    config: {
+      mcp_server: "github-mcp",
+      org: "acme",
+      arbitrary: { nested: [1, 2, 3] },
+    },
+  });
+  assert.deepEqual(source.config, {
+    mcp_server: "github-mcp",
+    org: "acme",
+    arbitrary: { nested: [1, 2, 3] },
+  });
 });
 
-test("addSource auto-disambiguates duplicate derived ids", async () => {
+test("registerSource writes setup.md sidecar when setupInstructions provided", async () => {
   const root = await workspace();
-  try {
-    const s1 = await addSource(root, { kind: "notion", name: "Workspace" });
-    const s2 = await addSource(root, { kind: "notion", name: "Workspace" });
-    assert.equal(s1.id, "workspace");
-    assert.equal(s2.id, "workspace-2");
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  const runbook = "# Notion setup\n\n1. Install Notion MCP\n2. Authorize\n";
+  const source = await registerSource(root, {
+    id: "notion",
+    name: "Notion",
+    setupInstructions: runbook,
+  });
+  assert.equal(source.setupFile, "sources/notion/setup.md");
+  const onDisk = await fs.readFile(
+    path.join(root, ".atelier", "sources", "notion", "setup.md"),
+    "utf8"
+  );
+  assert.equal(onDisk, runbook);
 });
 
-test("addSource refuses explicit duplicate id", async () => {
+test("registerSource without setupInstructions leaves setupFile unset", async () => {
   const root = await workspace();
-  try {
-    await addSource(root, { kind: "notion", id: "main", name: "Main" });
-    await assert.rejects(
-      () => addSource(root, { kind: "confluence", id: "main", name: "Other" }),
-      (e) => e instanceof SourceAlreadyRegisteredError
-    );
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  const source = await registerSource(root, { id: "x", name: "X" });
+  assert.equal(source.setupFile, undefined);
 });
 
-test("addSource accepts scope object", async () => {
+test("registerSource rejects a duplicate id", async () => {
   const root = await workspace();
-  try {
-    const source = await addSource(root, {
-      kind: "confluence",
-      name: "Eng wiki",
-      scope: { spaceKey: "ENG", baseUrl: "https://example.atlassian.net/wiki" },
-    });
-    assert.deepEqual(source.scope, {
-      spaceKey: "ENG",
-      baseUrl: "https://example.atlassian.net/wiki",
-    });
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await registerSource(root, { id: "dup", name: "First" });
+  await assert.rejects(
+    () => registerSource(root, { id: "dup", name: "Second" }),
+    SourceAlreadyRegisteredError
+  );
 });
 
-test("addSource respects enabled=false", async () => {
+test("readSourceSetup returns the runbook text or null when missing", async () => {
   const root = await workspace();
-  try {
-    const source = await addSource(root, {
-      kind: "linear",
-      name: "Linear",
-      enabled: false,
-    });
-    assert.equal(source.enabled, false);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await registerSource(root, {
+    id: "with-setup",
+    name: "With Setup",
+    setupInstructions: "# Steps\n\nDo the thing.\n",
+  });
+  await registerSource(root, { id: "no-setup", name: "No Setup" });
+  assert.match(await readSourceSetup(root, "with-setup"), /Do the thing/);
+  assert.equal(await readSourceSetup(root, "no-setup"), null);
+  assert.equal(await readSourceSetup(root, "ghost"), null);
 });
 
-test("removeSource unregisters by id", async () => {
+test("updateSourceSetup writes a new runbook for an existing source", async () => {
   const root = await workspace();
-  try {
-    await addSource(root, { kind: "notion", name: "Main", id: "main" });
-    const removed = await removeSource(root, "main");
-    assert.equal(removed.id, "main");
-    const cfg = await loadSourcesConfig(root);
-    assert.equal(cfg.sources.length, 0);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await registerSource(root, { id: "s", name: "S" });
+  const updated = await updateSourceSetup(root, "s", "# New steps\n");
+  assert.equal(updated.setupFile, "sources/s/setup.md");
+  assert.match(await readSourceSetup(root, "s"), /New steps/);
 });
 
-test("removeSource throws when id not found", async () => {
+test("updateSourceSetup with null removes the runbook + clears setupFile", async () => {
   const root = await workspace();
-  try {
-    await assert.rejects(
-      () => removeSource(root, "ghost"),
-      (e) => e instanceof SourceNotFoundError
-    );
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await registerSource(root, {
+    id: "s",
+    name: "S",
+    setupInstructions: "first\n",
+  });
+  const updated = await updateSourceSetup(root, "s", null);
+  assert.equal(updated.setupFile, undefined);
+  assert.equal(await readSourceSetup(root, "s"), null);
 });
 
-test("setSourceEnabled toggles the flag", async () => {
+test("removeSource takes the source entry + nukes its sidecar folder", async () => {
   const root = await workspace();
-  try {
-    await addSource(root, { kind: "notion", name: "Main", id: "main" });
-    const disabled = await setSourceEnabled(root, "main", false);
-    assert.equal(disabled.enabled, false);
-    const enabled = await setSourceEnabled(root, "main", true);
-    assert.equal(enabled.enabled, true);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await registerSource(root, {
+    id: "doomed",
+    name: "Doomed",
+    setupInstructions: "bye\n",
+  });
+  await removeSource(root, "doomed");
+  const sources = await listSources(root);
+  assert.equal(sources.length, 0);
+  await assert.rejects(
+    () => fs.access(path.join(root, ".atelier", "sources", "doomed"))
+  );
 });
 
-test("listSources returns all registered entries", async () => {
+test("removeSource on a missing id throws SourceNotFoundError", async () => {
   const root = await workspace();
-  try {
-    await addSource(root, { kind: "notion", name: "Notion" });
-    await addSource(root, { kind: "confluence", name: "Confluence" });
-    await addSource(root, { kind: "linear", name: "Linear" });
-    const all = await listSources(root);
-    assert.equal(all.length, 3);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await assert.rejects(() => removeSource(root, "ghost"), SourceNotFoundError);
 });
 
-test("derived ids strip diacritics and lowercase", async () => {
+test("setSourceEnabled toggles the flag and persists it", async () => {
   const root = await workspace();
-  try {
-    const s = await addSource(root, { kind: "notion", name: "Société Générale Notion" });
-    // diacritics stripped, hyphens between words
-    assert.match(s.id, /^societe-generale-notion$/);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
-});
-
-test("sources.yaml round-trips with header comment", async () => {
-  const root = await workspace();
-  try {
-    await addSource(root, {
-      kind: "notion",
-      name: "Main",
-      mcpServer: "main-notion",
-      scope: { workspaceId: "abc123" },
-    });
-    const file = await fs.readFile(
-      path.join(root, ".atelier", "sources.yaml"),
-      "utf8"
-    );
-    assert.match(file, /^# Documentation sources/m);
-    assert.match(file, /kind: notion/);
-    assert.match(file, /mcpServer: main-notion/);
-    assert.match(file, /workspaceId: abc123/);
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  await registerSource(root, { id: "s", name: "S" });
+  await setSourceEnabled(root, "s", false);
+  const cfg = await loadSourcesConfig(root);
+  assert.equal(cfg.sources[0].enabled, false);
+  await setSourceEnabled(root, "s", true);
+  const cfg2 = await loadSourcesConfig(root);
+  assert.equal(cfg2.sources[0].enabled, true);
 });

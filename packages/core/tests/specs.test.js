@@ -6,7 +6,7 @@ import * as path from "node:path";
 import {
   initWorkspace,
   addRepo,
-  addSource,
+  registerSource,
   addFeature,
   addDoc,
   createSpec,
@@ -207,7 +207,7 @@ test("createSpec pulls feature codeRefs into context.md", async () => {
 test("createSpec lists missing doc refs as not yet indexed", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {
-    await addSource(workspaceRoot, { kind: "notion", name: "Notion" });
+    await registerSource(workspaceRoot, { id: "notion", name: "Notion" });
     await addFeature(workspaceRoot, {
       name: "Reports",
       docRefs: [{ source: "notion", docId: "page-abc", title: "Reports PRD" }],
@@ -228,12 +228,12 @@ test("createSpec lists missing doc refs as not yet indexed", async () => {
 test("createSpec resolves doc refs that are indexed", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {
-    await addSource(workspaceRoot, { kind: "notion", name: "Notion" });
+    await registerSource(workspaceRoot, { id: "notion", name: "Notion" });
     await addDoc(workspaceRoot, {
       source: "notion",
       docId: "page-abc",
       title: "Reports PRD",
-      summary: "Brief about reports",
+      overview: "Brief about reports",
       classification: "prd",
     });
     const { paths } = await createSpec(workspaceRoot, {

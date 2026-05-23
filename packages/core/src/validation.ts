@@ -1,7 +1,5 @@
 import type {
   Source,
-  SourceKind,
-  SourceTransport,
   SourcesConfig,
   RegisteredRepo,
   ReposConfig,
@@ -38,82 +36,9 @@ import type {
  * so command code can render rich error reports instead of stack traces.
  */
 
-const VALID_SOURCE_KINDS: ReadonlySet<SourceKind> = new Set<SourceKind>([
-  "notion",
-  "confluence",
-  "google-drive",
-  "onedrive",
-  "sharepoint",
-  "jira",
-  "linear",
-  "github-issues",
-  "github-discussions",
-  "github-repo-docs",
-  "local-folder",
-]);
-
-const VALID_SOURCE_TRANSPORTS: ReadonlySet<SourceTransport> = new Set<SourceTransport>([
-  "local-folder",
-  "mcp",
-  "rest",
-  "cli",
-  "external",
-]);
-
 // ============================================================
 // Small helpers
 // ============================================================
-
-/**
- * True when `credentials` is one of the two shapes
- * {@link Source.credentials} allows:
- *
- *   - `{ envVar: "STRING" }` — the bearer-token form (Notion,
- *     legacy SharePoint paste-the-token).
- *
- *   - `{ kind: "azureClientCredentials", tenantId, clientId,
- *     clientSecretEnvVar }` — the auto-refresh form (SharePoint
- *     via the Azure AD app's client_credentials flow).
- *
- * Used by the sources.yaml validator. Adapters that don't
- * understand the azure shape reject it themselves at build()
- * time with a clear message; this validator only checks that
- * what's persisted is one of the two recognized shapes.
- */
-function isValidCredentials(v: unknown): boolean {
-  if (!isObject(v)) return false;
-  if (v.kind === "azureClientCredentials") {
-    return (
-      isNonEmptyString(v.tenantId) &&
-      isNonEmptyString(v.clientId) &&
-      isNonEmptyString(v.clientSecretEnvVar) &&
-      // Optional fields — if present, must be strings.
-      (v.scope === undefined || isNonEmptyString(v.scope))
-    );
-  }
-  return isNonEmptyString(v.envVar);
-}
-
-/**
- * Coerce a validated credentials value into a Source.credentials
- * union member with only the recognized fields kept. Drops any
- * extra properties that snuck in via hand-editing — keeping the
- * persisted shape narrow.
- */
-function normalizeCredentials(v: unknown): Source["credentials"] {
-  const obj = v as Record<string, unknown>;
-  if (obj.kind === "azureClientCredentials") {
-    const out: Extract<Source["credentials"], { kind: "azureClientCredentials" }> = {
-      kind: "azureClientCredentials",
-      tenantId: obj.tenantId as string,
-      clientId: obj.clientId as string,
-      clientSecretEnvVar: obj.clientSecretEnvVar as string,
-    };
-    if (typeof obj.scope === "string") out.scope = obj.scope;
-    return out;
-  }
-  return { envVar: obj.envVar as string };
-}
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -141,72 +66,31 @@ function validateSource(
     return null;
   }
 
-  const {
-    id,
-    kind,
-    name,
-    transport,
-    mcpServer,
-    credentials,
-    adapterModule,
-    scope,
-    enabled,
-  } = raw;
+  const { id, name, config, setupFile, enabled } = raw;
   let valid = true;
 
   if (!isNonEmptyString(id)) {
     pushIssue(issues, `${basePath}.id`, "must be a non-empty string");
     valid = false;
   }
-  if (typeof kind !== "string" || !VALID_SOURCE_KINDS.has(kind as SourceKind)) {
-    pushIssue(
-      issues,
-      `${basePath}.kind`,
-      `must be one of: ${[...VALID_SOURCE_KINDS].join(", ")}`
-    );
-    valid = false;
-  }
   if (!isNonEmptyString(name)) {
     pushIssue(issues, `${basePath}.name`, "must be a non-empty string");
     valid = false;
   }
-  if (transport !== undefined) {
-    if (
-      typeof transport !== "string" ||
-      !VALID_SOURCE_TRANSPORTS.has(transport as SourceTransport)
-    ) {
-      pushIssue(
-        issues,
-        `${basePath}.transport`,
-        `if present, must be one of: ${[...VALID_SOURCE_TRANSPORTS].join(", ")}`
-      );
-      valid = false;
-    }
-  }
-  if (mcpServer !== undefined && !isNonEmptyString(mcpServer)) {
-    pushIssue(issues, `${basePath}.mcpServer`, "if present, must be a non-empty string");
-    valid = false;
-  }
-  if (credentials !== undefined) {
-    if (!isValidCredentials(credentials)) {
-      pushIssue(
-        issues,
-        `${basePath}.credentials`,
-        'if present, must be either { envVar: "NAME_OF_ENV_VAR" } or { kind: "azureClientCredentials", tenantId, clientId, clientSecretEnvVar }'
-      );
-      valid = false;
-    }
-  }
-  if (adapterModule !== undefined && !isNonEmptyString(adapterModule)) {
+  if (config !== undefined && !isObject(config)) {
     pushIssue(
       issues,
-      `${basePath}.adapterModule`,
-      "if present, must be a non-empty string (npm package name)"
+      `${basePath}.config`,
+      "if present, must be an object (free-form key/value blob used by the agent)"
     );
     valid = false;
   }
-  if (scope !== undefined && !isObject(scope)) {
-    pushIssue(issues, `${basePath}.scope`, "if present, must be an object");
+  if (setupFile !== undefined && !isNonEmptyString(setupFile)) {
+    pushIssue(
+      issues,
+      `${basePath}.setupFile`,
+      "if present, must be a non-empty string (workspace-relative path)"
+    );
     valid = false;
   }
   if (typeof enabled !== "boolean") {
@@ -217,17 +101,11 @@ function validateSource(
   if (!valid) return null;
   const result: Source = {
     id: id as string,
-    kind: kind as SourceKind,
     name: name as string,
     enabled: enabled as boolean,
   };
-  if (transport !== undefined) result.transport = transport as SourceTransport;
-  if (mcpServer !== undefined) result.mcpServer = mcpServer as string;
-  if (credentials !== undefined) {
-    result.credentials = normalizeCredentials(credentials);
-  }
-  if (adapterModule !== undefined) result.adapterModule = adapterModule as string;
-  if (scope !== undefined) result.scope = scope as Record<string, unknown>;
+  if (config !== undefined) result.config = config as Record<string, unknown>;
+  if (setupFile !== undefined) result.setupFile = setupFile as string;
   return result;
 }
 
@@ -236,8 +114,16 @@ export function validateSourcesConfig(raw: unknown): ValidationResult<SourcesCon
   if (!isObject(raw)) {
     return { ok: false, issues: [{ path: "$", message: "expected an object at the top level" }] };
   }
-  if (raw.version !== 1) {
-    pushIssue(issues, "$.version", "must be the integer 1");
+  // The schema bumped from 1 → 2 when the adapter model went away.
+  // Old version-1 files (with kind/transport/credentials) can be
+  // hand-migrated; the validator refuses them so the user sees a
+  // clear error rather than silently dropping fields.
+  if (raw.version !== 2) {
+    pushIssue(
+      issues,
+      "$.version",
+      "must be the integer 2 (atelier dropped the kind/transport/credentials model in v2; old files need to be re-registered)"
+    );
   }
   if (!Array.isArray(raw.sources)) {
     pushIssue(issues, "$.sources", "must be an array (may be empty)");
@@ -259,7 +145,7 @@ export function validateSourcesConfig(raw: unknown): ValidationResult<SourcesCon
   });
 
   if (issues.length > 0) return { ok: false, issues };
-  return { ok: true, value: { version: 1, sources }, issues: [] };
+  return { ok: true, value: { version: 2, sources }, issues: [] };
 }
 
 // ============================================================
@@ -584,12 +470,9 @@ export function validateDocEntryFrontMatter(
     source,
     docId,
     title,
-    summary,
+    overview,
     classification,
-    url,
-    lastFetched,
-    contentHash,
-    originalFile,
+    link,
     createdAt,
     updatedAt,
   } = raw;
@@ -603,8 +486,8 @@ export function validateDocEntryFrontMatter(
   if (!isNonEmptyString(title)) {
     pushIssue(issues, "$.title", "must be a non-empty string");
   }
-  if (summary !== undefined && typeof summary !== "string") {
-    pushIssue(issues, "$.summary", "if present, must be a string");
+  if (overview !== undefined && typeof overview !== "string") {
+    pushIssue(issues, "$.overview", "if present, must be a string");
   }
   if (
     classification !== undefined &&
@@ -617,17 +500,8 @@ export function validateDocEntryFrontMatter(
       `if present, must be one of: ${[...VALID_DOC_CLASSIFICATIONS].join(", ")}`
     );
   }
-  if (url !== undefined && !isNonEmptyString(url)) {
-    pushIssue(issues, "$.url", "if present, must be a non-empty string");
-  }
-  if (lastFetched !== undefined && !isNonEmptyString(lastFetched)) {
-    pushIssue(issues, "$.lastFetched", "if present, must be an ISO timestamp string");
-  }
-  if (contentHash !== undefined && !isNonEmptyString(contentHash)) {
-    pushIssue(issues, "$.contentHash", "if present, must be a non-empty string");
-  }
-  if (originalFile !== undefined && !isNonEmptyString(originalFile)) {
-    pushIssue(issues, "$.originalFile", "if present, must be a non-empty string");
+  if (link !== undefined && !isNonEmptyString(link)) {
+    pushIssue(issues, "$.link", "if present, must be a non-empty string");
   }
   if (!isNonEmptyString(createdAt)) {
     pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
@@ -644,12 +518,9 @@ export function validateDocEntryFrontMatter(
     createdAt: createdAt as string,
     updatedAt: updatedAt as string,
   };
-  if (summary !== undefined) value.summary = summary as string;
+  if (overview !== undefined) value.overview = overview as string;
   if (classification !== undefined) value.classification = classification as DocClassification;
-  if (url !== undefined) value.url = url as string;
-  if (lastFetched !== undefined) value.lastFetched = lastFetched as string;
-  if (contentHash !== undefined) value.contentHash = contentHash as string;
-  if (originalFile !== undefined) value.originalFile = originalFile as string;
+  if (link !== undefined) value.link = link as string;
   return { ok: true, value, issues: [] };
 }
 

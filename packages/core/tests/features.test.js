@@ -6,7 +6,7 @@ import * as path from "node:path";
 import {
   initWorkspace,
   addRepo,
-  addSource,
+  registerSource,
   addFeature,
   listFeatures,
   loadFeature,
@@ -270,7 +270,7 @@ test("addFeature validates doc refs against registered sources", async () => {
       (err) => err instanceof FeatureReferenceValidationError
     );
 
-    await addSource(workspaceRoot, { kind: "notion", name: "Company Notion" });
+    await registerSource(workspaceRoot, { id: "company-notion", name: "Company Notion" });
     const f = await addFeature(workspaceRoot, {
       name: "Reports",
       docRefs: [{ source: "company-notion", docId: "abc", title: "Reports PRD" }],

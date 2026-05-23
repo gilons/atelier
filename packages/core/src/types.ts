@@ -10,106 +10,62 @@
  */
 
 // ============================================================
-// Source connections (where documentation lives)
+// Source connections (where the agent fetches documents from)
 // ============================================================
 
-/** Kinds of documentation sources Atelier can consume. */
-export type SourceKind =
-  | "notion"
-  | "confluence"
-  | "google-drive"
-  | "onedrive"
-  | "sharepoint"
-  | "jira"
-  | "linear"
-  | "github-issues"
-  | "github-discussions"
-  | "github-repo-docs"
-  | "local-folder";
-
 /**
- * How Atelier talks to the underlying source.
+ * A configured documentation source.
  *
- *   - `local-folder` — implied by `kind: "local-folder"`; no auth/network.
- *   - `mcp`          — call an MCP server defined in
- *                      `~/.atelier/mcp-servers.json`.
- *   - `rest`         — direct HTTPS to the source's REST API
- *                      (e.g. api.notion.com).
- *   - `cli`          — shell out to a CLI tool the user has installed
- *                      (e.g. `gh`, `acli`).
- *   - `external`     — a third-party adapter loaded from a node module.
+ * Atelier doesn't talk to source systems directly — the user's
+ * agent does (via MCP servers, browser extensions, whatever
+ * integrations are already wired up). A "source" in atelier's
+ * model is just:
+ *
+ *   - A stable identifier the agent uses when adding documents.
+ *   - A human-readable name.
+ *   - An opaque `config` blob the agent reads at fetch time. Atelier
+ *     never interprets it. Typical contents: MCP server name,
+ *     workspace ids, hostnames — whatever the agent needs to make
+ *     calls.
+ *   - A `setupFile` pointer to a markdown runbook the agent reads
+ *     to GET CONNECTED for the first time (install browser ext,
+ *     authorize, add MCP server entry, etc.). Stored on disk at
+ *     `.atelier/sources/<id>/setup.md` by convention.
+ *
+ * No `kind`, no `transport`, no `credentials`. Atelier holds no
+ * source-system auth state — that's the agent's department.
  */
-export type SourceTransport = "local-folder" | "mcp" | "rest" | "cli" | "external";
-
-export const SOURCE_TRANSPORTS: ReadonlyArray<SourceTransport> = [
-  "local-folder",
-  "mcp",
-  "rest",
-  "cli",
-  "external",
-];
-
-/** A single configured documentation source. */
 export interface Source {
   /** Stable identifier used for citations and the document index. */
   id: string;
-  /** The kind of source (Notion, Confluence, ...). */
-  kind: SourceKind;
   /** Human-readable name shown in the UI. */
   name: string;
   /**
-   * How Atelier reaches this source. Defaults are inferred from the
-   * source's kind for back-compat (`local-folder` → `local-folder`;
-   * anything with `mcpServer` set → `mcp`). New sources should be
-   * explicit.
+   * Free-form parameters the agent reads at fetch time. Atelier
+   * round-trips this verbatim — keys and values are opaque to us.
+   * Typical: `{mcp_server, workspace_id, hostname}` etc.
    */
-  transport?: SourceTransport;
-  /** The MCP server identifier providing this source's tools, if any. */
-  mcpServer?: string;
+  config?: Record<string, unknown>;
   /**
-   * Credential reference for REST/CLI transports. Two shapes:
-   *
-   *   - `{ envVar: "NOTION_TOKEN" }` — Atelier reads a static
-   *     bearer token from the named env var at sync time. Used
-   *     for Notion API tokens and (legacy) SharePoint bearer
-   *     tokens.
-   *
-   *   - `{ kind: "azureClientCredentials", tenantId, clientId,
-   *     clientSecretEnvVar }` — Atelier mints fresh Graph tokens
-   *     via the OAuth client_credentials flow. Tenant + client
-   *     IDs sit in source.yaml (they're not secrets — they
-   *     identify the app, not authenticate it); the secret is
-   *     read from `$clientSecretEnvVar` at sync time. Used by
-   *     SharePoint to avoid hourly token re-paste.
-   *
-   * Atelier never stores secret values in source.yaml; secrets
-   * always come from the user's environment at sync time.
+   * Workspace-relative path (from `.atelier/`) to a markdown file
+   * containing the connection runbook for this source. By
+   * convention, `sources/<id>/setup.md`. The agent reads this when
+   * it needs to bring the source online (install MCP server,
+   * authorize a workspace, etc.).
    */
-  credentials?:
-    | { envVar: string }
-    | {
-        kind: "azureClientCredentials";
-        tenantId: string;
-        clientId: string;
-        clientSecretEnvVar: string;
-        scope?: string;
-      };
+  setupFile?: string;
   /**
-   * For `external` transport: the npm module name that exports the
-   * adapter. Module must default-export
-   * `{ adapter: SourceAdapterFactory, onboarding?: OnboardingFlow }`.
+   * Whether this source is currently active. Disabled sources are
+   * still listed (so the user remembers they exist) but don't show
+   * up in default `/doc list` filters or agent-bootstrap output.
    */
-  adapterModule?: string;
-  /** Optional scope hints (workspace IDs, paths, etc.) — opaque per kind. */
-  scope?: Record<string, unknown>;
-  /** Whether this source is currently included in syncs. */
   enabled: boolean;
 }
 
-/** Top-level shape of `.planning/sources.yaml`. */
+/** Top-level shape of `.atelier/sources.yaml`. */
 export interface SourcesConfig {
   /** Schema version for future migrations. */
-  version: 1;
+  version: 2;
   /** All configured documentation sources. */
   sources: Source[];
 }
@@ -275,50 +231,48 @@ export const DOC_CLASSIFICATIONS: ReadonlyArray<DocClassification> = [
 ];
 
 /**
- * Structured fields from a doc entry's YAML front-matter. The doc
- * content body lives in `DocEntry.body` (markdown), kept verbatim.
+ * Structured fields from a doc entry's YAML front-matter.
+ *
+ * In the new model atelier doesn't store source content — the
+ * doc entry's markdown body IS the agent-curated summary
+ * (overview + keywords + anchors). To read the actual document,
+ * the agent follows `link` using its own integrations.
  */
 export interface DocEntryFrontMatter {
   /** Source id (must exist in sources.yaml). */
   source: string;
   /**
-   * The source-side document id. Opaque to Atelier — Notion page id,
-   * Confluence content id, file path for local sources, etc.
+   * Stable, source-side identifier. Opaque to atelier — the agent
+   * picks a meaningful slug when it adds the doc.
    */
   docId: string;
   /** Display title. */
   title: string;
-  /** Optional one-line summary. */
-  summary?: string;
+  /** Optional one-line elevator summary (front-matter; full summary is in body). */
+  overview?: string;
   /** Optional classification hint. */
   classification?: DocClassification;
-  /** Optional URL pointing back at the canonical source. */
-  url?: string;
-  /** ISO timestamp of the last successful fetch from the source. */
-  lastFetched?: string;
-  /** Hash of the fetched body. Used by Slice 8 to detect changes. */
-  contentHash?: string;
   /**
-   * Filename (sibling to the `.md` body file) where the original
-   * binary is preserved on disk. Set for non-text source files
-   * that the adapter parsed locally — e.g. `Strategy.docx` →
-   * `<encoded-docId>.docx` next to the `.md`. Lets a user open
-   * the source file in Word/Excel/etc. without re-downloading.
-   *
-   * Unset for documents whose markdown body IS the original
-   * representation (Markdown source files, GitHub Discussions
-   * threads, .vtt transcripts).
+   * Pointer to the underlying document the agent can use to fetch
+   * the full content. Format is up to the source: URL for web docs,
+   * MCP page id, file path, etc. Atelier doesn't dereference it.
    */
-  originalFile?: string;
+  link?: string;
   /** ISO timestamp when first registered. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */
   updatedAt: string;
 }
 
-/** A loaded doc entry: front-matter + body. */
+/**
+ * A loaded doc entry: front-matter + the summary markdown body.
+ * The body is whatever shape the agent wrote — typically a 1-2
+ * sentence overview, a `## Keywords` list, and a `## Anchors`
+ * list of section pointers. Atelier doesn't enforce structure;
+ * the printSummaryRequestForAgent block in the CLI suggests one.
+ */
 export interface DocEntry extends DocEntryFrontMatter {
-  /** Markdown body — the fetched doc content. May be empty. */
+  /** Markdown body — the agent-written summary. May be empty. */
   body: string;
 }
 
