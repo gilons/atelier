@@ -4,7 +4,7 @@ import { readYamlFile, writeYamlFile } from "./yaml-io.js";
 import { validateSourcesConfig, formatIssues } from "./validation.js";
 import { workspacePaths } from "./paths.js";
 import { WorkspaceValidationError } from "./workspace.js";
-import type { SourcesConfig, Source } from "./types.js";
+import type { SourcesConfig, Source, SourceCategory } from "./types.js";
 
 /**
  * High-level operations on the documentation source registry
@@ -43,7 +43,7 @@ export class SourceNotFoundError extends Error {
 /** Load and validate the source registry. */
 export async function loadSourcesConfig(workspaceRoot: string): Promise<SourcesConfig> {
   const p = workspacePaths(workspaceRoot);
-  const raw = (await readYamlFile(p.sourcesConfig)) ?? { version: 2, sources: [] };
+  const raw = (await readYamlFile(p.sourcesConfig)) ?? { version: 3, sources: [] };
   const result = validateSourcesConfig(raw);
   if (!result.ok || !result.value) {
     throw new WorkspaceValidationError(p.sourcesConfig, formatIssues(result.issues));
@@ -65,10 +65,17 @@ export async function saveSourcesConfig(
 }
 
 export interface RegisterSourceOptions {
-  /** Stable identifier. Required — the agent uses this when adding docs. */
+  /** Stable identifier. Required — the agent uses this when adding items. */
   id: string;
   /** Human-readable display name. */
   name: string;
+  /**
+   * What kind of artifacts live under this source. Defaults to
+   * "docs" when omitted. Three values are recognized: `docs`
+   * (knowledge / PRDs / RFCs), `design` (UI / system design
+   * artifacts), `pm` (initiatives, milestones, tickets).
+   */
+  category?: SourceCategory;
   /**
    * Free-form parameters the agent reads at fetch time. Atelier
    * stores this verbatim; we don't interpret any keys.
@@ -124,6 +131,7 @@ export async function registerSource(
   const source: Source = {
     id: opts.id,
     name: opts.name,
+    category: opts.category ?? "docs",
     enabled: opts.enabled ?? true,
   };
   if (opts.config !== undefined) source.config = opts.config;

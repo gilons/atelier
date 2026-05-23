@@ -11,11 +11,18 @@ import {
   buildFrontMatterFile,
 } from "./front-matter.js";
 import type {
-  DocClassification,
-  DocEntry,
-  DocEntryFrontMatter,
+  Item,
+  ItemFrontMatter,
   ValidationIssue,
 } from "./types.js";
+
+/** Back-compat aliases used inside docs.ts — the file's about to
+ *  be renamed to items.ts in a follow-up. Keep the old names as
+ *  type aliases so the existing function bodies don't need
+ *  touching. */
+type DocClassification = string;
+type DocEntry = Item;
+type DocEntryFrontMatter = ItemFrontMatter;
 
 /**
  * Doc map.

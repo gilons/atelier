@@ -103,7 +103,7 @@ export async function initWorkspace(
     atelierVersion: ATELIER_VERSION,
   };
 
-  const sources: SourcesConfig = { version: 2, sources: [] };
+  const sources: SourcesConfig = { version: 3, sources: [] };
   const repos: ReposConfig = { version: 1, repos: [] };
 
   const created: string[] = [];

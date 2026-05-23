@@ -10,19 +10,44 @@
  */
 
 // ============================================================
-// Source connections (where the agent fetches documents from)
+// Source connections (where the agent fetches things from)
 // ============================================================
 
 /**
- * A configured documentation source.
+ * What kind of workspace artifacts this source feeds.
+ *
+ *   - `docs` — knowledge: PRDs, RFCs, runbooks, transcripts.
+ *   - `design` — UI / system design: Figma frames, Excalidraw
+ *     canvases, Whimsical flows.
+ *   - `pm` — product management: Linear/Jira/Asana initiatives,
+ *     milestones, epics, tickets.
+ *
+ * The category influences which command the agent uses to add
+ * items (`atelier item add --category <c>`) and how atelier
+ * filters them in list views. The source's underlying integration
+ * (MCP server, browser ext, REST) is still the agent's problem;
+ * atelier just tags the source so items can be grouped sensibly.
+ */
+export type SourceCategory = "docs" | "design" | "pm";
+
+export const SOURCE_CATEGORIES: ReadonlyArray<SourceCategory> = [
+  "docs",
+  "design",
+  "pm",
+];
+
+/**
+ * A configured workspace source.
  *
  * Atelier doesn't talk to source systems directly — the user's
  * agent does (via MCP servers, browser extensions, whatever
  * integrations are already wired up). A "source" in atelier's
  * model is just:
  *
- *   - A stable identifier the agent uses when adding documents.
+ *   - A stable identifier the agent uses when adding items.
  *   - A human-readable name.
+ *   - A `category` (docs / design / pm) so atelier knows which
+ *     bucket items belong to.
  *   - An opaque `config` blob the agent reads at fetch time. Atelier
  *     never interprets it. Typical contents: MCP server name,
  *     workspace ids, hostnames — whatever the agent needs to make
@@ -31,15 +56,18 @@
  *     to GET CONNECTED for the first time (install browser ext,
  *     authorize, add MCP server entry, etc.). Stored on disk at
  *     `.atelier/sources/<id>/setup.md` by convention.
- *
- * No `kind`, no `transport`, no `credentials`. Atelier holds no
- * source-system auth state — that's the agent's department.
  */
 export interface Source {
-  /** Stable identifier used for citations and the document index. */
+  /** Stable identifier used for citations and the item index. */
   id: string;
   /** Human-readable name shown in the UI. */
   name: string;
+  /**
+   * What kind of artifacts live under this source. Defaults to
+   * `docs` for back-compat with workspaces that pre-date the
+   * three-category model.
+   */
+  category: SourceCategory;
   /**
    * Free-form parameters the agent reads at fetch time. Atelier
    * round-trips this verbatim — keys and values are opaque to us.
@@ -57,7 +85,7 @@ export interface Source {
   /**
    * Whether this source is currently active. Disabled sources are
    * still listed (so the user remembers they exist) but don't show
-   * up in default `/doc list` filters or agent-bootstrap output.
+   * up in default `/item list` filters or agent-bootstrap output.
    */
   enabled: boolean;
 }
@@ -65,8 +93,8 @@ export interface Source {
 /** Top-level shape of `.atelier/sources.yaml`. */
 export interface SourcesConfig {
   /** Schema version for future migrations. */
-  version: 2;
-  /** All configured documentation sources. */
+  version: 3;
+  /** All configured workspace sources. */
   sources: Source[];
 }
 
@@ -133,18 +161,23 @@ export interface FeatureCodeRef {
 }
 
 /**
- * Where in the documentation map a feature is described. References
- * point at entries in the document index (Phase 2, slice 6 establishes
- * the doc map). For now we just record the pointer.
+ * A reference from a feature or spec to a tracked item — could be a
+ * doc, a design artifact, or a PM ticket depending on the source's
+ * category. The `docId` field name predates the three-category
+ * model; semantically it's "the id of the referenced item" — kept
+ * as `docId` so existing features.yaml entries keep loading.
  */
-export interface FeatureDocRef {
+export interface FeatureItemRef {
   /** Source id (must exist in sources.yaml). */
   source: string;
-  /** The source-side document id (opaque to Atelier — Notion page id, …). */
+  /** The source-side item id (opaque to atelier — Notion page id, Linear ticket key, Figma node id, …). */
   docId: string;
-  /** Optional cached title for display before the doc map is synced. */
+  /** Optional cached title for display before the item is indexed. */
   title?: string;
 }
+
+/** @deprecated use FeatureItemRef — same shape, clearer name. */
+export type FeatureDocRef = FeatureItemRef;
 
 /** Lifecycle of a feature. */
 export type FeatureStatus =
@@ -194,70 +227,59 @@ export interface Feature extends FeatureFrontMatter {
 }
 
 // ============================================================
-// Doc map (the documentation index — Slice 6)
+// Items (the workspace index — docs, design, PM, all unified)
 // ============================================================
 
 /**
- * Classification of what kind of document this is, from the agent's
- * perspective. Used during spec curation to decide which docs to pull
- * into a session. Initially populated manually; Slice 8's synthesis
- * pass will assign these automatically.
- */
-export type DocClassification =
-  | "prd"
-  | "rfc"
-  | "design"
-  | "runbook"
-  | "policy"
-  | "reference"
-  | "meeting-notes"
-  | "transcript"
-  | "discussion"
-  | "roadmap"
-  | "other";
-
-export const DOC_CLASSIFICATIONS: ReadonlyArray<DocClassification> = [
-  "prd",
-  "rfc",
-  "design",
-  "runbook",
-  "policy",
-  "reference",
-  "meeting-notes",
-  "transcript",
-  "discussion",
-  "roadmap",
-  "other",
-];
-
-/**
- * Structured fields from a doc entry's YAML front-matter.
+ * Structured fields from an item's YAML front-matter.
  *
- * In the new model atelier doesn't store source content — the
- * doc entry's markdown body IS the agent-curated summary
- * (overview + keywords + anchors). To read the actual document,
- * the agent follows `link` using its own integrations.
+ * Items are atelier's unit of indexed knowledge — one per
+ * tracked artifact (a PRD, a Figma frame, a Linear ticket, …).
+ * Atelier doesn't store source content; the markdown body IS
+ * the agent-curated summary. To re-read the underlying artifact,
+ * the agent follows `link` via its own integrations.
  */
-export interface DocEntryFrontMatter {
+export interface ItemFrontMatter {
   /** Source id (must exist in sources.yaml). */
   source: string;
   /**
    * Stable, source-side identifier. Opaque to atelier — the agent
-   * picks a meaningful slug when it adds the doc.
+   * picks a slug meaningful within the source. Named `docId` for
+   * back-compat with the prior model; semantically the id of any
+   * indexed thing regardless of category.
    */
   docId: string;
   /** Display title. */
   title: string;
-  /** Optional one-line elevator summary (front-matter; full summary is in body). */
+  /** Optional one-line elevator summary (full summary lives in body). */
   overview?: string;
-  /** Optional classification hint. */
-  classification?: DocClassification;
   /**
-   * Pointer to the underlying document the agent can use to fetch
+   * Free-form classification string. The vocabulary depends on the
+   * source's category:
+   *
+   *   - docs:   "prd" | "rfc" | "runbook" | "transcript" | "policy" | …
+   *   - design: "frame" | "screen" | "component" | "flow" | "system" | …
+   *   - pm:     "initiative" | "milestone" | "epic" | "ticket" | "story" | …
+   *
+   * Atelier doesn't enforce any of these — the agent picks
+   * whatever its tool natively uses.
+   */
+  classification?: string;
+  /**
+   * Pointer to the underlying artifact the agent can use to fetch
    * the full content. Format is up to the source: URL for web docs,
-   * MCP page id, file path, etc. Atelier doesn't dereference it.
+   * MCP page id, file path, ticket id, frame node, etc. Atelier
+   * doesn't dereference it.
    */
   link?: string;
+  /**
+   * Optional parent itemId. Used to express hierarchy within a
+   * single source (initiative → milestone → ticket, design file →
+   * frame, etc.). Atelier doesn't enforce that the parent exists or
+   * is the right type — list views render the tree based on what
+   * the agent wrote.
+   */
+  parent?: string;
   /** ISO timestamp when first registered. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */
@@ -265,16 +287,22 @@ export interface DocEntryFrontMatter {
 }
 
 /**
- * A loaded doc entry: front-matter + the summary markdown body.
+ * A loaded item: front-matter + the summary markdown body.
  * The body is whatever shape the agent wrote — typically a 1-2
  * sentence overview, a `## Keywords` list, and a `## Anchors`
- * list of section pointers. Atelier doesn't enforce structure;
- * the printSummaryRequestForAgent block in the CLI suggests one.
+ * list. Atelier doesn't enforce structure; the agent follow-up
+ * block printed after `/item add` suggests one.
  */
-export interface DocEntry extends DocEntryFrontMatter {
+export interface Item extends ItemFrontMatter {
   /** Markdown body — the agent-written summary. May be empty. */
   body: string;
 }
+
+/** @deprecated use Item — same shape, clearer name. */
+export type DocEntry = Item;
+/** @deprecated use ItemFrontMatter — same shape, clearer name. */
+export type DocEntryFrontMatter = ItemFrontMatter;
+
 
 // ============================================================
 // Discrepancy log (Slice 7 — schema only, detection in Phase 3)

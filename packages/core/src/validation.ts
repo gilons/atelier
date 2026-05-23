@@ -1,5 +1,6 @@
 import type {
   Source,
+  SourceCategory,
   SourcesConfig,
   RegisteredRepo,
   ReposConfig,
@@ -7,9 +8,8 @@ import type {
   FeatureFrontMatter,
   FeatureStatus,
   FeatureCodeRef,
-  FeatureDocRef,
-  DocEntryFrontMatter,
-  DocClassification,
+  FeatureItemRef,
+  ItemFrontMatter,
   Discrepancy,
   DiscrepancyLog,
   DiscrepancySeverity,
@@ -66,7 +66,7 @@ function validateSource(
     return null;
   }
 
-  const { id, name, config, setupFile, enabled } = raw;
+  const { id, name, category, config, setupFile, enabled } = raw;
   let valid = true;
 
   if (!isNonEmptyString(id)) {
@@ -75,6 +75,17 @@ function validateSource(
   }
   if (!isNonEmptyString(name)) {
     pushIssue(issues, `${basePath}.name`, "must be a non-empty string");
+    valid = false;
+  }
+  const validCategory =
+    typeof category === "string" &&
+    (category === "docs" || category === "design" || category === "pm");
+  if (!validCategory) {
+    pushIssue(
+      issues,
+      `${basePath}.category`,
+      'must be one of: "docs", "design", "pm"'
+    );
     valid = false;
   }
   if (config !== undefined && !isObject(config)) {
@@ -102,6 +113,7 @@ function validateSource(
   const result: Source = {
     id: id as string,
     name: name as string,
+    category: category as SourceCategory,
     enabled: enabled as boolean,
   };
   if (config !== undefined) result.config = config as Record<string, unknown>;
@@ -118,11 +130,11 @@ export function validateSourcesConfig(raw: unknown): ValidationResult<SourcesCon
   // Old version-1 files (with kind/transport/credentials) can be
   // hand-migrated; the validator refuses them so the user sees a
   // clear error rather than silently dropping fields.
-  if (raw.version !== 2) {
+  if (raw.version !== 3) {
     pushIssue(
       issues,
       "$.version",
-      "must be the integer 2 (atelier dropped the kind/transport/credentials model in v2; old files need to be re-registered)"
+      "must be the integer 3 (atelier dropped the kind/transport/credentials model in v2; old files need to be re-registered)"
     );
   }
   if (!Array.isArray(raw.sources)) {
@@ -145,7 +157,7 @@ export function validateSourcesConfig(raw: unknown): ValidationResult<SourcesCon
   });
 
   if (issues.length > 0) return { ok: false, issues };
-  return { ok: true, value: { version: 2, sources }, issues: [] };
+  return { ok: true, value: { version: 3, sources }, issues: [] };
 }
 
 // ============================================================
@@ -324,7 +336,7 @@ function validateDocRef(
   raw: unknown,
   basePath: string,
   issues: ValidationIssue[]
-): FeatureDocRef | null {
+): FeatureItemRef | null {
   if (!isObject(raw)) {
     pushIssue(issues, basePath, "expected an object");
     return null;
@@ -344,7 +356,7 @@ function validateDocRef(
     valid = false;
   }
   if (!valid) return null;
-  const result: FeatureDocRef = {
+  const result: FeatureItemRef = {
     source: source as string,
     docId: docId as string,
   };
@@ -411,7 +423,7 @@ export function validateFeatureFrontMatter(
     });
   }
 
-  const docRefsArr: FeatureDocRef[] = [];
+  const docRefsArr: FeatureItemRef[] = [];
   if (docRefs === undefined) {
     // Tolerate absent — treat as empty.
   } else if (!Array.isArray(docRefs)) {
@@ -438,27 +450,12 @@ export function validateFeatureFrontMatter(
 }
 
 // ============================================================
-// Doc entry front-matter
+// Item front-matter
 // ============================================================
-
-const VALID_DOC_CLASSIFICATIONS: ReadonlySet<DocClassification> =
-  new Set<DocClassification>([
-    "prd",
-    "rfc",
-    "design",
-    "runbook",
-    "policy",
-    "reference",
-    "meeting-notes",
-    "transcript",
-    "discussion",
-    "roadmap",
-    "other",
-  ]);
 
 export function validateDocEntryFrontMatter(
   raw: unknown
-): ValidationResult<DocEntryFrontMatter> {
+): ValidationResult<ItemFrontMatter> {
   const issues: ValidationIssue[] = [];
   if (!isObject(raw)) {
     return {
@@ -473,6 +470,7 @@ export function validateDocEntryFrontMatter(
     overview,
     classification,
     link,
+    parent,
     createdAt,
     updatedAt,
   } = raw;
@@ -489,19 +487,17 @@ export function validateDocEntryFrontMatter(
   if (overview !== undefined && typeof overview !== "string") {
     pushIssue(issues, "$.overview", "if present, must be a string");
   }
-  if (
-    classification !== undefined &&
-    (typeof classification !== "string" ||
-      !VALID_DOC_CLASSIFICATIONS.has(classification as DocClassification))
-  ) {
-    pushIssue(
-      issues,
-      "$.classification",
-      `if present, must be one of: ${[...VALID_DOC_CLASSIFICATIONS].join(", ")}`
-    );
+  // Classification is free-form text now (a PM ticket isn't a doc
+  // PRD); the vocabulary depends on the source's category and we
+  // don't enforce it.
+  if (classification !== undefined && typeof classification !== "string") {
+    pushIssue(issues, "$.classification", "if present, must be a string");
   }
   if (link !== undefined && !isNonEmptyString(link)) {
     pushIssue(issues, "$.link", "if present, must be a non-empty string");
+  }
+  if (parent !== undefined && !isNonEmptyString(parent)) {
+    pushIssue(issues, "$.parent", "if present, must be a non-empty string (itemId of the parent item in the same source)");
   }
   if (!isNonEmptyString(createdAt)) {
     pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
@@ -511,7 +507,7 @@ export function validateDocEntryFrontMatter(
   }
 
   if (issues.length > 0) return { ok: false, issues };
-  const value: DocEntryFrontMatter = {
+  const value: ItemFrontMatter = {
     source: source as string,
     docId: docId as string,
     title: title as string,
@@ -519,8 +515,9 @@ export function validateDocEntryFrontMatter(
     updatedAt: updatedAt as string,
   };
   if (overview !== undefined) value.overview = overview as string;
-  if (classification !== undefined) value.classification = classification as DocClassification;
+  if (classification !== undefined) value.classification = classification as string;
   if (link !== undefined) value.link = link as string;
+  if (parent !== undefined) value.parent = parent as string;
   return { ok: true, value, issues: [] };
 }
 

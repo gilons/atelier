@@ -12,13 +12,11 @@ import {
   updateDoc,
   encodeDocFilenameStem,
   listSources,
-  DOC_CLASSIFICATIONS,
   DocAlreadyExistsError,
   DocNotFoundError,
   DocFileError,
   DocReferenceValidationError,
   NotInsideWorkspaceError,
-  type DocClassification,
 } from "@atelier/core";
 import type { Command, InvocationMode } from "../command.js";
 import { ui } from "../ui.js";
@@ -44,8 +42,11 @@ import { PromptSession } from "../prompt.js";
  *                    $EDITOR on a summary scaffold.
  */
 
-function validClassification(s: string): s is DocClassification {
-  return (DOC_CLASSIFICATIONS as readonly string[]).includes(s);
+// classification is free-form text now (atelier indexes docs, design,
+// and PM items, and each has its own native vocabulary). We accept
+// whatever the agent passes — no enum check.
+function validClassification(s: string): s is string {
+  return typeof s === "string" && s.length > 0;
 }
 
 /**
@@ -147,7 +148,7 @@ const addCmd: Command = {
     const classification = values.classification as string | undefined;
     if (classification !== undefined && !validClassification(classification)) {
       ui.error(
-        `Invalid classification "${classification}". Valid: ${DOC_CLASSIFICATIONS.join(", ")}.`
+        `Classification must be a non-empty string.`
       );
       return 2;
     }
@@ -176,7 +177,7 @@ const addCmd: Command = {
         docId,
         title,
         overview: values.overview as string | undefined,
-        classification: classification as DocClassification | undefined,
+        classification: classification,
         link: values.link as string | undefined,
         body,
         skipSourceValidation: values["no-validate-source"] === true,
@@ -481,7 +482,7 @@ const listCmd: Command = {
     const classFilter = values.classification as string | undefined;
     if (classFilter !== undefined && !validClassification(classFilter)) {
       ui.error(
-        `Invalid --classification "${classFilter}". Valid: ${DOC_CLASSIFICATIONS.join(", ")}.`
+        `--classification must be a non-empty string.`
       );
       return 2;
     }
@@ -711,7 +712,7 @@ const updateCmd: Command = {
     const classification = values.classification as string | undefined;
     if (classification !== undefined && classification !== "" && !validClassification(classification)) {
       ui.error(
-        `Invalid classification "${classification}". Valid: ${DOC_CLASSIFICATIONS.join(", ")}.`
+        `Classification must be a non-empty string.`
       );
       return 2;
     }
@@ -752,7 +753,7 @@ const updateCmd: Command = {
             ? undefined
             : classification === ""
               ? null
-              : (classification as DocClassification),
+              : classification,
         link: values.link as string | undefined,
         body,
       });

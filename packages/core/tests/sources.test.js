@@ -37,7 +37,7 @@ test("deriveSourceId slugifies a human name", () => {
   assert.equal(deriveSourceId(""), "source");
 });
 
-test("registerSource persists id + name + enabled", async () => {
+test("registerSource persists id + name + enabled + defaults category to docs", async () => {
   const root = await workspace();
   const source = await registerSource(root, {
     id: "company-notion",
@@ -46,11 +46,30 @@ test("registerSource persists id + name + enabled", async () => {
   assert.equal(source.id, "company-notion");
   assert.equal(source.name, "Company Notion");
   assert.equal(source.enabled, true);
+  // Category defaults to "docs" so existing one-line registrations
+  // still work without passing --category.
+  assert.equal(source.category, "docs");
 
   const cfg = await loadSourcesConfig(root);
-  assert.equal(cfg.version, 2);
+  assert.equal(cfg.version, 3);
   assert.equal(cfg.sources.length, 1);
-  assert.equal(cfg.sources[0].id, "company-notion");
+  assert.equal(cfg.sources[0].category, "docs");
+});
+
+test("registerSource honors an explicit category (design / pm)", async () => {
+  const root = await workspace();
+  const design = await registerSource(root, {
+    id: "figma",
+    name: "Figma",
+    category: "design",
+  });
+  const pm = await registerSource(root, {
+    id: "linear",
+    name: "Linear",
+    category: "pm",
+  });
+  assert.equal(design.category, "design");
+  assert.equal(pm.category, "pm");
 });
 
 test("registerSource stores the free-form config blob verbatim", async () => {

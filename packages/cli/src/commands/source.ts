@@ -9,10 +9,12 @@ import {
   readSourceSetup,
   updateSourceSetup,
   deriveSourceId,
+  SOURCE_CATEGORIES,
   SourceAlreadyRegisteredError,
   SourceNotFoundError,
   NotInsideWorkspaceError,
   type Source,
+  type SourceCategory,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
@@ -69,16 +71,22 @@ const registerCmd: Command = {
   description:
     "Atelier doesn't fetch from sources itself — agents do. This command\n" +
     "records (a) the agent-facing config the agent will read at fetch\n" +
-    "time and (b) an optional connection runbook the agent follows to\n" +
-    "set up access for the first time.\n\n" +
+    "time, (b) an optional connection runbook the agent follows to set\n" +
+    "up access, and (c) a category that tells atelier what kind of\n" +
+    "items live under this source.\n\n" +
+    "Categories:\n" +
+    "  docs   — knowledge: PRDs, RFCs, runbooks, transcripts (default)\n" +
+    "  design — UI / system design: Figma frames, Excalidraw canvases\n" +
+    "  pm     — product management: initiatives, milestones, tickets\n\n" +
     "Example:\n" +
-    '  atelier source register company-notion \\\n' +
-    '    --name "Company Notion" \\\n' +
-    '    --config \'{"mcp_server":"notion-mcp","workspace":"acme"}\' \\\n' +
-    "    --setup-file ./notion-setup.md",
+    '  atelier source register linear \\\n' +
+    '    --name "Linear" --category pm \\\n' +
+    '    --config \'{"mcp_server":"linear-mcp","team":"acme"}\' \\\n' +
+    "    --setup-file ./linear-setup.md",
   positionals: ["id"],
   options: {
     name: { type: "string", short: "n" },
+    category: { type: "string" },
     config: { type: "string", short: "c" },
     "config-file": { type: "string" },
     "setup-file": { type: "string" },
@@ -100,6 +108,17 @@ const registerCmd: Command = {
       ui.error("Could not derive an id from --name; pass an explicit positional id.");
       return 2;
     }
+
+    // Default to "docs" when --category isn't passed. Validate
+    // anything else.
+    const categoryRaw = (values.category as string | undefined) ?? "docs";
+    if (!SOURCE_CATEGORIES.includes(categoryRaw as SourceCategory)) {
+      ui.error(
+        `--category must be one of: ${SOURCE_CATEGORIES.join(", ")}.`
+      );
+      return 2;
+    }
+    const category = categoryRaw as SourceCategory;
 
     let config: Record<string, unknown> | undefined;
     const configInline = values.config as string | undefined;
@@ -153,11 +172,14 @@ const registerCmd: Command = {
       const source = await registerSource(workspaceRoot, {
         id,
         name,
+        category,
         config,
         setupInstructions,
         enabled: values.disabled === true ? false : true,
       });
-      ui.success(`Registered source ${ui.bold(source.id)} (${source.name}).`);
+      ui.success(
+        `Registered ${ui.dim(`[${source.category}]`)} ${ui.bold(source.id)} (${source.name}).`
+      );
       if (source.setupFile) {
         ui.print(
           `  ${ui.dim(`Setup runbook saved at .atelier/${source.setupFile}`)}`
@@ -212,14 +234,18 @@ const listCmd: Command = {
       "NAME".length,
       ...sources.map((s) => s.name.length)
     );
+    const catWidth = Math.max(
+      "CATEGORY".length,
+      ...sources.map((s) => s.category.length)
+    );
     ui.print(
-      `    ${ui.dim("ID".padEnd(idWidth))}  ${ui.dim("NAME".padEnd(nameWidth))}  ${ui.dim("STATE")}  ${ui.dim("SETUP")}`
+      `    ${ui.dim("ID".padEnd(idWidth))}  ${ui.dim("CATEGORY".padEnd(catWidth))}  ${ui.dim("NAME".padEnd(nameWidth))}  ${ui.dim("STATE")}  ${ui.dim("SETUP")}`
     );
     for (const s of sources) {
       const state = s.enabled ? "enabled " : "disabled";
       const setup = s.setupFile ? "✓ runbook" : "no runbook";
       ui.print(
-        `  ${ui.green("·")} ${s.id.padEnd(idWidth)}  ${s.name.padEnd(nameWidth)}  ${state}  ${setup}`
+        `  ${ui.green("·")} ${s.id.padEnd(idWidth)}  ${s.category.padEnd(catWidth)}  ${s.name.padEnd(nameWidth)}  ${state}  ${setup}`
       );
     }
     return 0;
@@ -261,6 +287,7 @@ const showCmd: Command = {
       return 1;
     }
     ui.print(ui.bold(source.name) + `  ${ui.dim("(id: " + source.id + ")")}`);
+    ui.print(`  ${ui.dim("category:")}   ${source.category}`);
     ui.print(`  ${ui.dim("enabled:")}    ${source.enabled ? "yes" : "no"}`);
     if (source.config) {
       ui.print(`  ${ui.dim("config:")}`);
@@ -471,7 +498,10 @@ const bootstrapCmd: Command = {
     ui.print(ui.bold(`Bootstrapping ${sources.length} source(s)`));
     ui.blank();
     for (const source of sources) {
-      ui.print(ui.bold("─── " + source.id + " ───  ") + ui.dim(source.name));
+      ui.print(
+        ui.bold("─── " + source.id + " ───  ") +
+          ui.dim(`[${source.category}] ${source.name}`)
+      );
       if (source.config) {
         ui.print(`  ${ui.dim("config:")}`);
         const json = JSON.stringify(source.config, null, 2)
