@@ -43,6 +43,11 @@ export interface WorkspacePaths {
   features: string;
   /** `.atelier/sources/` — per-source setup runbooks (sources/<id>/setup.md) */
   sources: string;
+  /**
+   * `.atelier/sessions/` — speaking-module conversation records,
+   * one folder per session containing session.yaml + transcript.md.
+   */
+  sessions: string;
   /** `.atelier/docs/` — doc map entries (nested by source id) */
   docs: string;
   /** `.atelier/discrepancies.yaml` — running discrepancy log */
@@ -78,6 +83,7 @@ export function workspacePaths(
     reposConfig: path.join(atelier, "repos.yaml"),
     features: path.join(atelier, "features"),
     sources: path.join(atelier, "sources"),
+    sessions: path.join(atelier, "sessions"),
     docs: path.join(atelier, "docs"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
     issues: path.join(atelier, "issues"),

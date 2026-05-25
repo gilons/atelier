@@ -5,6 +5,7 @@ import { dispatch, type CommandRegistry } from "./command.js";
 import { initCommand } from "./commands/init.js";
 import { repoCommand } from "./commands/repo.js";
 import { sourceCommand } from "./commands/source.js";
+import { sessionCommand } from "./commands/session.js";
 import { featureCommand } from "./commands/feature.js";
 import { docCommand } from "./commands/doc.js";
 import { discrepancyCommand } from "./commands/discrepancy.js";
@@ -16,6 +17,7 @@ const registry: CommandRegistry = {
     initCommand,
     repoCommand,
     sourceCommand,
+    sessionCommand,
     featureCommand,
     docCommand,
     discrepancyCommand,

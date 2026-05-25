@@ -10,6 +10,8 @@ import type {
   FeatureCodeRef,
   FeatureItemRef,
   ItemFrontMatter,
+  SessionFrontMatter,
+  SessionStatus,
   Discrepancy,
   DiscrepancyLog,
   DiscrepancySeverity,
@@ -471,6 +473,7 @@ export function validateDocEntryFrontMatter(
     classification,
     link,
     parent,
+    fromSession,
     createdAt,
     updatedAt,
   } = raw;
@@ -499,6 +502,9 @@ export function validateDocEntryFrontMatter(
   if (parent !== undefined && !isNonEmptyString(parent)) {
     pushIssue(issues, "$.parent", "if present, must be a non-empty string (itemId of the parent item in the same source)");
   }
+  if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
+    pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id that birthed this item)");
+  }
   if (!isNonEmptyString(createdAt)) {
     pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
   }
@@ -518,6 +524,70 @@ export function validateDocEntryFrontMatter(
   if (classification !== undefined) value.classification = classification as string;
   if (link !== undefined) value.link = link as string;
   if (parent !== undefined) value.parent = parent as string;
+  if (fromSession !== undefined) value.fromSession = fromSession as string;
+  return { ok: true, value, issues: [] };
+}
+
+// ============================================================
+// Session front-matter
+// ============================================================
+
+export function validateSessionFrontMatter(
+  raw: unknown
+): ValidationResult<SessionFrontMatter> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return {
+      ok: false,
+      issues: [{ path: "$", message: "expected an object at the top level" }],
+    };
+  }
+  const {
+    id,
+    title,
+    participants,
+    status,
+    startedAt,
+    endedAt,
+  } = raw;
+
+  if (!isNonEmptyString(id)) {
+    pushIssue(issues, "$.id", "must be a non-empty string");
+  }
+  if (!isNonEmptyString(title)) {
+    pushIssue(issues, "$.title", "must be a non-empty string");
+  }
+  if (participants !== undefined) {
+    if (!Array.isArray(participants)) {
+      pushIssue(issues, "$.participants", 'if present, must be a list of strings (e.g. ["alice","bob"])');
+    } else if (participants.some((p) => !isNonEmptyString(p))) {
+      pushIssue(issues, "$.participants", "every participant must be a non-empty string");
+    }
+  }
+  const validStatus =
+    typeof status === "string" && (status === "active" || status === "ended");
+  if (!validStatus) {
+    pushIssue(issues, "$.status", 'must be "active" or "ended"');
+  }
+  if (!isNonEmptyString(startedAt)) {
+    pushIssue(issues, "$.startedAt", "must be a non-empty ISO timestamp string");
+  }
+  // endedAt is required iff status is "ended" — that's enforced at
+  // the application layer (endSession sets it explicitly). Here we
+  // only validate the type when present.
+  if (endedAt !== undefined && !isNonEmptyString(endedAt)) {
+    pushIssue(issues, "$.endedAt", "if present, must be a non-empty ISO timestamp string");
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+  const value: SessionFrontMatter = {
+    id: id as string,
+    title: title as string,
+    status: status as SessionStatus,
+    startedAt: startedAt as string,
+  };
+  if (Array.isArray(participants)) value.participants = participants as string[];
+  if (endedAt !== undefined) value.endedAt = endedAt as string;
   return { ok: true, value, issues: [] };
 }
 

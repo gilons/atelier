@@ -191,6 +191,8 @@ export function serializeDocFile(doc: DocEntry): string {
   if (doc.overview !== undefined && doc.overview !== "") fm.overview = doc.overview;
   if (doc.classification !== undefined) fm.classification = doc.classification;
   if (doc.link !== undefined) fm.link = doc.link;
+  if (doc.parent !== undefined) fm.parent = doc.parent;
+  if (doc.fromSession !== undefined) fm.fromSession = doc.fromSession;
   fm.createdAt = doc.createdAt;
   fm.updatedAt = doc.updatedAt;
   return buildFrontMatterFile(fm, doc.body);
@@ -204,6 +206,8 @@ function toFrontMatter(doc: DocEntry): DocEntryFrontMatter {
     overview: doc.overview,
     classification: doc.classification,
     link: doc.link,
+    parent: doc.parent,
+    fromSession: doc.fromSession,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -222,6 +226,13 @@ export interface AddDocOptions {
   classification?: DocClassification;
   /** Pointer the agent uses to fetch the full content. */
   link?: string;
+  /** Optional parent itemId for hierarchy (initiative → ticket, file → frame). */
+  parent?: string;
+  /**
+   * Optional session id this item was born from. Set by the agent
+   * after extracting items from a recorded conversation.
+   */
+  fromSession?: string;
   /** Markdown body — the agent-curated summary. */
   body?: string;
   /**
@@ -269,6 +280,8 @@ export async function addDoc(
     overview: opts.overview,
     classification: opts.classification,
     link: opts.link,
+    parent: opts.parent,
+    fromSession: opts.fromSession,
     createdAt: now,
     updatedAt: now,
     body: opts.body ?? "",

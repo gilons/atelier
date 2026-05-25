@@ -280,6 +280,14 @@ export interface ItemFrontMatter {
    * the agent wrote.
    */
   parent?: string;
+  /**
+   * Optional session id this item was born from. Set when the
+   * agent creates an item out of a live conversation captured by
+   * the speaking module (`atelier session start` → notes → end →
+   * agent extracts items). Lets `/session show` enumerate items
+   * that came out of a given conversation later.
+   */
+  fromSession?: string;
   /** ISO timestamp when first registered. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */
@@ -302,6 +310,63 @@ export interface Item extends ItemFrontMatter {
 export type DocEntry = Item;
 /** @deprecated use ItemFrontMatter — same shape, clearer name. */
 export type DocEntryFrontMatter = ItemFrontMatter;
+
+// ============================================================
+// Sessions — the speaking-module record of a conversation
+// ============================================================
+
+/** Workflow state of a recorded conversation. */
+export type SessionStatus = "active" | "ended";
+
+export const SESSION_STATUSES: ReadonlyArray<SessionStatus> = ["active", "ended"];
+
+/**
+ * Structured fields from a session's session.yaml.
+ *
+ * A session is one bounded conversation — a brainstorm, a stand-up,
+ * a user interview. Atelier stores it as:
+ *   .atelier/sessions/<id>/
+ *     session.yaml      — these front-matter fields
+ *     transcript.md     — the running transcript (appended via
+ *                         `atelier session note`)
+ *
+ * Items created from the session set their `fromSession` field to
+ * this session's id, so `atelier session show <id>` can enumerate
+ * "what came out of this conversation" later.
+ *
+ * The transcription engine is the agent's department — atelier
+ * doesn't bundle Whisper / mic capture. The agent (Claude voice
+ * mode, Otter, a phone pipeline, whatever) feeds atelier transcript
+ * chunks; atelier stores + organizes them.
+ */
+export interface SessionFrontMatter {
+  /** Stable id (slug + short suffix). Used in folder name + URLs. */
+  id: string;
+  /** Display title. Free-form. */
+  title: string;
+  /**
+   * Optional list of participants (free-form names — atelier doesn't
+   * resolve them against any directory). The agent fills these in
+   * when it's known who's in the room.
+   */
+  participants?: string[];
+  /**
+   * Workflow state. `active` means notes can still be appended;
+   * `ended` means the conversation closed and the agent is now
+   * doing post-extraction.
+   */
+  status: SessionStatus;
+  /** ISO timestamp when the session started. */
+  startedAt: string;
+  /** ISO timestamp when the session ended (only when status='ended'). */
+  endedAt?: string;
+}
+
+/** A loaded session: metadata + the raw transcript text. */
+export interface Session extends SessionFrontMatter {
+  /** Contents of transcript.md verbatim. May be empty for new sessions. */
+  transcript: string;
+}
 
 
 // ============================================================

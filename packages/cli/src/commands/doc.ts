@@ -100,6 +100,8 @@ const addCmd: Command = {
     link: { type: "string", short: "l" },
     overview: { type: "string" },
     classification: { type: "string", short: "c" },
+    parent: { type: "string" },
+    "from-session": { type: "string" },
     "body-file": { type: "string" },
     "body-text": { type: "string" },
     "no-validate-source": { type: "boolean" },
@@ -179,6 +181,8 @@ const addCmd: Command = {
         overview: values.overview as string | undefined,
         classification: classification,
         link: values.link as string | undefined,
+        parent: values.parent as string | undefined,
+        fromSession: values["from-session"] as string | undefined,
         body,
         skipSourceValidation: values["no-validate-source"] === true,
       });
