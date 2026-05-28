@@ -9,11 +9,14 @@
   },
   "files": [
     "dist",
+    "macos-helper",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && npm run build:macos-helper",
+    "build:macos-helper": "./scripts/compile-macos-helper.sh",
     "clean": "tsc --build --clean && rm -rf dist",
     "test": "node --test tests/**/*.test.js"
   },

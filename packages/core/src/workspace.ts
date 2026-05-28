@@ -87,7 +87,7 @@ export async function initWorkspace(
   // Create directory tree
   await fs.mkdir(paths.atelier, { recursive: true });
   await fs.mkdir(paths.features, { recursive: true });
-  await fs.mkdir(paths.docs, { recursive: true });
+  await fs.mkdir(paths.items, { recursive: true });
   await fs.mkdir(paths.issues, { recursive: true });
   await fs.mkdir(paths.ui, { recursive: true });
   await fs.mkdir(paths.cache, { recursive: true });

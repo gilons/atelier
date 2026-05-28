@@ -306,11 +306,6 @@ export interface Item extends ItemFrontMatter {
   body: string;
 }
 
-/** @deprecated use Item — same shape, clearer name. */
-export type DocEntry = Item;
-/** @deprecated use ItemFrontMatter — same shape, clearer name. */
-export type DocEntryFrontMatter = ItemFrontMatter;
-
 // ============================================================
 // Sessions — the speaking-module record of a conversation
 // ============================================================
@@ -360,6 +355,21 @@ export interface SessionFrontMatter {
   startedAt: string;
   /** ISO timestamp when the session ended (only when status='ended'). */
   endedAt?: string;
+  /**
+   * Length of each audio chunk (in seconds) when the session was
+   * recorded in chunked mode. Absent for non-chunked sessions
+   * (single recording.wav) or transcript-only sessions (import).
+   * Used by `atelier session check` to tell the agent how often to
+   * poll for new chunks.
+   */
+  chunkSeconds?: number;
+  /**
+   * Language code (e.g. "en", "de", "auto") to use when transcribing
+   * this session's audio. Overrides the workspace-level
+   * `audio.yaml#whisper.language`. Surfaced to the agent via
+   * `session check` so it knows which `--language` to pass to its STT.
+   */
+  language?: string;
 }
 
 /** A loaded session: metadata + the raw transcript text. */

@@ -6,26 +6,26 @@ import * as path from "node:path";
 import {
   initWorkspace,
   registerSource,
-  addDoc,
-  loadDoc,
-  listDocs,
-  removeDoc,
-  renameDoc,
-  updateDoc,
-  encodeDocFilenameStem,
-  decodeDocFilenameStem,
-  parseDocFile,
-  serializeDocFile,
-  DocNotFoundError,
-  DocAlreadyExistsError,
-  DocFileError,
-  DocReferenceValidationError,
+  addItem,
+  loadItem,
+  listItems,
+  removeItem,
+  renameItem,
+  updateItem,
+  encodeItemFilenameStem,
+  decodeItemFilenameStem,
+  parseItemFile,
+  serializeItemFile,
+  ItemNotFoundError,
+  ItemAlreadyExistsError,
+  ItemFileError,
+  ItemReferenceValidationError,
 } from "../dist/index.js";
 
 /**
  * Tests for the agent-curated doc map.
  *
- * Each doc is one folder under `.atelier/docs/<source>/<encoded-docId>/`
+ * Each doc is one folder under `.atelier/items/<source>/<encoded-docId>/`
  * containing a `summary.md` (front-matter + agent-written summary).
  * Atelier stores no body — the agent fetches the underlying document
  * via `link` using its own integrations.
@@ -40,19 +40,19 @@ async function workspace() {
 }
 
 // ============================================================
-// encodeDocFilenameStem
+// encodeItemFilenameStem
 // ============================================================
 
-test("encodeDocFilenameStem keeps safe chars verbatim", () => {
-  assert.equal(encodeDocFilenameStem("abc-123_foo.bar"), "abc-123_foo.bar");
+test("encodeItemFilenameStem keeps safe chars verbatim", () => {
+  assert.equal(encodeItemFilenameStem("abc-123_foo.bar"), "abc-123_foo.bar");
 });
 
-test("encodeDocFilenameStem percent-encodes slashes, spaces, colons", () => {
-  assert.equal(encodeDocFilenameStem("a/b c:d"), "a%2Fb%20c%3Ad");
+test("encodeItemFilenameStem percent-encodes slashes, spaces, colons", () => {
+  assert.equal(encodeItemFilenameStem("a/b c:d"), "a%2Fb%20c%3Ad");
 });
 
-test("encodeDocFilenameStem rejects an empty string", () => {
-  assert.throws(() => encodeDocFilenameStem(""));
+test("encodeItemFilenameStem rejects an empty string", () => {
+  assert.throws(() => encodeItemFilenameStem(""));
 });
 
 test("encode/decode round-trip for ASCII ids (the common case)", () => {
@@ -61,15 +61,15 @@ test("encode/decode round-trip for ASCII ids (the common case)", () => {
   // common-case ASCII ids docIds tend to be (Notion UUIDs,
   // GitHub owner/repo#N, file paths).
   for (const id of ["a/b", "owner/repo#42", "uuid-with-dashes", "foo bar:baz"]) {
-    assert.equal(decodeDocFilenameStem(encodeDocFilenameStem(id)), id);
+    assert.equal(decodeItemFilenameStem(encodeItemFilenameStem(id)), id);
   }
 });
 
 // ============================================================
-// parseDocFile / serializeDocFile
+// parseItemFile / serializeItemFile
 // ============================================================
 
-test("serializeDocFile + parseDocFile round-trip the new front-matter shape", () => {
+test("serializeItemFile + parseItemFile round-trip the new front-matter shape", () => {
   const doc = {
     source: "notion",
     docId: "page-abc",
@@ -81,27 +81,27 @@ test("serializeDocFile + parseDocFile round-trip the new front-matter shape", ()
     updatedAt: "2026-05-23T00:00:00.000Z",
     body: "# Q3 Roadmap\n\n## Overview\n\nShipping the MVP.\n",
   };
-  const text = serializeDocFile(doc);
-  const parsed = parseDocFile(text, "/tmp/test.md");
+  const text = serializeItemFile(doc);
+  const parsed = parseItemFile(text, "/tmp/test.md");
   assert.deepEqual(parsed, doc);
 });
 
-test("parseDocFile rejects a file with no front-matter", () => {
+test("parseItemFile rejects a file with no front-matter", () => {
   assert.throws(
-    () => parseDocFile("no front matter here", "/tmp/x.md"),
-    DocFileError
+    () => parseItemFile("no front matter here", "/tmp/x.md"),
+    ItemFileError
   );
 });
 
 // ============================================================
-// addDoc / loadDoc
+// addItem / loadItem
 // ============================================================
 
-test("addDoc creates a folder with summary.md under .atelier/docs/<source>/", async () => {
+test("addItem creates a folder with summary.md under .atelier/items/<source>/", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "notion", name: "Notion" });
-    const doc = await addDoc(root, {
+    const doc = await addItem(root, {
       source: "notion",
       docId: "page-abc",
       title: "Onboarding PRD",
@@ -114,7 +114,7 @@ test("addDoc creates a folder with summary.md under .atelier/docs/<source>/", as
     const filePath = path.join(
       root,
       ".atelier",
-      "docs",
+      "items",
       "notion",
       "page-abc",
       "summary.md"
@@ -128,21 +128,21 @@ test("addDoc creates a folder with summary.md under .atelier/docs/<source>/", as
   }
 });
 
-test("addDoc rejects an unknown source unless skipSourceValidation is set", async () => {
+test("addItem rejects an unknown source unless skipSourceValidation is set", async () => {
   const { umbrella, root } = await workspace();
   try {
     await assert.rejects(
       () =>
-        addDoc(root, {
+        addItem(root, {
           source: "ghost",
           docId: "x",
           title: "x",
         }),
-      DocReferenceValidationError
+      ItemReferenceValidationError
     );
     // Same call with skipSourceValidation succeeds — used for tests
     // and for synthetic source ids like "manual".
-    const doc = await addDoc(root, {
+    const doc = await addItem(root, {
       source: "manual",
       docId: "x",
       title: "x",
@@ -154,25 +154,25 @@ test("addDoc rejects an unknown source unless skipSourceValidation is set", asyn
   }
 });
 
-test("addDoc rejects duplicate docIds within the same source", async () => {
+test("addItem rejects duplicate docIds within the same source", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    await addDoc(root, { source: "s", docId: "x", title: "X" });
+    await addItem(root, { source: "s", docId: "x", title: "X" });
     await assert.rejects(
-      () => addDoc(root, { source: "s", docId: "x", title: "X again" }),
-      DocAlreadyExistsError
+      () => addItem(root, { source: "s", docId: "x", title: "X again" }),
+      ItemAlreadyExistsError
     );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("loadDoc reads back what addDoc wrote", async () => {
+test("loadItem reads back what addItem wrote", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    await addDoc(root, {
+    await addItem(root, {
       source: "s",
       docId: "x",
       title: "X",
@@ -180,7 +180,7 @@ test("loadDoc reads back what addDoc wrote", async () => {
       link: "https://example.com",
       body: "body content",
     });
-    const doc = await loadDoc(root, "s", "x");
+    const doc = await loadItem(root, "s", "x");
     assert.equal(doc.title, "X");
     assert.equal(doc.overview, "one-liner");
     assert.equal(doc.link, "https://example.com");
@@ -192,72 +192,72 @@ test("loadDoc reads back what addDoc wrote", async () => {
   }
 });
 
-test("loadDoc throws DocNotFoundError on a missing id", async () => {
+test("loadItem throws ItemNotFoundError on a missing id", async () => {
   const { umbrella, root } = await workspace();
   try {
-    await assert.rejects(() => loadDoc(root, "s", "ghost"), DocNotFoundError);
+    await assert.rejects(() => loadItem(root, "s", "ghost"), ItemNotFoundError);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
 // ============================================================
-// listDocs
+// listItems
 // ============================================================
 
-test("listDocs walks every source folder, skipping non-doc subdirectories", async () => {
+test("listItems walks every source folder, skipping non-doc subdirectories", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "a", name: "A" });
     await registerSource(root, { id: "b", name: "B" });
-    await addDoc(root, { source: "a", docId: "one", title: "One" });
-    await addDoc(root, { source: "a", docId: "two", title: "Two" });
-    await addDoc(root, { source: "b", docId: "three", title: "Three" });
+    await addItem(root, { source: "a", docId: "one", title: "One" });
+    await addItem(root, { source: "a", docId: "two", title: "Two" });
+    await addItem(root, { source: "b", docId: "three", title: "Three" });
     // Drop an unrelated folder to make sure we don't crash on it.
-    await fs.mkdir(path.join(root, ".atelier", "docs", "a", "scratch"), {
+    await fs.mkdir(path.join(root, ".atelier", "items", "a", "scratch"), {
       recursive: true,
     });
-    const { docs, errors } = await listDocs(root);
+    const { items, errors } = await listItems(root);
     assert.equal(errors.length, 0);
-    assert.equal(docs.length, 3);
-    const titles = docs.map((d) => d.doc.title).sort();
+    assert.equal(items.length, 3);
+    const titles = items.map((d) => d.item.title).sort();
     assert.deepEqual(titles, ["One", "Three", "Two"]);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("listDocs with a source filter only returns that source's docs", async () => {
+test("listItems with a source filter only returns that source's docs", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "a", name: "A" });
     await registerSource(root, { id: "b", name: "B" });
-    await addDoc(root, { source: "a", docId: "one", title: "One" });
-    await addDoc(root, { source: "b", docId: "two", title: "Two" });
-    const { docs } = await listDocs(root, "a");
-    assert.equal(docs.length, 1);
-    assert.equal(docs[0].doc.title, "One");
+    await addItem(root, { source: "a", docId: "one", title: "One" });
+    await addItem(root, { source: "b", docId: "two", title: "Two" });
+    const { items } = await listItems(root, "a");
+    assert.equal(items.length, 1);
+    assert.equal(items[0].item.title, "One");
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
 // ============================================================
-// updateDoc
+// updateItem
 // ============================================================
 
-test("updateDoc patches selected fields + bumps updatedAt", async () => {
+test("updateItem patches selected fields + bumps updatedAt", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    const before = await addDoc(root, {
+    const before = await addItem(root, {
       source: "s",
       docId: "x",
       title: "X",
       overview: "first",
     });
     await new Promise((r) => setTimeout(r, 5));
-    const after = await updateDoc(root, "s", "x", {
+    const after = await updateItem(root, "s", "x", {
       title: "X v2",
       overview: "second",
       link: "https://new.example.com",
@@ -271,11 +271,11 @@ test("updateDoc patches selected fields + bumps updatedAt", async () => {
   }
 });
 
-test("updateDoc clears optional fields when passed empty string / null", async () => {
+test("updateItem clears optional fields when passed empty string / null", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    await addDoc(root, {
+    await addItem(root, {
       source: "s",
       docId: "x",
       title: "X",
@@ -283,7 +283,7 @@ test("updateDoc clears optional fields when passed empty string / null", async (
       classification: "prd",
       link: "https://to.clear",
     });
-    const after = await updateDoc(root, "s", "x", {
+    const after = await updateItem(root, "s", "x", {
       overview: "",
       classification: null,
       link: "",
@@ -297,20 +297,20 @@ test("updateDoc clears optional fields when passed empty string / null", async (
 });
 
 // ============================================================
-// renameDoc
+// renameItem
 // ============================================================
 
-test("renameDoc moves the folder + rewrites front-matter", async () => {
+test("renameItem moves the folder + rewrites front-matter", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "manual", name: "Manual" });
-    await addDoc(root, {
+    await addItem(root, {
       source: "manual",
       docId: "untitled-1",
       title: "Cloud Services Contract",
       body: "## Overview\n\nA cloud contract.\n",
     });
-    const renamed = await renameDoc(
+    const renamed = await renameItem(
       root,
       "manual",
       "untitled-1",
@@ -319,13 +319,13 @@ test("renameDoc moves the folder + rewrites front-matter", async () => {
     assert.equal(renamed.docId, "cloud-services-contract");
     // Folder moved.
     await assert.rejects(() =>
-      fs.access(path.join(root, ".atelier", "docs", "manual", "untitled-1"))
+      fs.access(path.join(root, ".atelier", "items", "manual", "untitled-1"))
     );
     const text = await fs.readFile(
       path.join(
         root,
         ".atelier",
-        "docs",
+        "items",
         "manual",
         "cloud-services-contract",
         "summary.md"
@@ -338,27 +338,27 @@ test("renameDoc moves the folder + rewrites front-matter", async () => {
   }
 });
 
-test("renameDoc refuses to clobber an existing doc at the target", async () => {
+test("renameItem refuses to clobber an existing doc at the target", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    await addDoc(root, { source: "s", docId: "a", title: "A" });
-    await addDoc(root, { source: "s", docId: "b", title: "B" });
+    await addItem(root, { source: "s", docId: "a", title: "A" });
+    await addItem(root, { source: "s", docId: "b", title: "B" });
     await assert.rejects(
-      () => renameDoc(root, "s", "a", "b"),
-      DocAlreadyExistsError
+      () => renameItem(root, "s", "a", "b"),
+      ItemAlreadyExistsError
     );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("renameDoc with the same id is a no-op", async () => {
+test("renameItem with the same id is a no-op", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    await addDoc(root, { source: "s", docId: "x", title: "X" });
-    const result = await renameDoc(root, "s", "x", "x");
+    await addItem(root, { source: "s", docId: "x", title: "X" });
+    const result = await renameItem(root, "s", "x", "x");
     assert.equal(result.docId, "x");
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
@@ -366,36 +366,36 @@ test("renameDoc with the same id is a no-op", async () => {
 });
 
 // ============================================================
-// removeDoc
+// removeItem
 // ============================================================
 
-test("removeDoc nukes the whole folder (summary.md + any sidecars)", async () => {
+test("removeItem nukes the whole folder (summary.md + any sidecars)", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
-    await addDoc(root, { source: "s", docId: "x", title: "X" });
+    await addItem(root, { source: "s", docId: "x", title: "X" });
     // Drop a sidecar to make sure the folder rm takes it too.
     await fs.writeFile(
-      path.join(root, ".atelier", "docs", "s", "x", "anchors.json"),
+      path.join(root, ".atelier", "items", "s", "x", "anchors.json"),
       "[]",
       "utf8"
     );
-    await removeDoc(root, "s", "x");
+    await removeItem(root, "s", "x");
     await assert.rejects(() =>
-      fs.access(path.join(root, ".atelier", "docs", "s", "x"))
+      fs.access(path.join(root, ".atelier", "items", "s", "x"))
     );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("removeDoc on a missing id throws DocNotFoundError", async () => {
+test("removeItem on a missing id throws ItemNotFoundError", async () => {
   const { umbrella, root } = await workspace();
   try {
     await registerSource(root, { id: "s", name: "S" });
     await assert.rejects(
-      () => removeDoc(root, "s", "ghost"),
-      DocNotFoundError
+      () => removeItem(root, "s", "ghost"),
+      ItemNotFoundError
     );
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });

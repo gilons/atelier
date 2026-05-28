@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.atelier.systemaudio</string>
+    <key>CFBundleName</key>
+    <string>atelier-systemaudio</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>atelier captures the audio your computer is playing so it can record both sides of calls and meetings (your mic + what you hear in headphones). No video is recorded.</string>
+</dict>
+</plist>
+</content>

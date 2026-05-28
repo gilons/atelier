@@ -132,6 +132,20 @@ export interface StartSessionOptions {
    * Used by `atelier session import` for finished conversations.
    */
   alreadyEnded?: boolean;
+  /**
+   * Length of each audio chunk in seconds when the session is being
+   * recorded in chunked mode. Persisted to session.yaml so
+   * `atelier session check` can echo the polling cadence back to the
+   * agent without the user having to remember what they passed.
+   */
+  chunkSeconds?: number;
+  /**
+   * Language code (e.g. "en", "de", "auto") to use when transcribing
+   * this session. Overrides the workspace-level audio.yaml setting.
+   * Persisted so the agent's polling loop can pass the right
+   * `--language` to its STT after the user has moved on.
+   */
+  language?: string;
 }
 
 export async function startSession(
@@ -160,6 +174,8 @@ export async function startSession(
     fm.participants = opts.participants;
   }
   if (opts.alreadyEnded) fm.endedAt = startedAt.toISOString();
+  if (opts.chunkSeconds !== undefined) fm.chunkSeconds = opts.chunkSeconds;
+  if (opts.language) fm.language = opts.language;
 
   await fs.mkdir(folder, { recursive: true });
   await writeYamlFile(
@@ -184,7 +200,11 @@ export async function startSession(
  *
  * Rejects when the session is already ended; the agent should
  * `session start` a new one for follow-up work instead of
- * extending a closed conversation.
+ * extending a closed conversation. The exception is chunked-mode
+ * draining — use {@link appendChunkTranscript} when the note is a
+ * post-recording transcription of an actual chunk on disk; that
+ * variant is allowed on ended sessions because the audio was
+ * captured while it was active.
  */
 export async function appendToSession(
   workspaceRoot: string,
@@ -223,6 +243,8 @@ export async function endSession(
     endedAt: new Date().toISOString(),
   };
   if (session.participants) fm.participants = session.participants;
+  if (session.chunkSeconds !== undefined) fm.chunkSeconds = session.chunkSeconds;
+  if (session.language) fm.language = session.language;
   await writeYamlFile(
     sessionYamlPath(workspaceRoot, id),
     fm,
@@ -328,5 +350,168 @@ export async function removeSession(
     endedAt: session.endedAt,
     participants: session.participants,
   };
+}
+
+// ============================================================
+// Chunked recordings — polling support for the agent
+// ============================================================
+
+/**
+ * Where chunked audio recordings land within a session folder. Each
+ * file is one segment produced by the recorder (e.g. `0001.wav`,
+ * `0002.wav`, …). The folder only exists for sessions started with
+ * `atelier session record --chunk N`; non-chunked sessions write a
+ * single `recording.wav` at the session root instead.
+ */
+function sessionChunksDir(workspaceRoot: string, id: string): string {
+  return path.join(sessionFolderPath(workspaceRoot, id), "chunks");
+}
+
+/**
+ * Marker file listing chunks the agent has already turned into
+ * transcript notes. One filename per line. Append-only so we don't
+ * lose history if the file's edited by hand. The agent updates it
+ * via `atelier session note --chunk <name>`.
+ */
+function sessionConsumedFile(workspaceRoot: string, id: string): string {
+  return path.join(sessionFolderPath(workspaceRoot, id), "consumed.txt");
+}
+
+export interface SessionChunkInfo {
+  /** Filename relative to `chunks/`, e.g. "0001.wav". */
+  name: string;
+  /** Absolute path on disk. */
+  filePath: string;
+  /** File size in bytes — proxy for "is this finished or still being written?" */
+  bytes: number;
+  /** True when the chunk hasn't been recorded against in consumed.txt yet. */
+  pending: boolean;
+}
+
+/**
+ * List every chunk under a session's `chunks/` folder (if it exists)
+ * along with whether each one is still pending agent processing.
+ * Returns an empty array for non-chunked sessions — callers can
+ * check `session.chunkSeconds` to know which mode they're in.
+ *
+ * Files are sorted by name so the ordinal recorder output stays in
+ * time order even with lots of segments.
+ */
+export async function listSessionChunks(
+  workspaceRoot: string,
+  id: string
+): Promise<SessionChunkInfo[]> {
+  // Ensures the session exists / surfaces SessionNotFoundError
+  // consistently with the rest of the API.
+  await loadSession(workspaceRoot, id);
+
+  const dir = sessionChunksDir(workspaceRoot, id);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const consumed = await readConsumedSet(workspaceRoot, id);
+  const wavs = entries
+    .filter((e) => e.isFile() && /\.(wav|m4a|flac|mp3|ogg)$/i.test(e.name))
+    .map((e) => e.name)
+    .sort();
+  const out: SessionChunkInfo[] = [];
+  for (const name of wavs) {
+    const filePath = path.join(dir, name);
+    let bytes = 0;
+    try {
+      bytes = (await fs.stat(filePath)).size;
+    } catch {
+      /* race with the recorder rotating — treat as 0 */
+    }
+    out.push({
+      name,
+      filePath,
+      bytes,
+      pending: !consumed.has(name),
+    });
+  }
+  return out;
+}
+
+/**
+ * Mark a chunk as consumed (the agent has transcribed it + appended
+ * to transcript.md). Idempotent — re-marking is a no-op. Use this
+ * via `atelier session note --chunk <name>` rather than calling
+ * directly from agent code so the note + the mark land together.
+ */
+export async function markChunkConsumed(
+  workspaceRoot: string,
+  id: string,
+  chunkName: string
+): Promise<void> {
+  if (!chunkName || chunkName.includes("/") || chunkName.includes("\\")) {
+    throw new Error(`Invalid chunk name "${chunkName}" — pass a basename, not a path.`);
+  }
+  await loadSession(workspaceRoot, id);
+  const existing = await readConsumedSet(workspaceRoot, id);
+  if (existing.has(chunkName)) return;
+  const file = sessionConsumedFile(workspaceRoot, id);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.appendFile(file, chunkName + "\n", "utf8");
+}
+
+/**
+ * Atomically append a transcript chunk + mark the source audio chunk
+ * as consumed. Unlike {@link appendToSession}, this is allowed on
+ * sessions whose status is already "ended" because the chunked-mode
+ * workflow always transcribes *after* recording stops — the audio
+ * was captured while the session was active.
+ *
+ * Safety: we verify the chunk filename actually exists under the
+ * session's `chunks/` folder before allowing the append, so this
+ * relaxed rule can't be abused to drop free-form notes on closed
+ * sessions ("chunk: imaginary.wav" wouldn't match anything on disk).
+ */
+export async function appendChunkTranscript(
+  workspaceRoot: string,
+  id: string,
+  chunkName: string,
+  text: string
+): Promise<Session> {
+  if (!chunkName || chunkName.includes("/") || chunkName.includes("\\")) {
+    throw new Error(`Invalid chunk name "${chunkName}" — pass a basename, not a path.`);
+  }
+  // Surfaces SessionNotFoundError consistently with the rest of the API.
+  await loadSession(workspaceRoot, id);
+
+  // The chunk has to exist on disk. This prevents "drop a note on a
+  // closed session by lying about the chunk name" attacks against
+  // the relaxed ended-session rule below.
+  const chunkPath = path.join(sessionChunksDir(workspaceRoot, id), chunkName);
+  try {
+    await fs.access(chunkPath);
+  } catch {
+    throw new Error(
+      `No chunk named "${chunkName}" under .atelier/sessions/${id}/chunks/. Run \`atelier session check ${id}\` to see what's pending.`
+    );
+  }
+
+  const filePath = sessionTranscriptPath(workspaceRoot, id);
+  await fs.appendFile(filePath, text.endsWith("\n") ? text : text + "\n", "utf8");
+  await markChunkConsumed(workspaceRoot, id, chunkName);
+  return await loadSession(workspaceRoot, id);
+}
+
+async function readConsumedSet(
+  workspaceRoot: string,
+  id: string
+): Promise<Set<string>> {
+  const file = sessionConsumedFile(workspaceRoot, id);
+  try {
+    const text = await fs.readFile(file, "utf8");
+    return new Set(text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    throw err;
+  }
 }
 

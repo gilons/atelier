@@ -8,7 +8,7 @@ import {
   addRepo,
   registerSource,
   addFeature,
-  addDoc,
+  addItem,
   createSpec,
   listSpecs,
   loadSpec,
@@ -229,7 +229,7 @@ test("createSpec resolves doc refs that are indexed", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {
     await registerSource(workspaceRoot, { id: "notion", name: "Notion" });
-    await addDoc(workspaceRoot, {
+    await addItem(workspaceRoot, {
       source: "notion",
       docId: "page-abc",
       title: "Reports PRD",

@@ -7,7 +7,7 @@ import { repoCommand } from "./commands/repo.js";
 import { sourceCommand } from "./commands/source.js";
 import { sessionCommand } from "./commands/session.js";
 import { featureCommand } from "./commands/feature.js";
-import { docCommand } from "./commands/doc.js";
+import { itemCommand } from "./commands/item.js";
 import { discrepancyCommand } from "./commands/discrepancy.js";
 import { specCommand } from "./commands/spec.js";
 import { runRepl } from "./repl.js";
@@ -19,7 +19,7 @@ const registry: CommandRegistry = {
     sourceCommand,
     sessionCommand,
     featureCommand,
-    docCommand,
+    itemCommand,
     discrepancyCommand,
     specCommand,
   ],

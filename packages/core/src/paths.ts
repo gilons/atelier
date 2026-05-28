@@ -48,8 +48,8 @@ export interface WorkspacePaths {
    * one folder per session containing session.yaml + transcript.md.
    */
   sessions: string;
-  /** `.atelier/docs/` — doc map entries (nested by source id) */
-  docs: string;
+  /** `.atelier/items/` — item map entries (nested by source id) */
+  items: string;
   /** `.atelier/discrepancies.yaml` — running discrepancy log */
   discrepanciesLog: string;
   /** `.atelier/issues/` — issue folders */
@@ -84,7 +84,7 @@ export function workspacePaths(
     features: path.join(atelier, "features"),
     sources: path.join(atelier, "sources"),
     sessions: path.join(atelier, "sessions"),
-    docs: path.join(atelier, "docs"),
+    items: path.join(atelier, "items"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
     issues: path.join(atelier, "issues"),
     ui: path.join(atelier, "ui"),

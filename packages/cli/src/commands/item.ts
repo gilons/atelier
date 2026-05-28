@@ -4,18 +4,18 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import {
   requireWorkspaceRoot,
-  addDoc,
-  listDocs,
-  loadDoc,
-  removeDoc,
-  renameDoc,
-  updateDoc,
-  encodeDocFilenameStem,
+  addItem,
+  listItems,
+  loadItem,
+  removeItem,
+  renameItem,
+  updateItem,
+  encodeItemFilenameStem,
   listSources,
-  DocAlreadyExistsError,
-  DocNotFoundError,
-  DocFileError,
-  DocReferenceValidationError,
+  ItemAlreadyExistsError,
+  ItemNotFoundError,
+  ItemFileError,
+  ItemReferenceValidationError,
   NotInsideWorkspaceError,
 } from "@atelier/core";
 import type { Command, InvocationMode } from "../command.js";
@@ -24,21 +24,22 @@ import { pickSourceOrAll } from "../source-picker.js";
 import { PromptSession } from "../prompt.js";
 
 /**
- * `atelier doc` — manage the workspace's doc map.
+ * `atelier item` — manage the workspace's item map.
  *
- * Atelier stores an agent-curated summary per tracked document. The
- * agent that registered the doc fetched it with its own integrations,
- * produced the summary (overview + keywords + anchors), and wrote
- * it via `/doc add`. To re-read the original, the agent follows
- * `link` again.
+ * An "item" is anything an agent has indexed into atelier: a doc
+ * summary, a design file/frame, a PM ticket/initiative. Each entry
+ * is an agent-curated summary. The agent that registered the item
+ * fetched it with its own integrations, produced the summary
+ * (overview + keywords + anchors), and wrote it via `/item add`.
+ * To re-read the original, the agent follows `link` again.
  *
- * Two ways to add a doc:
+ * Two ways to add an item:
  *   - Scripted (agent-driven):
- *       atelier doc add <source>:<docId> \
+ *       atelier item add <source>:<docId> \
  *         --title "..." [--link <url>] [--overview "..."] \
  *         [--body-file <path> | --body-text "..."]
  *   - Interactive (human-driven):
- *       /doc add   → prompts for source, docId, title, link, opens
+ *       /item add  → prompts for source, docId, title, link, opens
  *                    $EDITOR on a summary scaffold.
  */
 
@@ -52,7 +53,7 @@ function validClassification(s: string): s is string {
 /**
  * Detect whether atelier is running under an AI agent that's going
  * to act on the follow-up instructions we print after a successful
- * /doc add. Standard truthy-env-var convention — any non-empty
+ * /item add. Standard truthy-env-var convention — any non-empty
  * value other than "0", "false", "off", "no" enables agent mode.
  */
 function isAgentMode(): boolean {
@@ -83,16 +84,16 @@ function normalizeFilenameToDocId(raw: string): string {
 
 const addCmd: Command = {
   name: "add",
-  summary: "Add a doc summary to the workspace (or open $EDITOR for one).",
+  summary: "Add an item summary to the workspace (or open $EDITOR for one).",
   description:
-    "The doc map is atelier's index of agent-curated summaries — each\n" +
+    "The item map is atelier's index of agent-curated summaries — each\n" +
     "entry holds a title, an optional `link` the agent uses to refetch\n" +
     "the original, and a markdown summary body.\n\n" +
     "Scripted form (agents):\n" +
-    '  atelier doc add <source>:<docId> --title "..." [--link <url>] \\\n' +
+    '  atelier item add <source>:<docId> --title "..." [--link <url>] \\\n' +
     "    [--overview \"...\"] [--classification <c>] [--body-file <path>]\n\n" +
     "Interactive form (humans):\n" +
-    "  /doc add  → prompts for source, docId, title, link, then opens\n" +
+    "  /item add  → prompts for source, docId, title, link, then opens\n" +
     "             $EDITOR on a summary scaffold.",
   positionals: ["sourceAndDocId"],
   options: {
@@ -129,7 +130,7 @@ const addCmd: Command = {
     if (!ref) {
       ui.error("Missing <source>:<docId> argument.");
       ui.print(
-        `  ${ui.dim('Usage: atelier doc add <source>:<docId> --title "<title>" [options]')}`
+        `  ${ui.dim('Usage: atelier item add <source>:<docId> --title "<title>" [options]')}`
       );
       return 2;
     }
@@ -174,7 +175,7 @@ const addCmd: Command = {
     }
 
     try {
-      const doc = await addDoc(workspaceRoot, {
+      const item = await addItem(workspaceRoot, {
         source,
         docId,
         title,
@@ -186,14 +187,14 @@ const addCmd: Command = {
         body,
         skipSourceValidation: values["no-validate-source"] === true,
       });
-      ui.success(`Indexed doc ${ui.bold(doc.docId)} in source ${ui.bold(doc.source)}.`);
+      ui.success(`Indexed item ${ui.bold(item.docId)} in source ${ui.bold(item.source)}.`);
       if (isAgentMode()) {
-        printAgentFollowUp(doc.source, doc.docId, { manual: false });
+        printAgentFollowUp(item.source, item.docId, { manual: false });
       }
       void mode;
       return 0;
     } catch (err) {
-      if (err instanceof DocAlreadyExistsError || err instanceof DocReferenceValidationError) {
+      if (err instanceof ItemAlreadyExistsError || err instanceof ItemReferenceValidationError) {
         ui.error(err.message);
         return 1;
       }
@@ -227,8 +228,8 @@ async function runEditorAdd(
       source = sources[0].id;
     } else {
       const picked = await pickSourceOrAll(workspaceRoot, {
-        question: "Which source does this doc belong to?",
-        help: "The agent will use this source's config to fetch the doc when needed.",
+        question: "Which source does this item belong to?",
+        help: "The agent will use this source's config to fetch the item when needed.",
         skipBelow: 0,
       });
       if (picked === null) {
@@ -238,7 +239,7 @@ async function runEditorAdd(
       }
       if (!picked) {
         session.close();
-        ui.error("A specific source is required for /doc add — not an 'all sources' filter.");
+        ui.error("A specific source is required for /item add — not an 'all sources' filter.");
         return 2;
       }
       source = picked;
@@ -292,7 +293,7 @@ async function runEditorAdd(
   }
 
   try {
-    await addDoc(workspaceRoot, {
+    await addItem(workspaceRoot, {
       source,
       docId,
       title,
@@ -301,19 +302,19 @@ async function runEditorAdd(
       skipSourceValidation: false,
     });
   } catch (err) {
-    if (err instanceof DocAlreadyExistsError) {
+    if (err instanceof ItemAlreadyExistsError) {
       ui.error(
-        `A doc with id "${docId}" already exists in source "${source}". Use a different filename or remove the existing entry first.`
+        `An item with id "${docId}" already exists in source "${source}". Use a different filename or remove the existing entry first.`
       );
       return 1;
     }
-    if (err instanceof DocReferenceValidationError) {
+    if (err instanceof ItemReferenceValidationError) {
       ui.error(err.message);
       return 1;
     }
     throw err;
   }
-  ui.success(`Added doc ${ui.bold(docId)} to source ${ui.bold(source)}.`);
+  ui.success(`Added item ${ui.bold(docId)} to source ${ui.bold(source)}.`);
   if (isAgentMode()) {
     printAgentFollowUp(source, docId, { manual: true });
   }
@@ -398,26 +399,26 @@ function printAgentFollowUp(
   docId: string,
   opts: { manual: boolean }
 ): void {
-  const folder = `.atelier/docs/${sourceId}/${encodeDocFilenameStem(docId)}`;
-  const docRef = `${sourceId}:${docId}`;
+  const folder = `.atelier/items/${sourceId}/${encodeItemFilenameStem(docId)}`;
+  const itemRef = `${sourceId}:${docId}`;
   ui.blank();
   ui.print(ui.bold("Next step for the assistant"));
   let step = 1;
 
   if (opts.manual) {
     ui.print(
-      `  ${step}. Read the doc body. If the filename ${ui.cyan(`"${docId}"`)} looks generic`
+      `  ${step}. Read the item body. If the id ${ui.cyan(`"${docId}"`)} looks generic`
     );
     ui.print(
       "     or doesn't reflect the content, propose a more descriptive slug:"
     );
     ui.print(
-      `       ${ui.cyan(`/doc rename ${sourceId} ${docId} <better-slug>`)}`
+      `       ${ui.cyan(`/item rename ${sourceId} ${docId} <better-slug>`)}`
     );
     ui.print(
       "     Confirm with the user before running. Continue the steps below"
     );
-    ui.print("     with the new docId in the paths if you rename.");
+    ui.print("     with the new id in the paths if you rename.");
     ui.blank();
     step++;
   }
@@ -427,37 +428,37 @@ function printAgentFollowUp(
   );
   ui.blank();
   ui.print("     The summary should include:");
-  ui.print("       - A 1–2 sentence overview of what the document is about.");
+  ui.print("       - A 1–2 sentence overview of what the item is about.");
   ui.print("       - 5–10 keywords under a `## Keywords` heading (topics, dates,");
   ui.print("         project names, people, decisions — for future agent discovery).");
-  ui.print("       - The doc's anchor points under a `## Anchors` heading.");
+  ui.print("       - The item's anchor points under a `## Anchors` heading.");
   ui.blank();
-  ui.print("     To re-read the original document, follow the `link` field in");
-  ui.print("     the summary's front-matter using whichever source integration");
-  ui.print("     applies (run `atelier source show " + sourceId + "` to see how to connect).");
+  ui.print("     To re-read the original, follow the `link` field in the summary's");
+  ui.print("     front-matter using whichever source integration applies");
+  ui.print("     (run `atelier source show " + sourceId + "` to see how to connect).");
   ui.blank();
   step++;
 
   ui.print(
-    `  ${step}. Suggest how this doc maps to the workspace's features and specs.`
+    `  ${step}. Suggest how this item maps to the workspace's features and specs.`
   );
   ui.print(`     Run:`);
   ui.print(`       ${ui.dim("/feature list")}     — see what's tracked`);
   ui.print(`       ${ui.dim("/spec list")}        — see active specs`);
   ui.blank();
   ui.print(
-    "     If the doc describes work that's NOT yet tracked, propose creating"
+    "     If the item describes work that's NOT yet tracked, propose creating"
   );
-  ui.print("     a new entry with this doc already attached:");
+  ui.print("     a new entry with this item already attached:");
   ui.print(
-    `       ${ui.cyan(`/feature add "<name>" --doc ${docRef}`)}`
+    `       ${ui.cyan(`/feature add "<name>" --doc ${itemRef}`)}`
   );
   ui.print(
-    `       ${ui.cyan(`/spec new "<title>" --doc ${docRef}`)}`
+    `       ${ui.cyan(`/spec new "<title>" --doc ${itemRef}`)}`
   );
   ui.blank();
   ui.print(
-    "     If the doc informs an EXISTING feature/spec, append the doc ref"
+    "     If the item informs an EXISTING feature/spec, append the item ref"
   );
   ui.print(
     `     to its YAML directly: \`- {source: ${sourceId}, docId: "${docId}"}\``
@@ -476,7 +477,7 @@ function printAgentFollowUp(
 
 const listCmd: Command = {
   name: "list",
-  summary: "List indexed documents.",
+  summary: "List indexed items.",
   options: {
     source: { type: "string", short: "s" },
     classification: { type: "string", short: "c" },
@@ -514,17 +515,17 @@ const listCmd: Command = {
       sourceFilter = picked;
     }
 
-    const { docs, errors } = await listDocs(workspaceRoot, sourceFilter);
+    const { items, errors } = await listItems(workspaceRoot, sourceFilter);
     const filtered = classFilter
-      ? docs.filter((d) => d.doc.classification === classFilter)
-      : docs;
+      ? items.filter((d) => d.item.classification === classFilter)
+      : items;
 
     if (filtered.length === 0 && errors.length === 0) {
       if (sourceFilter || classFilter) {
-        ui.info("No docs match the filter.");
+        ui.info("No items match the filter.");
       } else {
-        const addHint = mode === "repl" ? "/doc add" : "atelier doc add";
-        ui.info("No docs indexed yet.");
+        const addHint = mode === "repl" ? "/item add" : "atelier item add";
+        ui.info("No items indexed yet.");
         ui.print(
           `  ${ui.dim(`Add one with \`${addHint}\` — the editor opens on a summary scaffold.`)}`
         );
@@ -535,30 +536,30 @@ const listCmd: Command = {
     if (filtered.length > 0) {
       const sourceWidth = Math.max(
         "SOURCE".length,
-        ...filtered.map((d) => d.doc.source.length)
+        ...filtered.map((d) => d.item.source.length)
       );
       const docIdWidth = Math.max(
         "DOC-ID".length,
-        ...filtered.map((d) => d.doc.docId.length)
+        ...filtered.map((d) => d.item.docId.length)
       );
       const classWidth = Math.max(
         "CLASS".length,
-        ...filtered.map((d) => (d.doc.classification ?? "-").length)
+        ...filtered.map((d) => (d.item.classification ?? "-").length)
       );
       ui.print(
         `    ${ui.dim("SOURCE".padEnd(sourceWidth))}  ${ui.dim("DOC-ID".padEnd(docIdWidth))}  ${ui.dim("CLASS".padEnd(classWidth))}  ${ui.dim("TITLE")}`
       );
-      for (const { doc } of filtered) {
-        const cls = doc.classification ?? "-";
+      for (const { item } of filtered) {
+        const cls = item.classification ?? "-";
         ui.print(
-          `  ${ui.green("·")} ${doc.source.padEnd(sourceWidth)}  ${doc.docId.padEnd(docIdWidth)}  ${cls.padEnd(classWidth)}  ${doc.title}`
+          `  ${ui.green("·")} ${item.source.padEnd(sourceWidth)}  ${item.docId.padEnd(docIdWidth)}  ${cls.padEnd(classWidth)}  ${item.title}`
         );
       }
       ui.blank();
     }
 
     if (errors.length > 0) {
-      ui.warn(`${errors.length} doc file(s) failed to parse:`);
+      ui.warn(`${errors.length} item file(s) failed to parse:`);
       for (const e of errors) {
         ui.print(`    ${ui.red("✗")} ${e.filePath}`);
         ui.print(`      ${ui.dim(e.error.message.split("\n")[0])}`);
@@ -571,12 +572,12 @@ const listCmd: Command = {
 
 const showCmd: Command = {
   name: "show",
-  summary: "Show a doc's metadata and summary body.",
+  summary: "Show an item's metadata and summary body.",
   positionals: ["source", "docId"],
   async run({ positionals, cwd }) {
     const [source, docId] = positionals;
     if (!source || !docId) {
-      ui.error("Usage: atelier doc show <source> <docId>");
+      ui.error("Usage: atelier item show <source> <docId>");
       return 2;
     }
     let workspaceRoot: string;
@@ -590,27 +591,27 @@ const showCmd: Command = {
       throw err;
     }
     try {
-      const doc = await loadDoc(workspaceRoot, source, docId);
-      ui.print(ui.bold(doc.title));
-      ui.print(`  ${ui.dim("source:")}         ${doc.source}`);
-      ui.print(`  ${ui.dim("docId:")}          ${doc.docId}`);
-      if (doc.classification) {
-        ui.print(`  ${ui.dim("classification:")} ${doc.classification}`);
+      const item = await loadItem(workspaceRoot, source, docId);
+      ui.print(ui.bold(item.title));
+      ui.print(`  ${ui.dim("source:")}         ${item.source}`);
+      ui.print(`  ${ui.dim("docId:")}          ${item.docId}`);
+      if (item.classification) {
+        ui.print(`  ${ui.dim("classification:")} ${item.classification}`);
       }
-      if (doc.overview) ui.print(`  ${ui.dim("overview:")}       ${doc.overview}`);
-      if (doc.link) ui.print(`  ${ui.dim("link:")}           ${doc.link}`);
-      ui.print(`  ${ui.dim("created:")}        ${doc.createdAt}`);
-      ui.print(`  ${ui.dim("updated:")}        ${doc.updatedAt}`);
+      if (item.overview) ui.print(`  ${ui.dim("overview:")}       ${item.overview}`);
+      if (item.link) ui.print(`  ${ui.dim("link:")}           ${item.link}`);
+      ui.print(`  ${ui.dim("created:")}        ${item.createdAt}`);
+      ui.print(`  ${ui.dim("updated:")}        ${item.updatedAt}`);
       ui.blank();
-      if (doc.body) {
-        process.stdout.write(doc.body);
-        if (!doc.body.endsWith("\n")) ui.blank();
+      if (item.body) {
+        process.stdout.write(item.body);
+        if (!item.body.endsWith("\n")) ui.blank();
       } else {
         ui.print(ui.dim("(empty summary)"));
       }
       return 0;
     } catch (err) {
-      if (err instanceof DocNotFoundError || err instanceof DocFileError) {
+      if (err instanceof ItemNotFoundError || err instanceof ItemFileError) {
         ui.error(err.message);
         return 1;
       }
@@ -621,12 +622,12 @@ const showCmd: Command = {
 
 const removeCmd: Command = {
   name: "remove",
-  summary: "Remove a doc from the index.",
+  summary: "Remove an item from the index.",
   positionals: ["source", "docId"],
   async run({ positionals, cwd }) {
     const [source, docId] = positionals;
     if (!source || !docId) {
-      ui.error("Usage: atelier doc remove <source> <docId>");
+      ui.error("Usage: atelier item remove <source> <docId>");
       return 2;
     }
     let workspaceRoot: string;
@@ -640,11 +641,11 @@ const removeCmd: Command = {
       throw err;
     }
     try {
-      const doc = await removeDoc(workspaceRoot, source, docId);
-      ui.success(`Removed doc ${ui.bold(doc.docId)} from source ${ui.bold(doc.source)}.`);
+      const item = await removeItem(workspaceRoot, source, docId);
+      ui.success(`Removed item ${ui.bold(item.docId)} from source ${ui.bold(item.source)}.`);
       return 0;
     } catch (err) {
-      if (err instanceof DocNotFoundError) {
+      if (err instanceof ItemNotFoundError) {
         ui.error(err.message);
         return 1;
       }
@@ -655,12 +656,12 @@ const removeCmd: Command = {
 
 const renameCmd: Command = {
   name: "rename",
-  summary: "Rename a doc (change its docId / folder name).",
+  summary: "Rename an item (change its docId / folder name).",
   positionals: ["source", "oldDocId", "newDocId"],
   async run({ positionals, cwd }) {
     const [source, oldDocId, newDocId] = positionals;
     if (!source || !oldDocId || !newDocId) {
-      ui.error("Usage: atelier doc rename <source> <oldDocId> <newDocId>");
+      ui.error("Usage: atelier item rename <source> <oldDocId> <newDocId>");
       return 2;
     }
     let workspaceRoot: string;
@@ -674,19 +675,19 @@ const renameCmd: Command = {
       throw err;
     }
     try {
-      const doc = await renameDoc(workspaceRoot, source, oldDocId, newDocId);
+      const item = await renameItem(workspaceRoot, source, oldDocId, newDocId);
       ui.success(
-        `Renamed ${ui.bold(oldDocId)} → ${ui.bold(doc.docId)} in source ${ui.bold(doc.source)}.`
+        `Renamed ${ui.bold(oldDocId)} → ${ui.bold(item.docId)} in source ${ui.bold(item.source)}.`
       );
       return 0;
     } catch (err) {
-      if (err instanceof DocNotFoundError) {
+      if (err instanceof ItemNotFoundError) {
         ui.error(err.message);
         return 1;
       }
-      if (err instanceof DocAlreadyExistsError) {
+      if (err instanceof ItemAlreadyExistsError) {
         ui.error(
-          `Can't rename: a doc with id "${newDocId}" already exists in source "${source}".`
+          `Can't rename: an item with id "${newDocId}" already exists in source "${source}".`
         );
         return 1;
       }
@@ -697,7 +698,7 @@ const renameCmd: Command = {
 
 const updateCmd: Command = {
   name: "update",
-  summary: "Update a doc's metadata or summary body.",
+  summary: "Update an item's metadata or summary body.",
   positionals: ["source", "docId"],
   options: {
     title: { type: "string", short: "t" },
@@ -710,7 +711,7 @@ const updateCmd: Command = {
   async run({ positionals, values, cwd }) {
     const [source, docId] = positionals;
     if (!source || !docId) {
-      ui.error("Usage: atelier doc update <source> <docId> [options]");
+      ui.error("Usage: atelier item update <source> <docId> [options]");
       return 2;
     }
     const classification = values.classification as string | undefined;
@@ -749,7 +750,7 @@ const updateCmd: Command = {
       throw err;
     }
     try {
-      const doc = await updateDoc(workspaceRoot, source, docId, {
+      const item = await updateItem(workspaceRoot, source, docId, {
         title: values.title as string | undefined,
         overview: values.overview as string | undefined,
         classification:
@@ -761,10 +762,10 @@ const updateCmd: Command = {
         link: values.link as string | undefined,
         body,
       });
-      ui.success(`Updated doc ${ui.bold(doc.docId)} in source ${ui.bold(doc.source)}.`);
+      ui.success(`Updated item ${ui.bold(item.docId)} in source ${ui.bold(item.source)}.`);
       return 0;
     } catch (err) {
-      if (err instanceof DocNotFoundError) {
+      if (err instanceof ItemNotFoundError) {
         ui.error(err.message);
         return 1;
       }
@@ -773,13 +774,14 @@ const updateCmd: Command = {
   },
 };
 
-export const docCommand: Command = {
-  name: "doc",
-  summary: "Manage the doc map.",
+export const itemCommand: Command = {
+  name: "item",
+  summary: "Manage the item map.",
   description:
-    "Atelier's doc map is an agent-curated index of summaries — each entry\n" +
+    "Atelier's item map is an agent-curated index of summaries — each entry\n" +
     "captures a title, an optional link the agent uses to refetch the\n" +
     "original, and a markdown summary body. The agent does the fetching;\n" +
-    "atelier just stores what the agent wrote.",
+    "atelier just stores what the agent wrote. Items can come from any\n" +
+    "registered source — docs, design, or PM.",
   subcommands: [addCmd, listCmd, showCmd, updateCmd, renameCmd, removeCmd],
 };

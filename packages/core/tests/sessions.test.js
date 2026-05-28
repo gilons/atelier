@@ -6,8 +6,8 @@ import * as path from "node:path";
 import {
   initWorkspace,
   registerSource,
-  addDoc,
-  listDocs,
+  addItem,
+  listItems,
   startSession,
   appendToSession,
   endSession,
@@ -215,25 +215,25 @@ test("removeSession on a missing id throws SessionNotFoundError", async () => {
 // fromSession item linkage
 // ============================================================
 
-test("addDoc persists --from-session in the item's front-matter", async () => {
+test("addItem persists --from-session in the item's front-matter", async () => {
   const root = await workspace();
   await registerSource(root, { id: "notes", name: "Notes" });
   const s = await startSession(root, { title: "Brainstorm" });
 
-  const doc = await addDoc(root, {
+  const item = await addItem(root, {
     source: "notes",
     docId: "redesign-idea",
     title: "Redesign idea",
     fromSession: s.id,
     body: "## Overview\n\nNew onboarding flow.\n",
   });
-  assert.equal(doc.fromSession, s.id);
+  assert.equal(item.fromSession, s.id);
 
   // Survives a round-trip through summary.md.
   const summaryPath = path.join(
     root,
     ".atelier",
-    "docs",
+    "items",
     "notes",
     "redesign-idea",
     "summary.md"
@@ -242,48 +242,48 @@ test("addDoc persists --from-session in the item's front-matter", async () => {
   assert.match(text, new RegExp(`fromSession: ${s.id}`));
 });
 
-test("listDocs surfaces fromSession so consumers can filter by session", async () => {
+test("listItems surfaces fromSession so consumers can filter by session", async () => {
   const root = await workspace();
   await registerSource(root, { id: "notes", name: "Notes" });
   const sA = await startSession(root, { title: "Session A", id: "session-a" });
   const sB = await startSession(root, { title: "Session B", id: "session-b" });
 
-  await addDoc(root, {
+  await addItem(root, {
     source: "notes",
     docId: "from-a-one",
     title: "From A 1",
     fromSession: sA.id,
   });
-  await addDoc(root, {
+  await addItem(root, {
     source: "notes",
     docId: "from-a-two",
     title: "From A 2",
     fromSession: sA.id,
   });
-  await addDoc(root, {
+  await addItem(root, {
     source: "notes",
     docId: "from-b",
     title: "From B",
     fromSession: sB.id,
   });
-  await addDoc(root, {
+  await addItem(root, {
     source: "notes",
     docId: "no-session",
     title: "No session",
   });
 
-  const { docs } = await listDocs(root);
-  const fromA = docs.filter((d) => d.doc.fromSession === sA.id);
+  const { items } = await listItems(root);
+  const fromA = items.filter((d) => d.item.fromSession === sA.id);
   assert.deepEqual(
-    fromA.map((d) => d.doc.docId).sort(),
+    fromA.map((d) => d.item.docId).sort(),
     ["from-a-one", "from-a-two"]
   );
-  const fromB = docs.filter((d) => d.doc.fromSession === sB.id);
+  const fromB = items.filter((d) => d.item.fromSession === sB.id);
   assert.equal(fromB.length, 1);
-  assert.equal(fromB[0].doc.docId, "from-b");
-  const orphans = docs.filter((d) => d.doc.fromSession === undefined);
+  assert.equal(fromB[0].item.docId, "from-b");
+  const orphans = items.filter((d) => d.item.fromSession === undefined);
   assert.equal(orphans.length, 1);
-  assert.equal(orphans[0].doc.docId, "no-session");
+  assert.equal(orphans[0].item.docId, "no-session");
 });
 
 test("removeSession leaves linked items' fromSession references intact (deleted session as provenance)", async () => {
@@ -294,14 +294,14 @@ test("removeSession leaves linked items' fromSession references intact (deleted 
   const root = await workspace();
   await registerSource(root, { id: "notes", name: "Notes" });
   const s = await startSession(root, { title: "Brainstorm" });
-  await addDoc(root, {
+  await addItem(root, {
     source: "notes",
     docId: "linked",
     title: "Linked",
     fromSession: s.id,
   });
   await removeSession(root, s.id);
-  const { docs } = await listDocs(root);
-  assert.equal(docs.length, 1);
-  assert.equal(docs[0].doc.fromSession, s.id);
+  const { items } = await listItems(root);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].item.fromSession, s.id);
 });

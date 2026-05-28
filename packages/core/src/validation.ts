@@ -455,7 +455,7 @@ export function validateFeatureFrontMatter(
 // Item front-matter
 // ============================================================
 
-export function validateDocEntryFrontMatter(
+export function validateItemFrontMatter(
   raw: unknown
 ): ValidationResult<ItemFrontMatter> {
   const issues: ValidationIssue[] = [];
@@ -549,6 +549,8 @@ export function validateSessionFrontMatter(
     status,
     startedAt,
     endedAt,
+    chunkSeconds,
+    language,
   } = raw;
 
   if (!isNonEmptyString(id)) {
@@ -578,6 +580,15 @@ export function validateSessionFrontMatter(
   if (endedAt !== undefined && !isNonEmptyString(endedAt)) {
     pushIssue(issues, "$.endedAt", "if present, must be a non-empty ISO timestamp string");
   }
+  if (
+    chunkSeconds !== undefined &&
+    (typeof chunkSeconds !== "number" || !Number.isFinite(chunkSeconds) || chunkSeconds <= 0)
+  ) {
+    pushIssue(issues, "$.chunkSeconds", "if present, must be a positive number (seconds per audio chunk)");
+  }
+  if (language !== undefined && !isNonEmptyString(language)) {
+    pushIssue(issues, "$.language", "if present, must be a non-empty string (e.g. \"en\", \"de\", \"auto\")");
+  }
 
   if (issues.length > 0) return { ok: false, issues };
   const value: SessionFrontMatter = {
@@ -588,6 +599,8 @@ export function validateSessionFrontMatter(
   };
   if (Array.isArray(participants)) value.participants = participants as string[];
   if (endedAt !== undefined) value.endedAt = endedAt as string;
+  if (typeof chunkSeconds === "number") value.chunkSeconds = chunkSeconds;
+  if (typeof language === "string") value.language = language;
   return { ok: true, value, issues: [] };
 }
 
