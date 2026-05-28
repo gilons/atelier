@@ -380,6 +380,113 @@ export interface Session extends SessionFrontMatter {
 
 
 // ============================================================
+// Stakeholders — people involved in the workspace's product
+// ============================================================
+
+/**
+ * What atelier knows about a single person who shows up in the
+ * workspace's product world: a PM, an engineer, a customer, an
+ * advisor, an exec sponsor. Anyone the agent / user wants to track
+ * context about.
+ *
+ * Storage shape (folder per stakeholder):
+ *
+ *   .atelier/stakeholders/<id>/
+ *     profile.md      — front-matter (these fields) + shared narrative.
+ *                       Tracked by git. The team's collective view of
+ *                       this person.
+ *     private.md      — optional, free-form. Gitignored. Personal
+ *                       notes ("prefers async", "reports to X",
+ *                       sensitive history). atelier exposes it via
+ *                       `stakeholder note --private` and `show --private`
+ *                       so the user can take notes without leaking
+ *                       them through the shared repo.
+ *
+ * The split is deliberate: a team wants to share "Sarah Chen — PM,
+ * Payments squad" but typically NOT "Sarah doesn't like long
+ * meetings." atelier models both layers as one stakeholder so the
+ * UX feels unified; git treats them as separate files.
+ */
+export interface StakeholderFrontMatter {
+  /** Slug id, unique within the workspace. Folder name on disk. */
+  id: string;
+  /** Display name. The person's preferred form, free-form. */
+  name: string;
+  /**
+   * One-line role label, e.g. "PM", "Senior Engineer", "Design
+   * Director", "Customer (Acme Corp)", "Advisor". Free-form — atelier
+   * doesn't validate against an enum so teams can use their own
+   * vocabulary.
+   */
+  role?: string;
+  /**
+   * Organisation / company / team the person belongs to. Used to
+   * group stakeholders by org in list views. Free-form.
+   */
+  organization?: string;
+  /**
+   * Optional email — the canonical handle for the person. Not used
+   * for sending anything; atelier never reaches out. Stored so the
+   * agent can correlate stakeholders with external systems
+   * (calendar invites, ticket assignees, PR reviewers).
+   */
+  email?: string;
+  /**
+   * Free-form handles keyed by where they're useful: slack, github,
+   * linear, x, linkedin, … The agent fills these in as it
+   * encounters them; atelier stores the dictionary opaquely.
+   */
+  handles?: Record<string, string>;
+  /**
+   * What this person owns in the workspace. Free-form list of
+   * pointers: feature ids ("checkout"), source:itemId pairs
+   * ("notion:abc123"), repo names ("api"), spec ids. atelier
+   * doesn't enforce the format — the agent picks the convention
+   * that matches what it indexed.
+   */
+  ownerships?: string[];
+  /**
+   * One-line elevator summary (the long-form narrative lives in
+   * profile.md's body). Shown in `stakeholder list`.
+   */
+  summary?: string;
+  /**
+   * Optional session ids this stakeholder was first surfaced from
+   * (e.g. extracted from a recorded conversation by the agent).
+   * Lets `session show` enumerate "who showed up in this call"
+   * later.
+   */
+  fromSessions?: string[];
+  /** ISO timestamp — when atelier first registered this person. */
+  createdAt: string;
+  /** ISO timestamp — most recent structural change. */
+  updatedAt: string;
+}
+
+/**
+ * A loaded stakeholder: front-matter + the shared profile narrative
+ * + (when present + requested) the private side.
+ *
+ * `profileBody` is what got read from profile.md after the
+ * front-matter block. `privateBody` is undefined unless the loader
+ * was asked to include it AND private.md exists. Callers that
+ * shouldn't surface private notes (anything that exports to git,
+ * the public `list` output, …) just keep `privateBody` undefined.
+ */
+export interface Stakeholder extends StakeholderFrontMatter {
+  /** Markdown body of profile.md (after the front-matter). May be empty. */
+  profileBody: string;
+  /**
+   * Optional markdown body of private.md. Always undefined unless
+   * the loader was explicitly told to include private notes —
+   * callers default to omitting it so the file stays private by
+   * construction, not by remembering to scrub.
+   */
+  privateBody?: string;
+}
+
+
+// ============================================================
 // Discrepancy log (Slice 7 — schema only, detection in Phase 3)
 // ============================================================
 

@@ -12,6 +12,7 @@ import type {
   ItemFrontMatter,
   SessionFrontMatter,
   SessionStatus,
+  StakeholderFrontMatter,
   Discrepancy,
   DiscrepancyLog,
   DiscrepancySeverity,
@@ -601,6 +602,114 @@ export function validateSessionFrontMatter(
   if (endedAt !== undefined) value.endedAt = endedAt as string;
   if (typeof chunkSeconds === "number") value.chunkSeconds = chunkSeconds;
   if (typeof language === "string") value.language = language;
+  return { ok: true, value, issues: [] };
+}
+
+// ============================================================
+// Stakeholder front-matter
+// ============================================================
+
+// Same shape as feature ids: lowercase, alnum + hyphens, no leading
+// or trailing hyphen. Keeps the folder name predictable across
+// filesystems (case-insensitive on macOS, case-sensitive on Linux).
+const STAKEHOLDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+export function validateStakeholderFrontMatter(
+  raw: unknown
+): ValidationResult<StakeholderFrontMatter> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return {
+      ok: false,
+      issues: [{ path: "$", message: "expected an object at the top level" }],
+    };
+  }
+  const {
+    id,
+    name,
+    role,
+    organization,
+    email,
+    handles,
+    ownerships,
+    summary,
+    fromSessions,
+    createdAt,
+    updatedAt,
+  } = raw;
+
+  if (!isNonEmptyString(id)) {
+    pushIssue(issues, "$.id", "must be a non-empty string");
+  } else if (!STAKEHOLDER_ID_PATTERN.test(id)) {
+    pushIssue(
+      issues,
+      "$.id",
+      'must be a lowercase slug — letters, digits, hyphens (e.g. "sarah-chen")'
+    );
+  }
+  if (!isNonEmptyString(name)) {
+    pushIssue(issues, "$.name", "must be a non-empty string");
+  }
+  if (role !== undefined && !isNonEmptyString(role)) {
+    pushIssue(issues, "$.role", "if present, must be a non-empty string");
+  }
+  if (organization !== undefined && !isNonEmptyString(organization)) {
+    pushIssue(issues, "$.organization", "if present, must be a non-empty string");
+  }
+  if (email !== undefined && !isNonEmptyString(email)) {
+    pushIssue(issues, "$.email", "if present, must be a non-empty string");
+  }
+  if (handles !== undefined) {
+    if (!isObject(handles)) {
+      pushIssue(issues, "$.handles", "if present, must be an object mapping handle-kind → handle (e.g. {slack: \"@sarah\"})");
+    } else {
+      for (const [k, v] of Object.entries(handles)) {
+        if (!isNonEmptyString(v)) {
+          pushIssue(issues, `$.handles.${k}`, "must be a non-empty string");
+        }
+      }
+    }
+  }
+  if (ownerships !== undefined) {
+    if (!Array.isArray(ownerships)) {
+      pushIssue(issues, "$.ownerships", 'if present, must be a list of strings (feature ids, source:itemId pairs, repo names…)');
+    } else if (ownerships.some((o) => !isNonEmptyString(o))) {
+      pushIssue(issues, "$.ownerships", "every ownership entry must be a non-empty string");
+    }
+  }
+  if (summary !== undefined && typeof summary !== "string") {
+    pushIssue(issues, "$.summary", "if present, must be a string");
+  }
+  if (fromSessions !== undefined) {
+    if (!Array.isArray(fromSessions)) {
+      pushIssue(issues, "$.fromSessions", "if present, must be a list of session ids");
+    } else if (fromSessions.some((s) => !isNonEmptyString(s))) {
+      pushIssue(issues, "$.fromSessions", "every fromSessions entry must be a non-empty string");
+    }
+  }
+  if (!isNonEmptyString(createdAt)) {
+    pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
+  }
+  if (!isNonEmptyString(updatedAt)) {
+    pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+  const value: StakeholderFrontMatter = {
+    id: id as string,
+    name: name as string,
+    createdAt: createdAt as string,
+    updatedAt: updatedAt as string,
+  };
+  if (role !== undefined) value.role = role as string;
+  if (organization !== undefined) value.organization = organization as string;
+  if (email !== undefined) value.email = email as string;
+  if (handles !== undefined) {
+    value.handles = handles as Record<string, string>;
+  }
+  if (Array.isArray(ownerships)) value.ownerships = ownerships as string[];
+  if (summary !== undefined) value.summary = summary as string;
+  if (Array.isArray(fromSessions)) value.fromSessions = fromSessions as string[];
   return { ok: true, value, issues: [] };
 }
 

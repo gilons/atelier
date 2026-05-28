@@ -88,6 +88,7 @@ export async function initWorkspace(
   await fs.mkdir(paths.atelier, { recursive: true });
   await fs.mkdir(paths.features, { recursive: true });
   await fs.mkdir(paths.items, { recursive: true });
+  await fs.mkdir(paths.stakeholders, { recursive: true });
   await fs.mkdir(paths.issues, { recursive: true });
   await fs.mkdir(paths.ui, { recursive: true });
   await fs.mkdir(paths.cache, { recursive: true });
@@ -142,7 +143,11 @@ export async function initWorkspace(
     "cache/\n" +
     "\n" +
     "# Local secrets written by `atelier source onboard`. Never commit.\n" +
-    ".env\n";
+    ".env\n" +
+    "\n" +
+    "# Private stakeholder notes — anywhere a stakeholder folder lives,\n" +
+    "# `private.md` is the user's personal layer. Never commit.\n" +
+    "stakeholders/**/private.md\n";
   await fs.writeFile(path.join(paths.atelier, ".gitignore"), gitignore, "utf8");
   created.push(path.join(paths.atelier, ".gitignore"));
 

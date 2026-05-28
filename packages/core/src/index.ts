@@ -22,6 +22,7 @@ export * from "./sources.js";
 export * from "./sessions.js";
 export * from "./features.js";
 export * from "./items.js";
+export * from "./stakeholders.js";
 export * from "./discrepancies.js";
 export * from "./front-matter.js";
 export * from "./specs.js";
