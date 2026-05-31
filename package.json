@@ -13,14 +13,13 @@
   },
   "workspaces": [
     "packages/cli",
-    "packages/core",
-    "packages/adapters/*"
+    "packages/core"
   ],
   "scripts": {
     "build": "tsc --build",
     "postbuild": "chmod +x packages/cli/dist/index.js",
-    "clean": "tsc --build --clean && rm -rf packages/*/dist packages/adapters/*/dist",
-    "test": "node --test packages/*/tests/**/*.test.js packages/adapters/*/tests/**/*.test.js",
+    "clean": "tsc --build --clean && rm -rf packages/*/dist",
+    "test": "node --test packages/*/tests/**/*.test.js",
     "test:core": "node --test packages/core/tests/**/*.test.js",
     "test:cli": "node --test packages/cli/tests/**/*.test.js",
     "test:repl": "node --test --test-concurrency=1 packages/cli/tests/repl/*.test.js",
@@ -29,6 +28,7 @@
   "devDependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "@types/node": "^22.19.19",
+    "esbuild": "^0.28.0",
     "typescript": "^5.9.3"
   },
   "engines": {

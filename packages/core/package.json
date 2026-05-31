@@ -1,15 +1,11 @@
 {
   "name": "@atelier/core",
   "version": "0.0.1",
-  "description": "Atelier core — deterministic logic, types, and primitives.",
+  "private": true,
+  "description": "Atelier core — deterministic logic, types, and primitives. Internal library; bundled into @gilons/atelier, not published on its own.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean && rm -rf dist",
@@ -17,10 +13,15 @@
   },
   "license": "MIT",
   "author": "gilons",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/gilons/atelier.git",
     "directory": "packages/core"
   },
-  "dependencies": {}
+  "dependencies": {
+    "yaml": "^2.9.0"
+  }
 }

@@ -82,22 +82,20 @@ The unit of extension is **data, not code**, so the deterministic core stays AI-
 
 ## Install
 
-Atelier is in alpha. Install from source:
+```bash
+npm install -g @gilons/atelier
+atelier --version
+```
+
+Atelier ships as a **single, self-contained package** with zero runtime dependencies (the core library is bundled into the CLI). Requirements: Node.js ≥ 20.
+
+From source (for development):
 
 ```bash
 git clone https://github.com/gilons/atelier.git
-cd atelier
-npm install
-npm run build
-cd packages/cli && npm link  # exposes `atelier` globally
+cd atelier && npm install && npm run build
+cd packages/cli && npm link   # exposes `atelier` globally
 ```
-
-```bash
-atelier --version
-atelier --help
-```
-
-Requirements: Node.js ≥ 20.
 
 ## Quick start
 
@@ -152,6 +150,8 @@ Everything is also a one-shot command for scripts and CI (`atelier init --name "
 
 - **`packages/core`** — deterministic logic: workspace IO, validation, project/UI inspection, the typed surfaces, the design engine, the agent authoring layer, the workspace index. No LLM calls, no network.
 - **`packages/cli`** — the `atelier` binary: a nested-subcommand framework, ANSI-light UI, the interactive REPL, and the audio/recorder integration.
+
+The repo is a two-package monorepo for development, but **publishes as one package** (`@gilons/atelier`): the build bundles `core` into the CLI with esbuild, so users install a single self-contained binary with zero runtime dependencies.
 
 Everything important is version-controlled markdown / YAML under `.atelier/`:
 
