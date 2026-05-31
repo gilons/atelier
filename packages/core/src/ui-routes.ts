@@ -2,6 +2,11 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { listRepos } from "./repos.js";
 import { detectApps, type DetectedApp } from "./ui-apps.js";
+import {
+  loadUiAdapters,
+  BUILTIN_UI_ADAPTERS,
+  type UiRouteRule,
+} from "./ui-adapters.js";
 
 /**
  * Navigation extraction — the deterministic seed for an app's
@@ -73,7 +78,8 @@ const ext = (f: string) => f.slice(f.lastIndexOf("."));
 const PAGE_EXTS = new Set([".tsx", ".ts", ".jsx", ".js", ".mdx", ".md", ".astro", ".vue", ".svelte", ".html"]);
 
 function isDynamic(route: string): boolean {
-  return /\[|\]|:/.test(route);
+  // [slug] / :id / {param} style dynamic segments across ecosystems.
+  return /\[|\]|:|\{|\}/.test(route);
 }
 
 function normalize(segments: string[]): string {
@@ -149,9 +155,59 @@ function dedupeSort(routes: RouteEntry[]): RouteEntry[] {
  * Extract routes from an app directory given its framework. Returns []
  * for frameworks without a filesystem routing convention.
  */
-export async function extractRoutes(appDir: string, framework: string): Promise<RouteEntry[]> {
-  switch (framework) {
-    case "Next.js": {
+/**
+ * Generic, declarative file-based router used by user-authored
+ * adapters: scan each existing root with the include/exclude globs,
+ * map each matched file's path (minus extension) to a route, collapse
+ * the index basename, drop `(group)` segments.
+ */
+function globToRegExp(glob: string): RegExp {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const body = escaped
+    .replace(/\*\*\//g, " ")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\?/g, "[^/]")
+    .replace(/ /g, "(?:.*/)?");
+  return new RegExp(`^${body}$`);
+}
+
+async function fileBasedRoutes(appDir: string, rule: UiRouteRule): Promise<RouteEntry[]> {
+  const includes = (rule.include ?? ["**/*"]).map(globToRegExp);
+  const excludes = (rule.exclude ?? []).map(globToRegExp);
+  const indexBase = rule.indexBasename ?? "index";
+  const out: RouteEntry[] = [];
+  for (const root of rule.roots ?? []) {
+    const rootAbs = path.join(appDir, root);
+    let isDirectory = false;
+    try {
+      isDirectory = (await fs.stat(rootAbs)).isDirectory();
+    } catch {
+      /* root absent — skip */
+    }
+    if (!isDirectory) continue;
+    const files = await walk(rootAbs);
+    for (const f of files) {
+      if (!includes.some((re) => re.test(f))) continue;
+      if (excludes.some((re) => re.test(f))) continue;
+      const noExt = f.includes(".") ? f.slice(0, f.lastIndexOf(".")) : f;
+      let segs = dropGroups(noExt.split("/"));
+      if (segs[segs.length - 1] === indexBase) segs = segs.slice(0, -1);
+      const route = normalize(segs);
+      out.push({ route, file: `${root}/${f}`, dynamic: isDynamic(route) });
+    }
+  }
+  return dedupeSort(out);
+}
+
+/**
+ * Extract routes from an app directory given its route rule. Named
+ * strategies encode a specific framework's filesystem convention
+ * exactly; `file-based` is the generic declarative path; `none` defers
+ * to the agent (returns []).
+ */
+export async function extractRoutesByRule(appDir: string, rule: UiRouteRule): Promise<RouteEntry[]> {
+  switch (rule.strategy) {
+    case "next": {
       const appRoot = await firstDir(appDir, ["app", "src/app"]);
       if (appRoot) {
         const files = await walk(path.join(appDir, appRoot));
@@ -169,23 +225,23 @@ export async function extractRoutes(appDir: string, framework: string): Promise<
       }
       return [];
     }
-    case "SvelteKit": {
+    case "sveltekit": {
       const root = await firstDir(appDir, ["src/routes"]);
       if (!root) return [];
       const files = await walk(path.join(appDir, root));
       return dedupeSort(appDirRoutes(files, (b) => b === "+page.svelte"));
     }
-    case "Astro": {
+    case "astro": {
       const root = await firstDir(appDir, ["src/pages"]);
       if (!root) return [];
       return dedupeSort(fileRoutes(await walk(path.join(appDir, root))));
     }
-    case "Nuxt": {
+    case "nuxt": {
       const root = await firstDir(appDir, ["pages", "app/pages"]);
       if (!root) return [];
       return dedupeSort(fileRoutes(await walk(path.join(appDir, root))));
     }
-    case "Gatsby": {
+    case "gatsby": {
       const root = await firstDir(appDir, ["src/pages"]);
       if (!root) return [];
       return dedupeSort(
@@ -194,12 +250,12 @@ export async function extractRoutes(appDir: string, framework: string): Promise<
         })
       );
     }
-    case "Remix": {
+    case "remix": {
       const root = await firstDir(appDir, ["app/routes"]);
       if (!root) return [];
       return dedupeSort(remixRoutes(await walk(path.join(appDir, root))));
     }
-    case "React Native (Expo)": {
+    case "expo": {
       const root = await firstDir(appDir, ["app", "src/app"]);
       if (!root) return [];
       return dedupeSort(
@@ -211,11 +267,29 @@ export async function extractRoutes(appDir: string, framework: string): Promise<
         })
       );
     }
+    case "file-based":
+      return fileBasedRoutes(appDir, rule);
+    case "none":
     default:
-      // React / Vue / Solid / Qwik / Preact / Ionic / RN-CLI: routing is
-      // in code, not the filesystem — the agent reads it.
+      // Routing lives in code, not the filesystem — the agent reads it.
       return [];
   }
+}
+
+/** Map a built-in framework's display name to its route rule. */
+const RULE_BY_FRAMEWORK = new Map<string, UiRouteRule>(
+  BUILTIN_UI_ADAPTERS.map((a) => [a.framework, a.routes])
+);
+
+/**
+ * Extract routes from an app directory given its framework *display
+ * name* (e.g. "Next.js"). Back-compat wrapper over
+ * {@link extractRoutesByRule} — resolves the name to a built-in route
+ * rule, defaulting to "none" for unknown frameworks.
+ */
+export async function extractRoutes(appDir: string, framework: string): Promise<RouteEntry[]> {
+  const rule = RULE_BY_FRAMEWORK.get(framework) ?? { strategy: "none" };
+  return extractRoutesByRule(appDir, rule);
 }
 
 export interface AppNavigation {
@@ -226,26 +300,21 @@ export interface AppNavigation {
   fileBased: boolean;
 }
 
-const FILE_BASED = new Set([
-  "Next.js",
-  "SvelteKit",
-  "Astro",
-  "Nuxt",
-  "Gatsby",
-  "Remix",
-  "React Native (Expo)",
-]);
-
 /**
  * Detect navigation (routes) for every app in the workspace, or one
- * app when `app` (a ref / name / repo) is given.
+ * app when `app` (a ref / name / repo) is given. Each app's route rule
+ * comes from the adapter that detected it — built-in or user-authored.
  */
 export async function detectNavigation(
   workspaceRoot: string,
   opts: { app?: string } = {}
 ): Promise<AppNavigation[]> {
-  const { repos } = await listRepos(workspaceRoot);
+  const [{ repos }, { adapters }] = await Promise.all([
+    listRepos(workspaceRoot),
+    loadUiAdapters(workspaceRoot),
+  ]);
   const absByRepo = new Map(repos.map((r) => [r.repo.name, r.absPath]));
+  const ruleById = new Map<string, UiRouteRule>(adapters.map((a) => [a.id, a.routes]));
   let apps = await detectApps(workspaceRoot);
   if (opts.app) {
     const needle = opts.app;
@@ -256,8 +325,9 @@ export async function detectNavigation(
     const repoAbs = absByRepo.get(app.repo);
     if (!repoAbs) continue;
     const appDir = app.path === "." ? repoAbs : path.join(repoAbs, app.path);
-    const routes = await extractRoutes(appDir, app.framework);
-    out.push({ app, routes, fileBased: FILE_BASED.has(app.framework) });
+    const rule = ruleById.get(app.adapterId) ?? { strategy: "none" };
+    const routes = await extractRoutesByRule(appDir, rule);
+    out.push({ app, routes, fileBased: rule.strategy !== "none" });
   }
   return out;
 }

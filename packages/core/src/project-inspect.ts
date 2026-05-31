@@ -34,7 +34,8 @@ export type Ecosystem =
   | "java"
   | "ruby"
   | "php"
-  | "dotnet";
+  | "dotnet"
+  | "dart";
 
 /** One detected package / module / service inside a repo. */
 export interface ProjectPackage {
@@ -82,8 +83,10 @@ const MANIFESTS: { file: string; ecosystem: Ecosystem }[] = [
   { file: "Cargo.toml", ecosystem: "rust" },
   { file: "pom.xml", ecosystem: "java" },
   { file: "build.gradle", ecosystem: "java" },
+  { file: "build.gradle.kts", ecosystem: "java" },
   { file: "Gemfile", ecosystem: "ruby" },
   { file: "composer.json", ecosystem: "php" },
+  { file: "pubspec.yaml", ecosystem: "dart" },
 ];
 
 // Directories we never descend into.
@@ -136,6 +139,15 @@ async function packageName(dir: string, ecosystems: Ecosystem[]): Promise<string
     try {
       const pkg = JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8"));
       if (typeof pkg.name === "string" && pkg.name) return pkg.name;
+    } catch {
+      /* fall through */
+    }
+  }
+  if (ecosystems.includes("dart")) {
+    try {
+      const text = await fs.readFile(path.join(dir, "pubspec.yaml"), "utf8");
+      const m = /^name:\s*(.+?)\s*$/m.exec(text);
+      if (m) return m[1].replace(/^["']|["']$/g, "").trim() || path.basename(dir);
     } catch {
       /* fall through */
     }

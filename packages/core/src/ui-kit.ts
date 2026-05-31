@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { inspectProjects } from "./project-inspect.js";
+import { buildDetectContext } from "./ui-apps.js";
+import { loadUiAdapters, findAdapterForContext, type UiComponentRule } from "./ui-adapters.js";
 
 /**
  * UI kit detection — the reusable building blocks of the UI:
@@ -45,7 +47,7 @@ export interface UiKit {
   tokens: TokenSource[];
 }
 
-const COMPONENT_EXTS = new Set([".tsx", ".jsx", ".vue", ".svelte"]);
+const COMPONENT_EXTS = [".tsx", ".jsx", ".vue", ".svelte"];
 const COMPONENT_DIR_CANDIDATES = [
   "components",
   "src/components",
@@ -55,7 +57,33 @@ const COMPONENT_DIR_CANDIDATES = [
   "lib/components",
   "src/lib/components",
 ];
-const WALK_IGNORE = new Set(["node_modules", ".git", "dist", "build", "__tests__", "__snapshots__"]);
+const WALK_IGNORE = new Set(["node_modules", ".git", "dist", "build", "__tests__", "__snapshots__", ".dart_tool"]);
+
+function safeRegExp(pattern: string): RegExp | null {
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return null;
+  }
+}
+
+/** A component-detection rule resolved to concrete, ready-to-use parts. */
+interface ResolvedComponentRule {
+  dirs: string[];
+  extSet: Set<string>;
+  pascalCase: boolean;
+  containsRe: RegExp | null;
+}
+
+/** Resolve an adapter's component rule (or the JS default) for scanning. */
+function resolveComponentRule(rule?: UiComponentRule): ResolvedComponentRule {
+  return {
+    dirs: rule?.dirs ?? COMPONENT_DIR_CANDIDATES,
+    extSet: new Set(rule?.extensions ?? COMPONENT_EXTS),
+    pascalCase: rule?.pascalCase !== false,
+    containsRe: rule?.contains ? safeRegExp(rule.contains) : null,
+  };
+}
 
 async function isDir(p: string): Promise<boolean> {
   try {
@@ -73,11 +101,10 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-const isComponentName = (base: string): boolean => /^[A-Z]/.test(base) && !/\.(test|spec|stories)\./.test(base);
-
 /** Walk a component dir (bounded) counting component files + samples. */
 async function scanComponents(
   absDir: string,
+  rule: ResolvedComponentRule,
   depth = 0,
   acc: { count: number; samples: string[] } = { count: 0, samples: [] }
 ): Promise<{ count: number; samples: string[] }> {
@@ -92,16 +119,30 @@ async function scanComponents(
     if (acc.count >= 500) break;
     if (e.name.startsWith(".") || WALK_IGNORE.has(e.name)) continue;
     if (e.isDirectory()) {
-      await scanComponents(path.join(absDir, e.name), depth + 1, acc);
+      await scanComponents(path.join(absDir, e.name), rule, depth + 1, acc);
     } else {
       const ext = e.name.slice(e.name.lastIndexOf("."));
-      if (!COMPONENT_EXTS.has(ext)) continue;
+      if (!rule.extSet.has(ext)) continue;
       const base = e.name.slice(0, e.name.lastIndexOf("."));
       // Skip framework sentinels (Next/SvelteKit/Remix routing files).
       if (base.startsWith("+") || base.startsWith("_") || base === "index" || base === "page" || base === "layout") {
         continue;
       }
-      if (!isComponentName(base)) continue;
+      // Test/story files aren't components.
+      if (/\.(test|spec|stories)\./.test(base)) continue;
+      // PascalCase gate (JS components); off for frameworks like Flutter
+      // whose files are snake_case but whose widgets are classes.
+      if (rule.pascalCase && !/^[A-Z]/.test(base)) continue;
+      // Content gate (e.g. "@Composable", "extends StatelessWidget").
+      if (rule.containsRe) {
+        let text: string;
+        try {
+          text = await fs.readFile(path.join(absDir, e.name), "utf8");
+        } catch {
+          continue;
+        }
+        if (!rule.containsRe.test(text)) continue;
+      }
       acc.count++;
       if (acc.samples.length < 6) acc.samples.push(base);
     }
@@ -146,7 +187,10 @@ async function findTokenJsonGlobs(pkgAbs: string): Promise<string[]> {
  * across every registered repo (apps + shared packages).
  */
 export async function detectUiKit(workspaceRoot: string): Promise<UiKit> {
-  const { repos } = await inspectProjects(workspaceRoot);
+  const [{ repos }, { adapters }] = await Promise.all([
+    inspectProjects(workspaceRoot),
+    loadUiAdapters(workspaceRoot),
+  ]);
   const components: ComponentSource[] = [];
   const tokens: TokenSource[] = [];
   const seenComponentDirs = new Set<string>();
@@ -157,14 +201,22 @@ export async function detectUiKit(workspaceRoot: string): Promise<UiKit> {
       const pkgRel = p.path === "." ? "" : p.path;
       const pkgAbs = pkgRel ? path.join(r.absPath, pkgRel) : r.absPath;
 
+      // Resolve the component-detection rule from the adapter that
+      // matches this package (Flutter widgets, Compose composables, …),
+      // falling back to the JS default. Backend packages match nothing
+      // and use the default rule — same as before.
+      const ctx = await buildDetectContext(pkgAbs);
+      const adapter = await findAdapterForContext(adapters, ctx);
+      const rule = resolveComponentRule(adapter?.components);
+
       // Components.
-      for (const cand of COMPONENT_DIR_CANDIDATES) {
+      for (const cand of rule.dirs) {
         const relDir = pkgRel ? `${pkgRel}/${cand}` : cand;
         const key = `${r.repo}:${relDir}`;
         if (seenComponentDirs.has(key)) continue;
         const abs = path.join(pkgAbs, cand);
         if (!(await isDir(abs))) continue;
-        const { count, samples } = await scanComponents(abs);
+        const { count, samples } = await scanComponents(abs, rule);
         if (count === 0) continue;
         seenComponentDirs.add(key);
         components.push({
