@@ -2,7 +2,7 @@ import { inspectProjects } from "./project-inspect.js";
 import { detectApps } from "./ui-apps.js";
 import { detectUiKit } from "./ui-kit.js";
 import { listFeatures } from "./features.js";
-import { listItems } from "./items.js";
+import { listDesigns } from "./designs.js";
 import { listStakeholders } from "./stakeholders.js";
 
 /**
@@ -160,16 +160,16 @@ export async function buildDesignPalette(
   }
 
   const designs: PaletteEntry[] = [];
-  const { items } = await listItems(workspaceRoot).catch(() => ({ items: [] as Awaited<ReturnType<typeof listItems>>["items"] }));
-  for (const { item } of items) {
-    if ((item.classification ?? "").includes(discipline)) {
-      designs.push({
-        ref: `item:${item.source}:${item.docId}`,
-        kind: "design",
-        name: item.title,
-        description: truncate(item.overview),
-      });
-    }
+  const { designs: designArtifacts } = await listDesigns(workspaceRoot, discipline).catch(() => ({
+    designs: [] as Awaited<ReturnType<typeof listDesigns>>["designs"],
+  }));
+  for (const { design } of designArtifacts) {
+    designs.push({
+      ref: `design:${design.discipline}:${design.id}`,
+      kind: "design",
+      name: design.title,
+      description: truncate(design.overview),
+    });
   }
 
   const owners: PaletteEntry[] = [];

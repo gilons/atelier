@@ -31,6 +31,7 @@ export * from "./features.js";
 export * from "./items.js";
 export * from "./documentation.js";
 export * from "./tickets.js";
+export * from "./designs.js";
 export * from "./stakeholders.js";
 export * from "./agents.js";
 export * from "./agent-builtins.js";

@@ -8,6 +8,14 @@ import {
   detectUiKit,
   buildScreens,
   buildUiOverview,
+  addDesign,
+  listDesigns,
+  loadDesign,
+  updateDesign,
+  removeDesign,
+  DesignAlreadyExistsError,
+  DesignNotFoundError,
+  DesignFileError,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -624,6 +632,229 @@ const disciplineCmd: Command = {
   subcommands: [disciplineListCmd, disciplineAddCmd],
 };
 
+// ============================================================
+// design artifact — the design engine's output store (per discipline)
+// ============================================================
+
+function parseDesignRef(ref: string): { discipline: string; id: string } | null {
+  const i = ref.indexOf(":");
+  if (i <= 0 || i === ref.length - 1) return null;
+  return { discipline: ref.slice(0, i), id: ref.slice(i + 1) };
+}
+
+const artifactAddCmd: Command = {
+  name: "add",
+  summary: "Record a design artifact (summary + link to the tool).",
+  description:
+    "Creates .atelier/designs/<discipline>/<id>/summary.md. The visual\n" +
+    "lives in the design tool (or Markdown); --link points at it. This\n" +
+    "is what the design agents write instead of generic items.",
+  positionals: ["ref"],
+  options: {
+    title: { type: "string", short: "t" },
+    overview: { type: "string", short: "o" },
+    kind: { type: "string", short: "k" },
+    link: { type: "string", short: "l" },
+    app: { type: "string" },
+    "from-session": { type: "string" },
+    "body-text": { type: "string" },
+    "body-file": { type: "string" },
+  },
+  async run({ values, positionals, cwd }) {
+    const ref = parseDesignRef(positionals[0] ?? "");
+    if (!ref) {
+      ui.error("Missing or malformed <discipline>:<id>.");
+      ui.print(`  ${ui.dim('Usage: atelier design artifact add system-design:overview --title "..." --link <url>')}`);
+      return 2;
+    }
+    const title = values.title as string | undefined;
+    if (!title) {
+      ui.error("Missing --title.");
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    let body = (values["body-text"] as string | undefined) ?? "";
+    const bodyFile = values["body-file"] as string | undefined;
+    if (bodyFile) {
+      try {
+        body = await import("node:fs/promises").then((fs) => fs.readFile(bodyFile, "utf8"));
+      } catch (err) {
+        ui.error(`Couldn't read --body-file: ${(err as Error).message}`);
+        return 2;
+      }
+    }
+
+    try {
+      const d = await addDesign(root, {
+        discipline: ref.discipline,
+        id: ref.id,
+        title,
+        overview: values.overview as string | undefined,
+        kind: values.kind as string | undefined,
+        link: values.link as string | undefined,
+        app: values.app as string | undefined,
+        fromSession: values["from-session"] as string | undefined,
+        body,
+      });
+      ui.success(`Recorded design ${ui.bold(`${d.discipline}:${d.id}`)}`);
+      ui.print(`  ${ui.dim("title:")} ${d.title}`);
+      if (d.kind) ui.print(`  ${ui.dim("kind:")}  ${d.kind}`);
+      if (d.link) ui.print(`  ${ui.dim("link:")}  ${d.link}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof DesignAlreadyExistsError) {
+        ui.error(err.message);
+        return 1;
+      }
+      if (err instanceof Error && /slug|required/.test(err.message)) {
+        ui.error(err.message);
+        return 2;
+      }
+      throw err;
+    }
+  },
+};
+
+const artifactListCmd: Command = {
+  name: "list",
+  summary: "List design artifacts (optionally by discipline).",
+  options: { discipline: DISCIPLINE_OPT },
+  async run({ values, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    const disciplineFilter = values.discipline as string | undefined;
+    const { designs, errors } = await listDesigns(root, disciplineFilter);
+    if (designs.length === 0 && errors.length === 0) {
+      ui.info("No design artifacts yet.");
+      ui.print(`  ${ui.dim("The design agents record these; or `atelier design artifact add <discipline>:<id> --title \"...\"`.")}`);
+      return 0;
+    }
+    for (const { design } of designs) {
+      const k = design.kind ? ` ${ui.dim("[" + design.kind + "]")}` : "";
+      ui.print(`  ${ui.green("·")} ${design.discipline}:${design.id}${k}  ${design.title}`);
+    }
+    ui.blank();
+    if (errors.length > 0) {
+      ui.warn(`${errors.length} design file(s) failed to parse:`);
+      for (const e of errors) ui.print(`    ${ui.red("✗")} ${e.filePath}`);
+    }
+    return 0;
+  },
+};
+
+const artifactShowCmd: Command = {
+  name: "show",
+  summary: "Show a design artifact's summary.",
+  positionals: ["ref"],
+  async run({ positionals, cwd }) {
+    const ref = parseDesignRef(positionals[0] ?? "");
+    if (!ref) {
+      ui.error("Usage: atelier design artifact show <discipline>:<id>");
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    try {
+      const d = await loadDesign(root, ref.discipline, ref.id);
+      ui.print(ui.bold(d.title));
+      ui.print(`  ${ui.dim("ref:")}     ${d.discipline}:${d.id}`);
+      if (d.kind) ui.print(`  ${ui.dim("kind:")}    ${d.kind}`);
+      if (d.app) ui.print(`  ${ui.dim("app:")}     ${d.app}`);
+      if (d.link) ui.print(`  ${ui.dim("link:")}    ${d.link}`);
+      if (d.fromSession) ui.print(`  ${ui.dim("session:")} ${d.fromSession}`);
+      ui.print(`  ${ui.dim("updated:")} ${d.updatedAt}`);
+      ui.blank();
+      process.stdout.write(d.body);
+      if (!d.body.endsWith("\n")) ui.blank();
+      return 0;
+    } catch (err) {
+      if (err instanceof DesignNotFoundError || err instanceof DesignFileError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
+const artifactUpdateCmd: Command = {
+  name: "update",
+  summary: "Update a design artifact's fields.",
+  positionals: ["ref"],
+  options: {
+    title: { type: "string", short: "t" },
+    overview: { type: "string", short: "o" },
+    kind: { type: "string", short: "k" },
+    link: { type: "string", short: "l" },
+    app: { type: "string" },
+    "clear-app": { type: "boolean" },
+  },
+  async run({ values, positionals, cwd }) {
+    const ref = parseDesignRef(positionals[0] ?? "");
+    if (!ref) {
+      ui.error("Usage: atelier design artifact update <discipline>:<id> [--title ...]");
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    try {
+      const next = await updateDesign(root, ref.discipline, ref.id, {
+        title: values.title as string | undefined,
+        overview: values.overview as string | undefined,
+        kind: values.kind as string | undefined,
+        link: values.link as string | undefined,
+        app: values["clear-app"] === true ? null : (values.app as string | undefined),
+      });
+      ui.success(`Updated ${ui.bold(`${next.discipline}:${next.id}`)}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof DesignNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
+const artifactRemoveCmd: Command = {
+  name: "remove",
+  summary: "Delete a design artifact.",
+  positionals: ["ref"],
+  async run({ positionals, cwd }) {
+    const ref = parseDesignRef(positionals[0] ?? "");
+    if (!ref) {
+      ui.error("Usage: atelier design artifact remove <discipline>:<id>");
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    try {
+      const removed = await removeDesign(root, ref.discipline, ref.id);
+      ui.success(`Removed ${ui.bold(`${removed.discipline}:${removed.id}`)}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof DesignNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
+const artifactCmd: Command = {
+  name: "artifact",
+  summary: "Record / browse design artifacts (the design engine's output).",
+  description:
+    "Design artifacts are the engine's output, keyed by discipline\n" +
+    "(system-design / ui-design / custom). The agents write these; each\n" +
+    "is a summary + a link to the live diagram/board.",
+  subcommands: [artifactAddCmd, artifactListCmd, artifactShowCmd, artifactUpdateCmd, artifactRemoveCmd],
+};
+
 export const designCommand: Command = {
   name: "design",
   summary: "The design engine: disciplines, tool selection, palette, live tuning.",
@@ -631,6 +862,7 @@ export const designCommand: Command = {
     "design is an umbrella over disciplines (system-design, ui-design, +\n" +
     "custom), each sharing the same engine:\n" +
     "  discipline — list / add disciplines\n" +
+    "  artifact   — record / browse design artifacts (the engine's output)\n" +
     "  tool       — which platform drives a discipline\n" +
     "  check      — one-shot UI overview (apps + screens + connections + kit)\n" +
     "  apps       — detect the frontend apps (the UI discovery entry)\n" +
@@ -640,5 +872,5 @@ export const designCommand: Command = {
     "  kit        — the UI building blocks (components + design tokens)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, checkCmd, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, artifactCmd, toolCommand, checkCmd, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
 };

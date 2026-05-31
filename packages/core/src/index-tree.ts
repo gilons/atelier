@@ -14,6 +14,7 @@ import { listAgents, loadAgent, AgentNotFoundError } from "./agents.js";
 import { listItems } from "./items.js";
 import { listDocs } from "./documentation.js";
 import { listTickets } from "./tickets.js";
+import { listDesigns } from "./designs.js";
 import { listFeatures } from "./features.js";
 import { listSessions } from "./sessions.js";
 import { listStakeholders } from "./stakeholders.js";
@@ -138,6 +139,20 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
         title: `${ticket.source}:${ticket.ticketId}`,
         kind: ticket.status ? `ticket/${ticket.status}` : "ticket",
         description: truncate(ticket.overview ?? ticket.title),
+      }));
+    },
+  },
+  {
+    dir: "designs",
+    name: "Designs",
+    description: "Design artifacts produced by the design engine, per discipline.",
+    async loadChildren(root) {
+      const { designs } = await listDesigns(root);
+      return designs.map(({ design }) => ({
+        path: `${design.discipline}/`,
+        title: `${design.discipline}:${design.id}`,
+        kind: design.kind ? `design/${design.kind}` : `design/${design.discipline}`,
+        description: truncate(design.overview ?? design.title),
       }));
     },
   },

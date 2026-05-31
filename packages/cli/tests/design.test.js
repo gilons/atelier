@@ -251,6 +251,33 @@ test("design check gives a one-shot UI overview", async () => {
   }
 });
 
+test("design artifact add/list/show + map section", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const add = runCli(
+      ["design", "artifact", "add", "system-design:overview", "--title", "Workspace architecture", "--kind", "context", "--link", "https://excalidraw.com/x"],
+      workspaceRoot
+    );
+    assert.equal(add.status, 0, `stderr: ${add.stderr}\nstdout: ${add.stdout}`);
+    assert.match(add.stdout, /Recorded design system-design:overview/);
+
+    const list = runCli(["design", "artifact", "list"], workspaceRoot);
+    assert.match(list.stdout, /system-design:overview/);
+    assert.match(list.stdout, /\[context\]/);
+
+    const show = runCli(["design", "artifact", "show", "system-design:overview"], workspaceRoot);
+    assert.match(show.stdout, /Workspace architecture/);
+
+    const map = runCli(["map"], workspaceRoot);
+    assert.match(map.stdout, /Designs/);
+
+    const file = path.join(workspaceRoot, ".atelier", "designs", "system-design", "overview", "summary.md");
+    assert.match(await fs.readFile(file, "utf8"), /discipline: system-design/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

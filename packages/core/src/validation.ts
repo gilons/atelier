@@ -12,6 +12,7 @@ import type {
   ItemFrontMatter,
   DocFrontMatter,
   TicketFrontMatter,
+  DesignArtifactFrontMatter,
   SessionFrontMatter,
   SessionStatus,
   StakeholderFrontMatter,
@@ -635,6 +636,66 @@ export function validateTicketFrontMatter(
   if (assignee !== undefined) value.assignee = assignee as string;
   if (link !== undefined) value.link = link as string;
   if (parent !== undefined) value.parent = parent as string;
+  if (fromSession !== undefined) value.fromSession = fromSession as string;
+  return { ok: true, value, issues: [] };
+}
+
+// ============================================================
+// Design artifact front-matter
+// ============================================================
+
+const DESIGN_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+export function validateDesignArtifactFrontMatter(
+  raw: unknown
+): ValidationResult<DesignArtifactFrontMatter> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return { ok: false, issues: [{ path: "$", message: "expected an object at the top level" }] };
+  }
+  const { discipline, id, title, overview, kind, link, app, fromSession, createdAt, updatedAt } = raw;
+
+  if (!isNonEmptyString(discipline)) {
+    pushIssue(issues, "$.discipline", "must be a non-empty string");
+  } else if (!DESIGN_ID_PATTERN.test(discipline)) {
+    pushIssue(issues, "$.discipline", 'must be a lowercase slug (e.g. "system-design")');
+  }
+  if (!isNonEmptyString(id)) {
+    pushIssue(issues, "$.id", "must be a non-empty string");
+  } else if (!DESIGN_ID_PATTERN.test(id)) {
+    pushIssue(issues, "$.id", "must be a lowercase slug — letters, digits, hyphens");
+  }
+  if (!isNonEmptyString(title)) pushIssue(issues, "$.title", "must be a non-empty string");
+  if (overview !== undefined && typeof overview !== "string") {
+    pushIssue(issues, "$.overview", "if present, must be a string");
+  }
+  if (kind !== undefined && !isNonEmptyString(kind)) {
+    pushIssue(issues, "$.kind", "if present, must be a non-empty string");
+  }
+  if (link !== undefined && !isNonEmptyString(link)) {
+    pushIssue(issues, "$.link", "if present, must be a non-empty string");
+  }
+  if (app !== undefined && !isNonEmptyString(app)) {
+    pushIssue(issues, "$.app", "if present, must be a non-empty string");
+  }
+  if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
+    pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
+  }
+  if (!isNonEmptyString(createdAt)) pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
+  if (!isNonEmptyString(updatedAt)) pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
+
+  if (issues.length > 0) return { ok: false, issues };
+  const value: DesignArtifactFrontMatter = {
+    discipline: discipline as string,
+    id: id as string,
+    title: title as string,
+    createdAt: createdAt as string,
+    updatedAt: updatedAt as string,
+  };
+  if (overview !== undefined) value.overview = overview as string;
+  if (kind !== undefined) value.kind = kind as string;
+  if (link !== undefined) value.link = link as string;
+  if (app !== undefined) value.app = app as string;
   if (fromSession !== undefined) value.fromSession = fromSession as string;
   return { ok: true, value, issues: [] };
 }

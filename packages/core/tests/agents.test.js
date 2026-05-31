@@ -591,7 +591,7 @@ test("system-design carries the refresh (diff-don't-rebuild) sub-tree", async ()
   assert.match(a.instructions, /### Detect what changed/);
   assert.match(a.instructions, /### Apply the delta/);
   // Diffs against the baseline + updates in place + logs discrepancies.
-  assert.match(a.instructions, /atelier item update/);
+  assert.match(a.instructions, /atelier design artifact update/);
   assert.match(a.instructions, /atelier discrepancy add/);
 
   const paths = workspacePaths(workspaceRoot);

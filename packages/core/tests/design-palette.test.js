@@ -7,7 +7,7 @@ import {
   initWorkspace,
   addRepo,
   addFeature,
-  addItem,
+  addDesign,
   addStakeholder,
   buildDesignPalette,
   paletteSize,
@@ -45,21 +45,18 @@ test("buildDesignPalette derives subsystems, features, designs, owners with stab
   // A feature.
   await addFeature(workspaceRoot, { name: "Checkout", status: "planned", description: "Buy flow" });
 
-  // A system-design item + a non-design item (only the design one shows).
-  await addItem(workspaceRoot, {
-    source: "manual",
-    docId: "auth-overview",
+  // A system-design design artifact + a ui-design one (designs are
+  // scoped to the requested discipline).
+  await addDesign(workspaceRoot, {
+    discipline: "system-design",
+    id: "auth-overview",
     title: "Auth — system design",
-    classification: "system-design",
     overview: "How auth works",
-    skipSourceValidation: true,
   });
-  await addItem(workspaceRoot, {
-    source: "manual",
-    docId: "random-note",
-    title: "Random note",
-    classification: "note",
-    skipSourceValidation: true,
+  await addDesign(workspaceRoot, {
+    discipline: "ui-design",
+    id: "login-screen",
+    title: "Login screen",
   });
 
   // An owner.
@@ -79,10 +76,10 @@ test("buildDesignPalette derives subsystems, features, designs, owners with stab
     ["feature:checkout"]
   );
 
-  // Only the system-design item appears.
+  // Only the system-design discipline's artifact appears (default discipline).
   assert.deepEqual(
     palette.designs.map((d) => d.ref),
-    ["item:manual:auth-overview"]
+    ["design:system-design:auth-overview"]
   );
 
   // Owner.

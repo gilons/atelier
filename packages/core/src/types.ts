@@ -408,6 +408,53 @@ export interface Ticket extends TicketFrontMatter {
 }
 
 // ============================================================
+// Designs — the design engine's output (per discipline)
+// ============================================================
+
+/**
+ * A design artifact atelier has produced or indexed — the output of
+ * the design engine, the third typed surface replacing the generic
+ * "item". Keyed by *discipline* (system-design, ui-design, or a custom
+ * one) rather than an external source, because a design belongs to a
+ * discipline; the visual itself lives in the design tool (or as
+ * Markdown), and atelier holds the summary + a `link`.
+ *
+ * Storage: `.atelier/designs/<discipline>/<encoded-id>/summary.md`.
+ */
+export interface DesignArtifactFrontMatter {
+  /** Discipline this design belongs to: "system-design" | "ui-design" | <custom>. */
+  discipline: string;
+  /** Slug id, unique within the discipline. */
+  id: string;
+  /** Display title. */
+  title: string;
+  /** One-line summary (full summary lives in the body). */
+  overview?: string;
+  /**
+   * Within-discipline kind — system-design: "context" | "container" |
+   * "component" | "sequence"; ui-design: "navigation" | "screen" |
+   * "flow" | "design-system". Free-form.
+   */
+  kind?: string;
+  /** Pointer to the live diagram/board in the design tool. */
+  link?: string;
+  /** Optional app this design is for (ui-design: an `app:<repo>` ref). */
+  app?: string;
+  /** Session id this design came out of, when applicable. */
+  fromSession?: string;
+  /** ISO timestamp when first created. */
+  createdAt: string;
+  /** ISO timestamp of the most recent structural change. */
+  updatedAt: string;
+}
+
+/** A loaded design artifact: front-matter + the summary body. */
+export interface DesignArtifact extends DesignArtifactFrontMatter {
+  /** Markdown body — the agent-curated design summary. May be empty. */
+  body: string;
+}
+
+// ============================================================
 // Sessions — the speaking-module record of a conversation
 // ============================================================
 

@@ -79,10 +79,10 @@ separate projects each with their own UI.
    \`atelier design nav <app> --json\`, which extracts routes from
    file-based routers (Next / SvelteKit / Astro / Nuxt / Remix / Expo /
    Gatsby). For apps whose routing lives in code (plain React/Vue/…),
-   read it yourself. Then **document the map as a ui-design item**
-   (\`atelier item add <source>:<id> --title "<app> — navigation"
-   --classification ui-design\`), **linking to existing documentation**
-   in the system (docRefs on the feature/item).
+   read it yourself. Then **record the map as a ui-design artifact**
+   (\`atelier design artifact add ui-design:<app>-navigation --title
+   "<app> — navigation" --kind navigation --app app:<repo>\`), **linking
+   to existing documentation** in the system.
 3. Do this **even without visuals** — the map + doc links come first.
    Visuals are added progressively (as you onboard a feature). Most
    screen designs **already exist** in the design tool — **connect to
@@ -289,7 +289,7 @@ reference an env var in the runbook.`;
 2. Create/update the ${D} in the tool (${spec.artifacts}).
 3. Mirror a concise summary into atelier so it's discoverable without
    opening the tool:
-   \`atelier item add <source>:<id> --title "…" --classification ${id} --link <tool-url>\`.
+   \`atelier design artifact add ${id}:<slug> --title "…" --link <tool-url>\`.
 4. Link the design to the features / specs it serves.
 
 Keep the tool as the source of truth for visuals; atelier holds the
@@ -300,11 +300,10 @@ summary + links.`;
 diffable, version-controlled.
 
 1. Write it as markdown covering ${spec.artifacts}. Store it in the
-   repo (e.g. \`docs/design/<name>.md\`) and index it as an item with
-   \`--classification ${id}\`.
-2. If there's no \`design\` source yet, register a local one
-   (\`atelier source register --id markdown-${id} --name "Markdown ${spec.name}" --category design\`).
-3. Link it to the features / specs it serves. Markdown is the default —
+   repo (e.g. \`docs/design/<name>.md\`) and record it as a design
+   artifact: \`atelier design artifact add ${id}:<slug> --title "…"
+   --link docs/design/<name>.md\`.
+2. Link it to the features / specs it serves. Markdown is the default —
    never block on tooling.`;
 
   const bootstrap = `Generate the **initial ${D} design** for the workspace — the
@@ -315,12 +314,12 @@ cold-start pass; run once, then refresh.
 2. **Analyze** similarities + patterns across them (shared pieces,
    conventions, integration/composition points, anti-patterns).
 3. **Document** — register the major capabilities as features, add
-   ${id} items (\`--classification ${id}\`) for the overview + each
-   significant piece, log decisions/risks as discrepancies, record a
-   learning capturing the shape.
+   design artifacts (\`atelier design artifact add ${id}:<slug>\`) for
+   the overview + each significant piece, log decisions/risks as
+   discrepancies, record a learning capturing the shape.
 4. **Diagram** — a landscape/overview plus per-piece views, in the
    configured tool or Markdown (Mermaid). Mirror each into atelier as a
-   ${id} item with a link.
+   ${id} design artifact with a link.
 
 Keep every artifact in the title + one-line-description index shape so
 the map stays scannable. \`atelier map --rebuild\` when done.`;
@@ -329,11 +328,12 @@ the map stays scannable. \`atelier map --rebuild\` when done.`;
 diff, don't regenerate. Same "derive, don't generate" discipline over
 time.
 
-1. **Detect changes:** read the existing ${id} items (the baseline)
-   and diff against today's reality — code (\`atelier repo inspect\` +
-   git), docs/planning items, and tool edits since the item's
-   updatedAt. Produce a change list with evidence.
-2. **Apply the delta in place:** \`atelier item update <source>:<docId>\`
+1. **Detect changes:** read the existing ${id} design artifacts (the
+   baseline, \`atelier design artifact list --discipline ${id}\`) and
+   diff against today's reality — code (\`atelier repo inspect\` + git),
+   docs/planning, and tool edits since the artifact's updatedAt.
+   Produce a change list with evidence.
+2. **Apply the delta in place:** \`atelier design artifact update ${id}:<slug>\`
    for the affected designs + targeted diagram edits; reference
    existing palette \`ref\`s; keep prior decisions + history.
 3. **Record:** log real divergences as discrepancies
@@ -396,13 +396,14 @@ add new things as "proposed" stubs; push to the tool, or rewrite
   const liveFinalize = `Finalize when the call ends (\`status: ended\`). Re-transcribe
 accurately + drain. Surface the **substantial outcomes**, then
 **prompt the user per outcome** — don't auto-create:
-- **Fold into the existing design** → update the ${id} item(s) +
-  diagram (\`--from-session <id>\`).
+- **Fold into the existing design** → update the ${id} design
+  artifact(s) + diagram (\`atelier design artifact update ${id}:<slug>\`,
+  \`--from-session <id>\` on new ones).
 - **Create a new spec** → \`atelier spec new "<title>" --type <type>
   --from-session <id>\`.
-- **Park it** → an open item or discrepancy.
+- **Park it** → an open ticket or discrepancy.
 Then **improve the engine**: \`atelier agent learn ${id} "…"\`; the
-palette grows from the new items; refine your own playbook
+palette grows from the new design artifacts; refine your own playbook
 (\`atelier agent instruction add ${id} <slug> …\`) if a better pattern
 emerged; \`atelier map --rebuild\`. Tell the user what was promoted vs
 parked, with the session id.`;

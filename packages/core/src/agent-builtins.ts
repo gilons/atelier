@@ -317,11 +317,11 @@ const SYSDESIGN_DOCUMENT = `Document what you found so it lives in atelier, not 
 - **Features** — register the major capabilities the workspace
   delivers: \`atelier feature add "<name>" --code <repo>:<path>\` so each
   ties back to the code that implements it.
-- **System-design items** — for the workspace overview and each
-  significant subsystem, add an item:
-  \`atelier item add <source>:<id> --title "<name> — system design" --classification system-design\`
+- **System-design artifacts** — for the workspace overview and each
+  significant subsystem, add a design artifact:
+  \`atelier design artifact add system-design:<slug> --title "<name>" --kind <context|container|component>\`
   with a body summarizing structure, responsibilities, and
-  dependencies (link to the live diagram when a tool is configured).
+  dependencies (\`--link\` to the live diagram when a tool is configured).
 - **Decisions & risks** — record key trade-offs; log anti-patterns as
   discrepancies (\`atelier discrepancy add\`).
 - **Learnings** — \`atelier agent learn system-design "…"\` for the
@@ -379,8 +379,8 @@ const SYSDESIGN_PULL_DESIGN = `Pull down the existing design from the connected 
   code; offer to onboard one.
 - Enumerate the existing diagrams / files / frames and pull their
   content via your integration.
-- For each meaningful design, index a summary as an atelier item:
-  \`atelier item add <design-source>:<id> --title "…" --classification system-design --link <url>\`
+- For each meaningful design, record a summary as a design artifact:
+  \`atelier design artifact add system-design:<slug> --title "…" --link <url>\`
   with a concise body (what it depicts — components, flows) and a
   one-line overview. Keep the title + overview tight: that's what the
   map shows.
@@ -567,8 +567,9 @@ this short list to the user.
 **3. Prompt the user per outcome — don't auto-create.** For each
 substantial outcome, ask the user which way to take it:
    - **Fold into the existing design system** → update/extend the
-     relevant system-design item(s) + diagram (a modification to
-     something already modelled). Set \`--from-session <id>\`.
+     relevant system-design artifact(s) + diagram
+     (\`atelier design artifact update system-design:<slug>\`; set
+     \`--from-session <id>\` on new ones).
    - **Create a new spec for the product** → \`atelier spec new
      "<title>" --type <type> --from-session <id>\` (link the features /
      docs it touches). Use this when it's a new piece of work ready to
@@ -681,7 +682,7 @@ const SYSDESIGN_DRIVE = `With a tool configured, produce the design:
    components, plus sequence and data-model views as needed.
 3. Mirror a concise text summary into atelier so the design is
    discoverable without opening the tool:
-   \`atelier item add <source>:<id> --title "<name> — system design" --classification system-design --link <tool-url>\`
+   \`atelier design artifact add system-design:<slug> --title "<name>" --link <tool-url>\`
    with a body summarizing the design and linking to the live diagram.
 4. Link the design to the features / specs it serves (docRefs).
 
@@ -695,11 +696,9 @@ const SYSDESIGN_MARKDOWN = `When the team uses no dedicated tool, author the sys
    (\`\`\`mermaid) for diagrams so they render in most viewers. Cover:
    Context (system + external actors), Containers, Components, Data
    model, Key sequences, and Decisions / trade-offs.
-2. Store it in the repo (e.g. \`docs/architecture/<name>.md\`) and index
-   it in atelier as an item with \`--classification system-design\` so
-   it surfaces in the map. If there's no \`design\` source yet, register
-   a local one:
-   \`atelier source register --id markdown-design --name "Markdown design" --category design\`.
+2. Store it in the repo (e.g. \`docs/architecture/<name>.md\`) and record
+   it as a design artifact so it surfaces in the map:
+   \`atelier design artifact add system-design:<slug> --title "<name>" --link docs/architecture/<name>.md\`.
 3. Link it to the features / specs it serves.
 
 Markdown is the default — never block on tooling.`;
@@ -743,8 +742,9 @@ sure the base you're working from is current.`;
 
 const SYSDESIGN_REFRESH_DETECT = `Detect what changed since the design was last written.
 
-- Read the current design: the system-design items
-  (\`atelier map\`, \`atelier item list\`) — this is your baseline.
+- Read the current design: the system-design artifacts
+  (\`atelier map\`, \`atelier design artifact list --discipline system-design\`)
+  — this is your baseline.
 - Compare against today's reality:
   - **Code:** \`atelier repo inspect --json\` for structural changes
     (new/removed services, new ecosystems); use git in the repos
@@ -760,9 +760,10 @@ const SYSDESIGN_REFRESH_DETECT = `Detect what changed since the design was last 
 const SYSDESIGN_REFRESH_APPLY = `Apply the delta — update, don't rewrite.
 
 For each item on the change list:
-- **Update the affected system-design item** in place
-  (\`atelier item update <source>:<docId> …\`) — adjust only the parts
-  that drifted; keep the rest, including prior decisions and history.
+- **Update the affected system-design artifact** in place
+  (\`atelier design artifact update system-design:<slug> …\`) — adjust
+  only the parts that drifted; keep the rest, including prior decisions
+  and history.
 - **Update the diagram** the same way: in the connected tool, edit the
   affected nodes/edges; in Markdown, edit just those sections of the
   item body (Mermaid).
