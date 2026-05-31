@@ -1,6 +1,5 @@
 import type {
   Source,
-  SourceCategory,
   SourcesConfig,
   RegisteredRepo,
   ReposConfig,
@@ -72,7 +71,10 @@ function validateSource(
     return null;
   }
 
-  const { id, name, category, config, setupFile, enabled } = raw;
+  // `category` is intentionally ignored: older sources.yaml files may
+  // still carry it, but a source is a pure connector now — what it
+  // feeds is chosen per entry by the typed surface the agent writes to.
+  const { id, name, config, setupFile, enabled } = raw;
   let valid = true;
 
   if (!isNonEmptyString(id)) {
@@ -81,17 +83,6 @@ function validateSource(
   }
   if (!isNonEmptyString(name)) {
     pushIssue(issues, `${basePath}.name`, "must be a non-empty string");
-    valid = false;
-  }
-  const validCategory =
-    typeof category === "string" &&
-    (category === "docs" || category === "design" || category === "pm");
-  if (!validCategory) {
-    pushIssue(
-      issues,
-      `${basePath}.category`,
-      'must be one of: "docs", "design", "pm"'
-    );
     valid = false;
   }
   if (config !== undefined && !isObject(config)) {
@@ -119,7 +110,6 @@ function validateSource(
   const result: Source = {
     id: id as string,
     name: name as string,
-    category: category as SourceCategory,
     enabled: enabled as boolean,
   };
   if (config !== undefined) result.config = config as Record<string, unknown>;

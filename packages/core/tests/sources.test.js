@@ -37,7 +37,7 @@ test("deriveSourceId slugifies a human name", () => {
   assert.equal(deriveSourceId(""), "source");
 });
 
-test("registerSource persists id + name + enabled + defaults category to docs", async () => {
+test("registerSource persists id + name + enabled (a pure connector)", async () => {
   const root = await workspace();
   const source = await registerSource(root, {
     id: "company-notion",
@@ -46,30 +46,28 @@ test("registerSource persists id + name + enabled + defaults category to docs", 
   assert.equal(source.id, "company-notion");
   assert.equal(source.name, "Company Notion");
   assert.equal(source.enabled, true);
-  // Category defaults to "docs" so existing one-line registrations
-  // still work without passing --category.
-  assert.equal(source.category, "docs");
+  // A source carries no category — what it feeds is chosen per entry
+  // by the surface the agent indexes into (doc/ticket/design).
+  assert.equal(source.category, undefined);
 
   const cfg = await loadSourcesConfig(root);
   assert.equal(cfg.version, 3);
   assert.equal(cfg.sources.length, 1);
-  assert.equal(cfg.sources[0].category, "docs");
+  assert.equal(cfg.sources[0].category, undefined);
 });
 
-test("registerSource honors an explicit category (design / pm)", async () => {
+test("registerSource ignores a legacy category field (sources are connectors)", async () => {
   const root = await workspace();
-  const design = await registerSource(root, {
+  // A caller passing the old field gets a clean source back — category
+  // is no longer part of the model.
+  const figma = await registerSource(root, {
     id: "figma",
     name: "Figma",
     category: "design",
   });
-  const pm = await registerSource(root, {
-    id: "linear",
-    name: "Linear",
-    category: "pm",
-  });
-  assert.equal(design.category, "design");
-  assert.equal(pm.category, "pm");
+  assert.equal(figma.category, undefined);
+  const cfg = await loadSourcesConfig(root);
+  assert.equal(cfg.sources[0].category, undefined);
 });
 
 test("registerSource stores the free-form config blob verbatim", async () => {

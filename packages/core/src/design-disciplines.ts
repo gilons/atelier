@@ -317,7 +317,8 @@ companion** on a call. Record durable facts with
   const onboardTool = `No tool is configured for ${spec.name}. Ask what the team uses
 (${spec.toolExamples}, or none → Markdown). To onboard one:
 
-1. \`atelier source register --id <slug> --name "<Name>" --category design\`
+1. \`atelier source register <slug> --name "<Name>"\` (then pin it:
+   \`atelier design tool set <name> --discipline ${id} --source <slug>\`)
 2. Write a connection runbook (how you'll drive it — MCP server,
    browser tool, or API) and attach it
    (\`atelier source update <slug> --setup-file <path>\`).

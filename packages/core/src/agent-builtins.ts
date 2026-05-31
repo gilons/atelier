@@ -101,8 +101,9 @@ const DISCOVERY_DOCS = `Connect documentation — knowledge: PRDs, RFCs, runbook
 
 - Ask where docs live (Notion, Confluence, Google Docs, SharePoint, a
   docs/ folder in a repo, …).
-- Register it:
-  \`atelier source register --id <slug> --name "<Name>" --category docs\`
+- Register it (a source is just a connector — what it feeds is decided
+  per entry when you index, via \`atelier doc add\`):
+  \`atelier source register <slug> --name "<Name>"\`
 - Write a connection runbook so future agents can bring it online —
   what MCP server / browser tool / token is needed, how to fetch a doc
   by id. Pass it via \`--setup-file <path>\` or
@@ -111,15 +112,17 @@ const DISCOVERY_DOCS = `Connect documentation — knowledge: PRDs, RFCs, runbook
 const DISCOVERY_PLANNING = `Connect planning & tickets — initiatives, milestones, epics, tickets.
 
 - Ask what planning/ticketing platform they use (Linear, Jira, Asana,
-  GitHub Projects/Issues, …). Planning and ticketing are the same
-  atelier category:
-  \`atelier source register --id <slug> --name "<Name>" --category pm\`
+  GitHub Projects/Issues, …) and register it:
+  \`atelier source register <slug> --name "<Name>"\`
+  You'll index its items into the **tickets** surface
+  (\`atelier ticket add <slug>:<key>\`).
 - Record how to list + fetch items in the source's setup runbook.`;
 
 const DISCOVERY_DESIGN = `Connect design & UI — Figma frames, design systems, UI flows.
 
 - Ask what design surface they use (Figma, Excalidraw, Whimsical, …).
-  \`atelier source register --id <slug> --name "<Name>" --category design\`
+  \`atelier source register <slug> --name "<Name>"\`, then pin it as the
+  discipline's tool: \`atelier design tool set <name> --source <slug>\`.
 - Note the key files/projects (e.g. the main Figma file) in the runbook
   and as a learning.`;
 
@@ -165,7 +168,7 @@ const DISCOVERY_UNITS: InstructionUnit[] = [
   {
     slug: "planning",
     title: "Connect planning & tickets",
-    description: "Register the planning/ticketing platform (Linear/Jira/…) under category pm.",
+    description: "Register the planning/ticketing platform (Linear/Jira/…); index items into the tickets surface.",
     detail: DISCOVERY_PLANNING,
   },
   {
@@ -607,12 +610,12 @@ const SYSDESIGN_DETECT = `Find the configured system-design tool before doing an
 - **Check the explicit setting first:** \`atelier design tool show\`.
   If it names a tool, that's authoritative — use it (and read its
   backing \`design\` source runbook if one is linked).
-- Otherwise run \`atelier source list\` and look for sources with
-  category \`design\`. Re-read your learnings
+- Otherwise run \`atelier source list\` and read the runbooks to spot
+  the design tool. Re-read your learnings
   (\`atelier agent show system-design\`) — a prior choice is recorded
   there.
-- If exactly one design source exists, use it. If several, ask which
-  is the system-design tool, then pin it for next time:
+- If it's obvious which source is the design tool, use it. If unclear,
+  ask, then pin it for next time:
   \`atelier design tool set <tool> --source <id>\`.
 - If none exists, go to "Onboard a design tool".
 - Read the chosen source's runbook (\`atelier source show <id>\`) to
@@ -628,7 +631,8 @@ design. Then:
   fallback**.
 
 Generic onboarding for any AI-drivable design platform:
-1. \`atelier source register --id <slug> --name "<Name>" --category design\`
+1. \`atelier source register <slug> --name "<Name>"\` (then pin it:
+   \`atelier design tool set <name> --source <slug>\`)
 2. Write a connection runbook (how you'll drive it — MCP server,
    browser tool, or API) and attach it:
    \`atelier source update <slug> --setup-file <path>\`.

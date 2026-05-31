@@ -4,7 +4,7 @@ import { readYamlFile, writeYamlFile } from "./yaml-io.js";
 import { validateSourcesConfig, formatIssues } from "./validation.js";
 import { workspacePaths } from "./paths.js";
 import { WorkspaceValidationError } from "./workspace.js";
-import type { SourcesConfig, Source, SourceCategory } from "./types.js";
+import type { SourcesConfig, Source } from "./types.js";
 
 /**
  * High-level operations on the documentation source registry
@@ -70,13 +70,6 @@ export interface RegisterSourceOptions {
   /** Human-readable display name. */
   name: string;
   /**
-   * What kind of artifacts live under this source. Defaults to
-   * "docs" when omitted. Three values are recognized: `docs`
-   * (knowledge / PRDs / RFCs), `design` (UI / system design
-   * artifacts), `pm` (initiatives, milestones, tickets).
-   */
-  category?: SourceCategory;
-  /**
    * Free-form parameters the agent reads at fetch time. Atelier
    * stores this verbatim; we don't interpret any keys.
    */
@@ -131,7 +124,6 @@ export async function registerSource(
   const source: Source = {
     id: opts.id,
     name: opts.name,
-    category: opts.category ?? "docs",
     enabled: opts.enabled ?? true,
   };
   if (opts.config !== undefined) source.config = opts.config;

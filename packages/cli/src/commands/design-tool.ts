@@ -100,8 +100,6 @@ const setCmd: Command = {
       const match = sources.find((s) => s.id === sourceId);
       if (!match) {
         ui.warn(`No registered source "${sourceId}" — set anyway. Register it with \`atelier source register\`.`);
-      } else if (match.category !== "design") {
-        ui.warn(`Source "${sourceId}" is category "${match.category}", not "design".`);
       }
     }
 

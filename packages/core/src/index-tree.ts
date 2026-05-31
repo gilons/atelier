@@ -198,8 +198,8 @@ async function configBackedChildren(workspaceRoot: string): Promise<{
     ss.map((s) => ({
       path: `sources/${s.id}/`,
       title: s.name,
-      kind: `source/${s.category}`,
-      description: truncate(`${s.enabled === false ? "disabled" : "enabled"} ${s.category} source`),
+      kind: "source",
+      description: truncate(`${s.enabled === false ? "disabled" : "enabled"} source`),
     }))
   );
   const repos = await listRepos(workspaceRoot).then(({ repos: rs }) =>

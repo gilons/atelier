@@ -12,14 +12,13 @@ test("validateSourcesConfig accepts a minimal valid config", () => {
   assert.deepEqual(r.value, { version: 3, sources: [] });
 });
 
-test("validateSourcesConfig accepts a config with a source (new agent-driven shape)", () => {
+test("validateSourcesConfig accepts a config with a source (connector shape)", () => {
   const r = validateSourcesConfig({
     version: 3,
     sources: [
       {
         id: "company-notion",
         name: "Company Notion",
-        category: "docs",
         enabled: true,
         config: { mcp_server: "notion-mcp", workspace: "acme" },
         setupFile: "sources/company-notion/setup.md",
@@ -29,46 +28,34 @@ test("validateSourcesConfig accepts a config with a source (new agent-driven sha
   assert.equal(r.ok, true);
   assert.equal(r.value.sources.length, 1);
   assert.equal(r.value.sources[0].name, "Company Notion");
-  assert.equal(r.value.sources[0].category, "docs");
   assert.deepEqual(r.value.sources[0].config, {
     mcp_server: "notion-mcp",
     workspace: "acme",
   });
 });
 
-test("validateSourcesConfig accepts the three categories: docs, design, pm", () => {
+test("validateSourcesConfig ignores a legacy category field (sources are connectors)", () => {
   const r = validateSourcesConfig({
     version: 3,
     sources: [
       { id: "kb", name: "Knowledge", category: "docs", enabled: true },
-      { id: "figma", name: "Design", category: "design", enabled: true },
-      { id: "linear", name: "PM", category: "pm", enabled: true },
+      { id: "figma", name: "Design", category: "tickets", enabled: true },
     ],
   });
+  // category is no longer part of the model — it's accepted (so old
+  // files load) but stripped from the validated value.
   assert.equal(r.ok, true);
-  assert.deepEqual(
-    r.value.sources.map((s) => s.category),
-    ["docs", "design", "pm"]
-  );
+  assert.equal(r.value.sources[0].category, undefined);
+  assert.equal(r.value.sources[1].category, undefined);
 });
 
-test("validateSourcesConfig rejects an unknown category", () => {
+test("validateSourcesConfig rejects sources missing required fields", () => {
   const r = validateSourcesConfig({
     version: 3,
-    sources: [{ id: "x", name: "X", category: "tickets", enabled: true }],
-  });
-  assert.equal(r.ok, false);
-  assert.ok(r.issues.some((i) => i.path === "$.sources[0].category"));
-});
-
-test("validateSourcesConfig rejects sources missing required fields (including category)", () => {
-  const r = validateSourcesConfig({
-    version: 3,
-    sources: [{ id: "x" /* no name, no category, no enabled */ }],
+    sources: [{ id: "x" /* no name, no enabled */ }],
   });
   assert.equal(r.ok, false);
   assert.ok(r.issues.some((i) => i.path === "$.sources[0].name"));
-  assert.ok(r.issues.some((i) => i.path === "$.sources[0].category"));
   assert.ok(r.issues.some((i) => i.path === "$.sources[0].enabled"));
 });
 
@@ -76,8 +63,8 @@ test("validateSourcesConfig rejects duplicate source ids", () => {
   const r = validateSourcesConfig({
     version: 3,
     sources: [
-      { id: "dup", name: "A", category: "docs", enabled: true },
-      { id: "dup", name: "B", category: "docs", enabled: true },
+      { id: "dup", name: "A", enabled: true },
+      { id: "dup", name: "B", enabled: true },
     ],
   });
   assert.equal(r.ok, false);

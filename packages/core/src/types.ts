@@ -14,42 +14,17 @@
 // ============================================================
 
 /**
- * What kind of workspace artifacts this source feeds.
- *
- *   - `docs` — knowledge: PRDs, RFCs, runbooks, transcripts.
- *   - `design` — UI / system design: Figma frames, Excalidraw
- *     canvases, Whimsical flows.
- *   - `pm` — product management: Linear/Jira/Asana initiatives,
- *     milestones, epics, tickets.
- *
- * The category influences which typed-surface command the agent
- * uses to index a source's content — `docs`/`pm` sources feed
- * `atelier doc add` / `atelier ticket add`, while `design` work is
- * captured via `atelier design artifact add`. The source's
- * underlying integration (MCP server, browser ext, REST) is still
- * the agent's problem; atelier just tags the source so entries can
- * be grouped sensibly.
- */
-export type SourceCategory = "docs" | "design" | "pm";
-
-export const SOURCE_CATEGORIES: ReadonlyArray<SourceCategory> = [
-  "docs",
-  "design",
-  "pm",
-];
-
-/**
  * A configured workspace source.
  *
  * Atelier doesn't talk to source systems directly — the user's
  * agent does (via MCP servers, browser extensions, whatever
- * integrations are already wired up). A "source" in atelier's
- * model is just:
+ * integrations are already wired up). A "source" is purely a
+ * *connector* — where something comes from and how the agent
+ * reaches it:
  *
- *   - A stable identifier the agent uses when adding items.
+ *   - A stable identifier the typed surfaces cite (a documentation
+ *     entry is `<source>:<docId>`, a ticket `<source>:<ticketId>`).
  *   - A human-readable name.
- *   - A `category` (docs / design / pm) so atelier knows which
- *     bucket items belong to.
  *   - An opaque `config` blob the agent reads at fetch time. Atelier
  *     never interprets it. Typical contents: MCP server name,
  *     workspace ids, hostnames — whatever the agent needs to make
@@ -58,18 +33,18 @@ export const SOURCE_CATEGORIES: ReadonlyArray<SourceCategory> = [
  *     to GET CONNECTED for the first time (install browser ext,
  *     authorize, add MCP server entry, etc.). Stored on disk at
  *     `.atelier/sources/<id>/setup.md` by convention.
+ *
+ * A source is intentionally *not* tagged by kind. What it feeds is
+ * decided per entry, at index time, by which typed surface the agent
+ * writes to (`atelier doc add` vs `atelier ticket add`) — one source
+ * (a Notion workspace) can hold both PRDs and a roadmap database, so
+ * a single per-source classification would be wrong.
  */
 export interface Source {
-  /** Stable identifier used for citations and the item index. */
+  /** Stable identifier the typed surfaces cite (`<source>:<id>`). */
   id: string;
   /** Human-readable name shown in the UI. */
   name: string;
-  /**
-   * What kind of artifacts live under this source. Defaults to
-   * `docs` for back-compat with workspaces that pre-date the
-   * three-category model.
-   */
-  category: SourceCategory;
   /**
    * Free-form parameters the agent reads at fetch time. Atelier
    * round-trips this verbatim — keys and values are opaque to us.
@@ -163,11 +138,10 @@ export interface FeatureCodeRef {
 }
 
 /**
- * A reference from a feature or spec to a tracked item — could be a
- * doc, a design artifact, or a PM ticket depending on the source's
- * category. The `docId` field name predates the three-category
- * model; semantically it's "the id of the referenced item" — kept
- * as `docId` so existing features.yaml entries keep loading.
+ * A reference from a feature or spec to a documentation entry in a
+ * source. The `docId` field name is historical; semantically it's
+ * "the id of the referenced entry within the source" — kept as
+ * `docId` so existing features.yaml entries keep loading.
  */
 export interface FeatureItemRef {
   /** Source id (must exist in sources.yaml). */
