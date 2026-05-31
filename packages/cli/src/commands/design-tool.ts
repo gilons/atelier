@@ -1,9 +1,11 @@
 import {
   requireWorkspaceRoot,
-  loadDesignConfig,
+  loadDisciplineConfig,
   setDesignTool,
   clearDesignTool,
   listSources,
+  findBuiltinDiscipline,
+  DEFAULT_DISCIPLINE,
   DesignConfigError,
   NotInsideWorkspaceError,
 } from "@atelier/core";
@@ -11,13 +13,17 @@ import type { Command } from "../command.js";
 import { ui } from "../ui.js";
 
 /**
- * `atelier design tool` — declare the workspace's system-design tool.
+ * `atelier design tool` — declare which platform drives a design
+ * discipline.
  *
- * The system-design agent reads this to know what drives the design
- * work (Figma / Excalidraw / Lucidchart / … or "markdown"). It's an
- * explicit, queryable alternative to inferring from `design` sources +
- * the agent's learnings. Mounted as the `tool` subcommand of `design`.
+ * Per-discipline: pass --discipline to target ui-design, a custom
+ * discipline, etc.; defaults to system-design. The matching design
+ * agent reads this to know what drives the work (Figma / Excalidraw /
+ * … or "markdown"), an explicit alternative to inferring from `design`
+ * sources + learnings. Mounted as the `tool` subcommand of `design`.
  */
+
+const DISCIPLINE_OPT = { type: "string" as const, short: "D" as const };
 
 async function resolveRoot(cwd: string): Promise<string | number> {
   try {
@@ -31,60 +37,64 @@ async function resolveRoot(cwd: string): Promise<string | number> {
   }
 }
 
+function disciplineOf(values: Record<string, unknown>): string {
+  return (values.discipline as string | undefined)?.trim() || DEFAULT_DISCIPLINE;
+}
+
 const showCmd: Command = {
   name: "show",
-  summary: "Show the workspace's configured system-design tool.",
-  async run({ cwd, mode }) {
+  summary: "Show a discipline's configured design tool.",
+  options: { discipline: DISCIPLINE_OPT },
+  async run({ values, cwd, mode }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    const discipline = disciplineOf(values);
 
-    const cfg = await loadDesignConfig(root);
+    const cfg = await loadDisciplineConfig(root, discipline);
     if (!cfg || !cfg.tool) {
-      const hint = mode === "repl" ? "/design tool set <tool>" : "atelier design tool set <tool>";
-      ui.info("No system-design tool set.");
+      const flag = discipline === DEFAULT_DISCIPLINE ? "" : ` --discipline ${discipline}`;
+      const hint =
+        (mode === "repl" ? "/design tool set <tool>" : "atelier design tool set <tool>") + flag;
+      ui.info(`No tool set for ${ui.bold(discipline)}.`);
       ui.print(
-        `  ${ui.dim(`The system-design agent will infer from \`design\` sources, else use Markdown.`)}`
+        `  ${ui.dim(`The ${discipline} agent will infer from \`design\` sources, else use Markdown.`)}`
       );
       ui.print(`  ${ui.dim(`Declare one explicitly with \`${hint}\`.`)}`);
-      if (cfg?.live) {
-        ui.print(`  ${ui.dim(`(Live tuning is set — see \`atelier design live show\`.)`)}`);
-      }
       return 0;
     }
-    ui.print(ui.bold(cfg.tool));
+    ui.print(`${ui.bold(cfg.tool)} ${ui.dim("(" + discipline + ")")}`);
     if (cfg.sourceId) ui.print(`  ${ui.dim("source:")} ${cfg.sourceId}`);
     if (cfg.notes) ui.print(`  ${ui.dim("notes:")}  ${cfg.notes}`);
-    ui.print(`  ${ui.dim("updated:")} ${cfg.updatedAt}`);
     return 0;
   },
 };
 
 const setCmd: Command = {
   name: "set",
-  summary: "Set the workspace's system-design tool.",
+  summary: "Set a discipline's design tool.",
   description:
-    "Records which platform drives system design — figma / excalidraw /\n" +
-    "lucidchart / markdown / any AI-drivable tool. Optionally link the\n" +
-    "registered `design` source that backs it (--source) and a note on\n" +
-    "how it's driven (--note).",
+    "Records which platform drives the discipline (figma / excalidraw /\n" +
+    "sketch / markdown / any AI-drivable tool). Pass --discipline to\n" +
+    "target one (defaults to system-design); --source links the backing\n" +
+    "`design` source; --note records how it's driven.",
   positionals: ["tool"],
   options: {
     source: { type: "string", short: "s" },
     note: { type: "string", short: "n" },
+    discipline: DISCIPLINE_OPT,
   },
   async run({ values, positionals, cwd }) {
     const [tool] = positionals;
     if (!tool) {
       ui.error("Missing <tool> argument.");
-      ui.print(`  ${ui.dim('Usage: atelier design tool set figma [--source <id>] [--note "..."]')}`);
+      ui.print(`  ${ui.dim('Usage: atelier design tool set figma [--discipline ui-design] [--source <id>]')}`);
       return 2;
     }
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    const discipline = disciplineOf(values);
 
     const sourceId = values.source as string | undefined;
-    // Soft-validate the backing source: warn (don't block) if it's not
-    // a registered design source yet — the user may connect it later.
     if (sourceId) {
       const sources = await listSources(root);
       const match = sources.find((s) => s.id === sourceId);
@@ -100,11 +110,12 @@ const setCmd: Command = {
         tool,
         sourceId,
         notes: values.note as string | undefined,
+        discipline,
       });
-      ui.success(`System-design tool set to ${ui.bold(cfg.tool ?? tool)}.`);
+      ui.success(`${ui.bold(discipline)} tool set to ${ui.bold(cfg.tool ?? tool)}.`);
       if (cfg.sourceId) ui.print(`  ${ui.dim("backed by source:")} ${cfg.sourceId}`);
       ui.print(
-        `  ${ui.dim("The system-design agent will drive this tool (run `atelier agent install system-design`).")}`
+        `  ${ui.dim(`The ${discipline} agent will drive this tool (run \`atelier agent install ${discipline}\`).`)}`
       );
       return 0;
     } catch (err) {
@@ -119,23 +130,28 @@ const setCmd: Command = {
 
 const clearCmd: Command = {
   name: "clear",
-  summary: "Unset the workspace's system-design tool.",
-  async run({ cwd }) {
+  summary: "Unset a discipline's design tool.",
+  options: { discipline: DISCIPLINE_OPT },
+  async run({ values, cwd }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
-    const removed = await clearDesignTool(root);
-    if (removed) ui.success("Cleared the system-design tool setting.");
-    else ui.info("No system-design tool was set.");
+    const discipline = disciplineOf(values);
+    const removed = await clearDesignTool(root, discipline);
+    if (removed) ui.success(`Cleared the ${discipline} design settings.`);
+    else ui.info(`No settings for ${discipline}.`);
     return 0;
   },
 };
 
 export const toolCommand: Command = {
   name: "tool",
-  summary: "Declare the workspace's system-design tool (Figma / Excalidraw / …).",
+  summary: "Declare a discipline's design tool (Figma / Excalidraw / …).",
   description:
-    "The system-design agent reads this to know what drives the design\n" +
-    "work. Optional — when unset, the agent infers from `design` sources\n" +
-    "and falls back to Markdown.",
+    "Per-discipline tool selection (--discipline, default system-design).\n" +
+    "The matching design agent reads this; when unset it infers from\n" +
+    "`design` sources and falls back to Markdown.",
   subcommands: [showCmd, setCmd, clearCmd],
 };
+
+// re-exported so `design discipline` can validate ids if needed
+export { findBuiltinDiscipline };

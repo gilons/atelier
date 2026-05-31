@@ -1,4 +1,9 @@
 import type { AgentFrontMatter } from "./types.js";
+import {
+  BUILTIN_DISCIPLINES,
+  buildDesignDisciplineUnits,
+  disciplineAgentMeta,
+} from "./design-disciplines.js";
 
 /**
  * Built-in agent templates atelier ships.
@@ -1028,6 +1033,15 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
     },
     instructionUnits: SYSTEM_DESIGN_UNITS,
   },
+  // ui-design (and any future built-in discipline) is generated from
+  // the shared design-discipline template, so every discipline gets
+  // the same engine. system-design keeps its bespoke tree above.
+  ...BUILTIN_DISCIPLINES.filter((d) => d.id !== "system-design").map(
+    (spec): BuiltinAgent => ({
+      meta: disciplineAgentMeta(spec),
+      instructionUnits: buildDesignDisciplineUnits(spec),
+    })
+  ),
 ];
 
 /** Look up a built-in template by id. */

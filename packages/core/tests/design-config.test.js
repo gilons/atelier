@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   initWorkspace,
   loadDesignConfig,
+  loadDisciplineConfig,
   setDesignTool,
   setLiveConfig,
   clearDesignTool,
@@ -21,36 +22,46 @@ async function workspace() {
   return { umbrella, workspaceRoot };
 }
 
-test("loadDesignConfig returns null when unset", async () => {
+test("loadDesignConfig / loadDisciplineConfig return null when unset", async () => {
   const { workspaceRoot } = await workspace();
   assert.equal(await loadDesignConfig(workspaceRoot), null);
+  assert.equal(await loadDisciplineConfig(workspaceRoot), null);
 });
 
-test("setDesignTool persists + loadDesignConfig round-trips", async () => {
+test("setDesignTool defaults to the system-design discipline", async () => {
   const { workspaceRoot } = await workspace();
-  const cfg = await setDesignTool(workspaceRoot, {
-    tool: "figma",
-    sourceId: "acme-figma",
-    notes: "file key ABC, MCP server figma",
+  const d = await setDesignTool(workspaceRoot, {
+    tool: "excalidraw",
+    sourceId: "acme-ex",
+    notes: "scenes in docs/",
   });
-  assert.equal(cfg.tool, "figma");
-  const loaded = await loadDesignConfig(workspaceRoot);
-  assert.equal(loaded.tool, "figma");
-  assert.equal(loaded.sourceId, "acme-figma");
-  assert.match(loaded.notes, /file key ABC/);
-  // Lands at .atelier/design.yaml
+  assert.equal(d.tool, "excalidraw");
+  const loaded = await loadDisciplineConfig(workspaceRoot, "system-design");
+  assert.equal(loaded.tool, "excalidraw");
+  assert.equal(loaded.sourceId, "acme-ex");
   const paths = workspacePaths(workspaceRoot);
-  await fs.access(path.join(paths.atelier, "design.yaml"));
+  const text = await fs.readFile(path.join(paths.atelier, "design.yaml"), "utf8");
+  assert.match(text, /disciplines:/);
+  assert.match(text, /system-design:/);
 });
 
-test("setDesignTool preserves createdAt across updates, bumps updatedAt", async () => {
+test("tools are per-discipline — ui-design and system-design coexist", async () => {
   const { workspaceRoot } = await workspace();
-  const a = await setDesignTool(workspaceRoot, { tool: "excalidraw" });
+  await setDesignTool(workspaceRoot, { tool: "excalidraw", discipline: "system-design" });
+  await setDesignTool(workspaceRoot, { tool: "figma", discipline: "ui-design" });
+  assert.equal((await loadDisciplineConfig(workspaceRoot, "system-design")).tool, "excalidraw");
+  assert.equal((await loadDisciplineConfig(workspaceRoot, "ui-design")).tool, "figma");
+});
+
+test("setDesignTool preserves createdAt, bumps updatedAt (full config)", async () => {
+  const { workspaceRoot } = await workspace();
+  await setDesignTool(workspaceRoot, { tool: "excalidraw" });
+  const a = await loadDesignConfig(workspaceRoot);
   await new Promise((r) => setTimeout(r, 5));
-  const b = await setDesignTool(workspaceRoot, { tool: "figma" });
+  await setDesignTool(workspaceRoot, { tool: "figma" });
+  const b = await loadDesignConfig(workspaceRoot);
   assert.equal(b.createdAt, a.createdAt);
   assert.notEqual(b.updatedAt, a.updatedAt);
-  assert.equal(b.tool, "figma");
 });
 
 test("setDesignTool rejects an empty tool", async () => {
@@ -58,58 +69,62 @@ test("setDesignTool rejects an empty tool", async () => {
   await assert.rejects(() => setDesignTool(workspaceRoot, { tool: "  " }), DesignConfigError);
 });
 
-test("clearDesignTool removes the setting", async () => {
+test("setLiveConfig tunes a discipline's gate + model, standalone (no tool)", async () => {
   const { workspaceRoot } = await workspace();
-  await setDesignTool(workspaceRoot, { tool: "lucidchart" });
-  assert.equal(await clearDesignTool(workspaceRoot), true);
-  assert.equal(await loadDesignConfig(workspaceRoot), null);
-  // Clearing again is a no-op (false).
-  assert.equal(await clearDesignTool(workspaceRoot), false);
-});
-
-test("setLiveConfig tunes the stability gate + model, standalone (no tool)", async () => {
-  const { workspaceRoot } = await workspace();
-  const cfg = await setLiveConfig(workspaceRoot, { stabilityChunks: 3, model: "base" });
-  assert.equal(cfg.tool, undefined);
-  assert.equal(cfg.live.stabilityChunks, 3);
-  assert.equal(cfg.live.model, "base");
-  const loaded = await loadDesignConfig(workspaceRoot);
+  const d = await setLiveConfig(workspaceRoot, {
+    discipline: "ui-design",
+    stabilityChunks: 3,
+    model: "base",
+  });
+  assert.equal(d.tool, undefined);
+  assert.equal(d.live.stabilityChunks, 3);
+  assert.equal(d.live.model, "base");
+  const loaded = await loadDisciplineConfig(workspaceRoot, "ui-design");
   assert.equal(loaded.live.stabilityChunks, 3);
-  assert.equal(loaded.live.model, "base");
 });
 
-test("setLiveConfig and setDesignTool preserve each other", async () => {
+test("setLiveConfig and setDesignTool preserve each other within a discipline", async () => {
   const { workspaceRoot } = await workspace();
   await setLiveConfig(workspaceRoot, { stabilityChunks: 4 });
   await setDesignTool(workspaceRoot, { tool: "figma" });
-  let loaded = await loadDesignConfig(workspaceRoot);
-  assert.equal(loaded.tool, "figma");
-  assert.equal(loaded.live.stabilityChunks, 4, "tool change wiped live tuning");
-
+  let d = await loadDisciplineConfig(workspaceRoot, "system-design");
+  assert.equal(d.tool, "figma");
+  assert.equal(d.live.stabilityChunks, 4, "tool change wiped live tuning");
   await setLiveConfig(workspaceRoot, { model: "tiny" });
-  loaded = await loadDesignConfig(workspaceRoot);
-  assert.equal(loaded.tool, "figma", "live change wiped the tool");
-  assert.equal(loaded.live.stabilityChunks, 4);
-  assert.equal(loaded.live.model, "tiny");
+  d = await loadDisciplineConfig(workspaceRoot, "system-design");
+  assert.equal(d.tool, "figma");
+  assert.equal(d.live.stabilityChunks, 4);
+  assert.equal(d.live.model, "tiny");
 });
 
-test("setLiveConfig rejects a non-positive stability gate", async () => {
+test("setLiveConfig rejects a non-positive gate", async () => {
   const { workspaceRoot } = await workspace();
   await assert.rejects(() => setLiveConfig(workspaceRoot, { stabilityChunks: 0 }), DesignConfigError);
 });
 
-test("setLiveConfig can clear a field with null", async () => {
+test("clearDesignTool removes a discipline; clearing the last deletes the file", async () => {
   const { workspaceRoot } = await workspace();
-  await setLiveConfig(workspaceRoot, { stabilityChunks: 3, model: "base" });
-  const cfg = await setLiveConfig(workspaceRoot, { model: null });
-  assert.equal(cfg.live.stabilityChunks, 3);
-  assert.equal(cfg.live.model, undefined);
+  await setDesignTool(workspaceRoot, { tool: "figma", discipline: "ui-design" });
+  await setDesignTool(workspaceRoot, { tool: "excalidraw", discipline: "system-design" });
+  assert.equal(await clearDesignTool(workspaceRoot, "ui-design"), true);
+  assert.equal(await loadDisciplineConfig(workspaceRoot, "ui-design"), null);
+  assert.equal((await loadDisciplineConfig(workspaceRoot, "system-design")).tool, "excalidraw");
+  // Clear the last → file gone → loadDesignConfig null.
+  assert.equal(await clearDesignTool(workspaceRoot, "system-design"), true);
+  assert.equal(await loadDesignConfig(workspaceRoot), null);
+  // Clearing again is a no-op.
+  assert.equal(await clearDesignTool(workspaceRoot), false);
 });
 
-test("loadDesignConfig throws on a malformed file", async () => {
+test("back-compat: a flat design.yaml is read as the system-design discipline", async () => {
   const { workspaceRoot } = await workspace();
   const paths = workspacePaths(workspaceRoot);
-  await fs.writeFile(path.join(paths.atelier, "design.yaml"), "tool: 123\n", "utf8");
-  // tool must be a string — surfaced as a DesignConfigError.
-  await assert.rejects(() => loadDesignConfig(workspaceRoot), DesignConfigError);
+  await fs.writeFile(
+    path.join(paths.atelier, "design.yaml"),
+    "version: 1\ntool: figma\nsourceId: legacy\ncreatedAt: 2026-01-01T00:00:00Z\nupdatedAt: 2026-01-01T00:00:00Z\n",
+    "utf8"
+  );
+  const d = await loadDisciplineConfig(workspaceRoot, "system-design");
+  assert.equal(d.tool, "figma");
+  assert.equal(d.sourceId, "legacy");
 });

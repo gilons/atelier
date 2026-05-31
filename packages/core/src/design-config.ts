@@ -4,55 +4,46 @@ import { workspacePaths } from "./paths.js";
 import { readYamlFile, writeYamlFile } from "./yaml-io.js";
 
 /**
- * The workspace's chosen system-design tool.
+ * Per-discipline design configuration (`.atelier/design.yaml`).
  *
- * The system-design agent needs to know which platform drives the
- * design work (Figma / Excalidraw / Lucidchart / … or "markdown" when
- * the team uses none). It can infer this from registered `design`
- * sources + its own learnings, but an explicit, queryable setting
- * makes detection deterministic — and gives the user a single place
- * to declare "this is our design tool."
+ * "design" is an umbrella over disciplines (system-design, ui-design,
+ * and any the team adds). Each discipline picks its own tool and tunes
+ * its own live companion — UI design might use Figma while system
+ * design uses Excalidraw — so the config is keyed by discipline.
  *
- * Stored at `.atelier/design.yaml`. Optional: when absent, the agent
- * falls back to inferring from sources, then to Markdown.
+ * Back-compat: the original flat shape ({ tool, live, … } at the top)
+ * is read as the `system-design` discipline, so existing workspaces
+ * keep working and `atelier design tool set <tool>` (no --discipline)
+ * targets system-design by default.
  */
-/**
- * Tuning for the system-design agent's live companion mode — the
- * knobs behind the two-track latency design.
- */
+
+/** The discipline targeted when --discipline is omitted. */
+export const DEFAULT_DISCIPLINE = "system-design";
+
+/** Tuning for a discipline's live companion (two-track latency design). */
 export interface DesignLiveConfig {
-  /**
-   * How many consecutive chunks a topic must stay stable before the
-   * slow track renders a diagram. Higher = calmer on volatile calls,
-   * laggier on steady ones. The agent's default is ~2.
-   */
+  /** Chunks a topic must stay stable before the slow track renders (agent default ~2). */
   stabilityChunks?: number;
-  /**
-   * STT model to use on the live hot path (e.g. "tiny", "base") —
-   * traded for speed; the durable record is re-transcribed accurately
-   * at finalize.
-   */
+  /** Fast STT model used on the live hot path (e.g. "tiny", "base"). */
   model?: string;
 }
 
-export interface DesignToolConfig {
-  version: 1;
-  /**
-   * The platform. Free-form so teams can name any AI-drivable tool;
-   * common values: "figma", "excalidraw", "lucidchart", "markdown".
-   * Optional: a config may carry only `live` tuning with no tool yet.
-   */
+/** One discipline's settings. */
+export interface DisciplineConfig {
+  /** The platform driving this discipline ("figma", "excalidraw", "markdown", …). */
   tool?: string;
-  /**
-   * Optional id of the registered `design` source that backs this
-   * tool (where its connection runbook lives). Omitted for the
-   * "markdown" tool, which needs no source.
-   */
+  /** Id of the registered `design` source backing the tool. */
   sourceId?: string;
-  /** Optional free-form note — how it's driven, key file ids, etc. */
+  /** Free-form note (how it's driven, key file ids). */
   notes?: string;
-  /** Optional live-companion tuning (stability gate, live STT model). */
+  /** Live-companion tuning. */
   live?: DesignLiveConfig;
+}
+
+export interface DesignConfig {
+  version: 1;
+  /** Settings keyed by discipline id. */
+  disciplines: Record<string, DisciplineConfig>;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,182 +61,242 @@ export class DesignConfigError extends Error {
   }
 }
 
-function validateLive(raw: unknown, file: string): DesignLiveConfig | undefined {
+// ============================================================
+// Validation + migration
+// ============================================================
+
+function validateLive(raw: unknown, where: string): DesignLiveConfig | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new DesignConfigError(`${file}: \`live\`, if present, must be an object`);
+    throw new DesignConfigError(`${where}.live, if present, must be an object`);
   }
   const r = raw as Record<string, unknown>;
   const live: DesignLiveConfig = {};
   if (r.stabilityChunks !== undefined) {
-    if (
-      typeof r.stabilityChunks !== "number" ||
-      !Number.isInteger(r.stabilityChunks) ||
-      r.stabilityChunks < 1
-    ) {
-      throw new DesignConfigError(`${file}: \`live.stabilityChunks\` must be a positive integer`);
+    if (typeof r.stabilityChunks !== "number" || !Number.isInteger(r.stabilityChunks) || r.stabilityChunks < 1) {
+      throw new DesignConfigError(`${where}.live.stabilityChunks must be a positive integer`);
     }
     live.stabilityChunks = r.stabilityChunks;
   }
   if (r.model !== undefined) {
     if (typeof r.model !== "string" || !r.model) {
-      throw new DesignConfigError(`${file}: \`live.model\`, if present, must be a non-empty string`);
+      throw new DesignConfigError(`${where}.live.model, if present, must be a non-empty string`);
     }
     live.model = r.model;
   }
   return Object.keys(live).length > 0 ? live : undefined;
 }
 
-function validate(raw: unknown, file: string): DesignToolConfig {
+function validateDiscipline(raw: unknown, where: string): DisciplineConfig {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new DesignConfigError(`${where} must be an object`);
+  }
+  const r = raw as Record<string, unknown>;
+  if (r.tool !== undefined && (typeof r.tool !== "string" || !r.tool)) {
+    throw new DesignConfigError(`${where}.tool, if present, must be a non-empty string`);
+  }
+  if (r.sourceId !== undefined && (typeof r.sourceId !== "string" || !r.sourceId)) {
+    throw new DesignConfigError(`${where}.sourceId, if present, must be a non-empty string`);
+  }
+  if (r.notes !== undefined && typeof r.notes !== "string") {
+    throw new DesignConfigError(`${where}.notes, if present, must be a string`);
+  }
+  const out: DisciplineConfig = {};
+  if (typeof r.tool === "string") out.tool = r.tool;
+  if (typeof r.sourceId === "string") out.sourceId = r.sourceId;
+  if (typeof r.notes === "string") out.notes = r.notes;
+  const live = validateLive(r.live, where);
+  if (live) out.live = live;
+  return out;
+}
+
+function validate(raw: unknown, file: string): DesignConfig {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new DesignConfigError(`${file}: expected a YAML object`);
   }
   const r = raw as Record<string, unknown>;
-  if (r.tool !== undefined && (typeof r.tool !== "string" || r.tool.length === 0)) {
-    throw new DesignConfigError(`${file}: \`tool\`, if present, must be a non-empty string`);
-  }
-  if (r.sourceId !== undefined && (typeof r.sourceId !== "string" || !r.sourceId)) {
-    throw new DesignConfigError(`${file}: \`sourceId\`, if present, must be a non-empty string`);
-  }
-  if (r.notes !== undefined && typeof r.notes !== "string") {
-    throw new DesignConfigError(`${file}: \`notes\`, if present, must be a string`);
-  }
-  const live = validateLive(r.live, file);
   const now = new Date().toISOString();
+  const disciplines: Record<string, DisciplineConfig> = {};
+
+  if (r.disciplines !== undefined) {
+    if (typeof r.disciplines !== "object" || r.disciplines === null || Array.isArray(r.disciplines)) {
+      throw new DesignConfigError(`${file}: \`disciplines\` must be a map`);
+    }
+    for (const [id, dRaw] of Object.entries(r.disciplines as Record<string, unknown>)) {
+      disciplines[id] = validateDiscipline(dRaw, `${file}: disciplines.${id}`);
+    }
+  } else if (r.tool !== undefined || r.live !== undefined || r.sourceId !== undefined || r.notes !== undefined) {
+    // Back-compat: the old flat shape is the system-design discipline.
+    disciplines[DEFAULT_DISCIPLINE] = validateDiscipline(r, file);
+  }
+
   return {
     version: 1,
-    tool: typeof r.tool === "string" ? r.tool : undefined,
-    sourceId: typeof r.sourceId === "string" ? r.sourceId : undefined,
-    notes: typeof r.notes === "string" ? r.notes : undefined,
-    live,
+    disciplines,
     createdAt: typeof r.createdAt === "string" ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : now,
   };
 }
 
-/** Serialize a config to the ordered object we persist (+ write it). */
-async function writeDesignConfig(
-  workspaceRoot: string,
-  cfg: DesignToolConfig
-): Promise<void> {
-  const file = designConfigPath(workspaceRoot);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const out: Record<string, unknown> = { version: 1 };
-  if (cfg.tool) out.tool = cfg.tool;
-  if (cfg.sourceId) out.sourceId = cfg.sourceId;
-  if (cfg.notes) out.notes = cfg.notes;
-  if (cfg.live && Object.keys(cfg.live).length > 0) {
-    const live: Record<string, unknown> = {};
-    if (cfg.live.stabilityChunks !== undefined) live.stabilityChunks = cfg.live.stabilityChunks;
-    if (cfg.live.model !== undefined) live.model = cfg.live.model;
-    out.live = live;
-  }
-  out.createdAt = cfg.createdAt;
-  out.updatedAt = cfg.updatedAt;
-  await writeYamlFile(
-    file,
-    out,
-    "Atelier system-design config for this workspace.\n" +
-      "`tool` is what drives the design work; `live` tunes the live\n" +
-      "companion (stability gate, live STT model). Manage with\n" +
-      "`atelier design tool …` and `atelier design live …`."
-  );
-}
+// ============================================================
+// Load
+// ============================================================
 
-/** Load the design-tool setting. Returns null when unset. */
-export async function loadDesignConfig(
-  workspaceRoot: string
-): Promise<DesignToolConfig | null> {
+/** Load the full per-discipline design config. Null when unset. */
+export async function loadDesignConfig(workspaceRoot: string): Promise<DesignConfig | null> {
   const file = designConfigPath(workspaceRoot);
   const raw = await readYamlFile(file);
   if (raw === null) return null;
   return validate(raw, file);
 }
 
+/** Load one discipline's config (default system-design). Null when unset. */
+export async function loadDisciplineConfig(
+  workspaceRoot: string,
+  discipline: string = DEFAULT_DISCIPLINE
+): Promise<DisciplineConfig | null> {
+  const cfg = await loadDesignConfig(workspaceRoot);
+  if (!cfg) return null;
+  return cfg.disciplines[discipline] ?? null;
+}
+
+// ============================================================
+// Write
+// ============================================================
+
+function isEmptyDiscipline(d: DisciplineConfig): boolean {
+  return !d.tool && !d.sourceId && !d.notes && (!d.live || Object.keys(d.live).length === 0);
+}
+
+async function writeDesignConfig(workspaceRoot: string, cfg: DesignConfig): Promise<void> {
+  const file = designConfigPath(workspaceRoot);
+  // Drop empty discipline entries.
+  const disciplines: Record<string, DisciplineConfig> = {};
+  for (const [id, d] of Object.entries(cfg.disciplines)) {
+    if (!isEmptyDiscipline(d)) disciplines[id] = d;
+  }
+  // Nothing left → remove the file entirely.
+  if (Object.keys(disciplines).length === 0) {
+    await fs.rm(file, { force: true });
+    return;
+  }
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const outDisciplines: Record<string, unknown> = {};
+  for (const [id, d] of Object.entries(disciplines)) {
+    const o: Record<string, unknown> = {};
+    if (d.tool) o.tool = d.tool;
+    if (d.sourceId) o.sourceId = d.sourceId;
+    if (d.notes) o.notes = d.notes;
+    if (d.live && Object.keys(d.live).length > 0) {
+      const live: Record<string, unknown> = {};
+      if (d.live.stabilityChunks !== undefined) live.stabilityChunks = d.live.stabilityChunks;
+      if (d.live.model !== undefined) live.model = d.live.model;
+      o.live = live;
+    }
+    outDisciplines[id] = o;
+  }
+  await writeYamlFile(
+    file,
+    { version: 1, disciplines: outDisciplines, createdAt: cfg.createdAt, updatedAt: cfg.updatedAt },
+    "Atelier design config — per discipline (system-design, ui-design, …).\n" +
+      "Each discipline picks its tool + tunes its live companion. Manage\n" +
+      "with `atelier design tool …` / `atelier design live …` (pass\n" +
+      "--discipline to target one; defaults to system-design)."
+  );
+}
+
+async function mutate(
+  workspaceRoot: string,
+  discipline: string,
+  fn: (d: DisciplineConfig) => void
+): Promise<DisciplineConfig> {
+  const existing = (await loadDesignConfig(workspaceRoot).catch(() => null)) ?? {
+    version: 1 as const,
+    disciplines: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const d: DisciplineConfig = { ...(existing.disciplines[discipline] ?? {}) };
+  fn(d);
+  const next: DesignConfig = {
+    version: 1,
+    disciplines: { ...existing.disciplines, [discipline]: d },
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeDesignConfig(workspaceRoot, next);
+  return d;
+}
+
+// ============================================================
+// Mutators
+// ============================================================
+
 export interface SetDesignToolOptions {
   tool: string;
   sourceId?: string;
   notes?: string;
+  /** Discipline to target. Defaults to system-design. */
+  discipline?: string;
 }
 
-/**
- * Set (or replace) the workspace's design-tool setting. Preserves the
- * original createdAt when one already exists.
- */
 export async function setDesignTool(
   workspaceRoot: string,
   opts: SetDesignToolOptions
-): Promise<DesignToolConfig> {
+): Promise<DisciplineConfig> {
   if (!opts.tool || !opts.tool.trim()) {
     throw new DesignConfigError("tool is required");
   }
-  const existing = await loadDesignConfig(workspaceRoot).catch(() => null);
-  const now = new Date().toISOString();
-  const cfg: DesignToolConfig = {
-    version: 1,
-    tool: opts.tool.trim(),
-    sourceId: opts.sourceId?.trim() || undefined,
-    notes: opts.notes?.trim() || undefined,
-    live: existing?.live, // preserve live tuning across tool changes
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  };
-  await writeDesignConfig(workspaceRoot, cfg);
-  return cfg;
+  return mutate(workspaceRoot, opts.discipline ?? DEFAULT_DISCIPLINE, (d) => {
+    d.tool = opts.tool.trim();
+    d.sourceId = opts.sourceId?.trim() || undefined;
+    d.notes = opts.notes?.trim() || undefined;
+  });
 }
 
 export interface SetLiveConfigOptions {
-  stabilityChunks?: number;
-  model?: string;
+  discipline?: string;
+  stabilityChunks?: number | null;
+  model?: string | null;
+}
+
+export async function setLiveConfig(
+  workspaceRoot: string,
+  opts: SetLiveConfigOptions
+): Promise<DisciplineConfig> {
+  return mutate(workspaceRoot, opts.discipline ?? DEFAULT_DISCIPLINE, (d) => {
+    const live: DesignLiveConfig = { ...(d.live ?? {}) };
+    if (opts.stabilityChunks !== undefined) {
+      if (opts.stabilityChunks === null) {
+        delete live.stabilityChunks;
+      } else {
+        if (!Number.isInteger(opts.stabilityChunks) || opts.stabilityChunks < 1) {
+          throw new DesignConfigError("stabilityChunks must be a positive integer");
+        }
+        live.stabilityChunks = opts.stabilityChunks;
+      }
+    }
+    if (opts.model !== undefined) {
+      if (opts.model === null || !opts.model.trim()) delete live.model;
+      else live.model = opts.model.trim();
+    }
+    d.live = Object.keys(live).length > 0 ? live : undefined;
+  });
 }
 
 /**
- * Set (or merge) the live-companion tuning, preserving the tool
- * config. Works even when no tool has been chosen yet — the config
- * may carry only `live`. Pass a field as null to clear just it.
+ * Clear a discipline's settings (default system-design). Returns true
+ * when something was removed. If no disciplines remain, the file is
+ * deleted.
  */
-export async function setLiveConfig(
+export async function clearDesignTool(
   workspaceRoot: string,
-  opts: { stabilityChunks?: number | null; model?: string | null }
-): Promise<DesignToolConfig> {
+  discipline: string = DEFAULT_DISCIPLINE
+): Promise<boolean> {
   const existing = await loadDesignConfig(workspaceRoot).catch(() => null);
-  const now = new Date().toISOString();
-  const live: DesignLiveConfig = { ...(existing?.live ?? {}) };
-  if (opts.stabilityChunks !== undefined) {
-    if (opts.stabilityChunks === null) {
-      delete live.stabilityChunks;
-    } else {
-      if (!Number.isInteger(opts.stabilityChunks) || opts.stabilityChunks < 1) {
-        throw new DesignConfigError("stabilityChunks must be a positive integer");
-      }
-      live.stabilityChunks = opts.stabilityChunks;
-    }
-  }
-  if (opts.model !== undefined) {
-    if (opts.model === null || !opts.model.trim()) delete live.model;
-    else live.model = opts.model.trim();
-  }
-  const cfg: DesignToolConfig = {
-    version: 1,
-    tool: existing?.tool,
-    sourceId: existing?.sourceId,
-    notes: existing?.notes,
-    live: Object.keys(live).length > 0 ? live : undefined,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  };
-  await writeDesignConfig(workspaceRoot, cfg);
-  return cfg;
-}
-
-/** Remove the design-tool setting. Returns true when a file was deleted. */
-export async function clearDesignTool(workspaceRoot: string): Promise<boolean> {
-  const file = designConfigPath(workspaceRoot);
-  try {
-    await fs.unlink(file);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
+  if (!existing || !existing.disciplines[discipline]) return false;
+  const disciplines = { ...existing.disciplines };
+  delete disciplines[discipline];
+  await writeDesignConfig(workspaceRoot, { ...existing, disciplines, updatedAt: new Date().toISOString() });
+  return true;
 }

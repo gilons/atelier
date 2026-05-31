@@ -26,6 +26,7 @@ export * from "./items.js";
 export * from "./stakeholders.js";
 export * from "./agents.js";
 export * from "./agent-builtins.js";
+export * from "./design-disciplines.js";
 export * from "./folder-index.js";
 export * from "./index-tree.js";
 export * from "./discrepancies.js";

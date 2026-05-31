@@ -103,3 +103,56 @@ test("atelier design live set rejects a bad gate", async () => {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
+
+test("design discipline list shows built-in disciplines", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const result = runCli(["design", "discipline", "list"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(result.stdout, /system-design/);
+    assert.match(result.stdout, /ui-design/);
+    assert.match(result.stdout, /built-in/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("tools are per-discipline (ui-design vs system-design)", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    runCli(["design", "tool", "set", "excalidraw"], workspaceRoot); // system-design (default)
+    runCli(["design", "tool", "set", "figma", "--discipline", "ui-design"], workspaceRoot);
+    const sys = runCli(["design", "tool", "show"], workspaceRoot);
+    assert.match(sys.stdout, /excalidraw/);
+    const ui = runCli(["design", "tool", "show", "--discipline", "ui-design"], workspaceRoot);
+    assert.match(ui.stdout, /figma/);
+    assert.match(ui.stdout, /ui-design/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("design discipline add scaffolds a custom discipline + its agent", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const add = runCli(
+      ["design", "discipline", "add", "service-design", "--name", "Service Design", "--designs", "service blueprints"],
+      workspaceRoot
+    );
+    assert.equal(add.status, 0, `stderr: ${add.stderr}\nstdout: ${add.stdout}`);
+    assert.match(add.stdout, /Added design discipline service-design/);
+    // The agent was generated from the shared template.
+    const list = runCli(["agent", "list"], workspaceRoot);
+    assert.match(list.stdout, /service-design/);
+    // And it carries the engine (install + check a unit).
+    runCli(["agent", "install", "service-design"], workspaceRoot);
+    const sub = await fs.readFile(
+      path.join(workspaceRoot, ".claude", "agents", "atelier-service-design.md"),
+      "utf8"
+    );
+    assert.match(sub, /Live companion mode/);
+    assert.match(sub, /service blueprints/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});

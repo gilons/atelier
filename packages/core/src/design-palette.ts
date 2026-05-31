@@ -56,13 +56,28 @@ function truncate(s: string | undefined, max = 100): string | undefined {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
+export interface BuildPaletteOptions {
+  /**
+   * Discipline whose existing designs populate the `designs` section
+   * (items whose classification includes this id). Defaults to
+   * "system-design". Subsystems / features / owners are shared.
+   */
+  discipline?: string;
+}
+
 /**
  * Build the palette from current workspace content. Each section is
  * derived from an existing list function, so the palette is always a
  * faithful, deterministic view of what atelier already tracks — never
- * anything invented.
+ * anything invented. The `designs` section is scoped to the requested
+ * discipline so a UI-design live session derives from UI designs, a
+ * system-design session from system designs, etc.
  */
-export async function buildDesignPalette(workspaceRoot: string): Promise<DesignPalette> {
+export async function buildDesignPalette(
+  workspaceRoot: string,
+  opts: BuildPaletteOptions = {}
+): Promise<DesignPalette> {
+  const discipline = opts.discipline ?? "system-design";
   const subsystems: PaletteEntry[] = [];
   const { repos } = await inspectProjects(workspaceRoot).catch(() => ({ repos: [] as Awaited<ReturnType<typeof inspectProjects>>["repos"] }));
   for (const r of repos) {
@@ -112,7 +127,7 @@ export async function buildDesignPalette(workspaceRoot: string): Promise<DesignP
   const designs: PaletteEntry[] = [];
   const { items } = await listItems(workspaceRoot).catch(() => ({ items: [] as Awaited<ReturnType<typeof listItems>>["items"] }));
   for (const { item } of items) {
-    if ((item.classification ?? "").includes("system-design")) {
+    if ((item.classification ?? "").includes(discipline)) {
       designs.push({
         ref: `item:${item.source}:${item.docId}`,
         kind: "design",

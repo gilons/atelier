@@ -31,7 +31,8 @@ test("design tool show reports 'none' before anything is set", async () => {
   try {
     const result = runCli(["design", "tool", "show"], workspaceRoot);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    assert.match(result.stdout, /No system-design tool set/);
+    assert.match(result.stdout, /No tool set for/);
+    assert.match(result.stdout, /system-design/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
@@ -64,7 +65,7 @@ test("design tool clear removes the setting", async () => {
     assert.equal(clear.status, 0);
     assert.match(clear.stdout, /Cleared/);
     const show = runCli(["design", "tool", "show"], workspaceRoot);
-    assert.match(show.stdout, /No system-design tool set/);
+    assert.match(show.stdout, /No tool set for/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }

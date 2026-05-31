@@ -2,11 +2,21 @@ import {
   requireWorkspaceRoot,
   buildDesignPalette,
   paletteSize,
+  loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
+  listAgents,
+  addAgent,
+  BUILTIN_DISCIPLINES,
+  buildDesignDisciplineUnits,
+  disciplineAgentMeta,
+  slugifyDisciplineId,
+  DEFAULT_DISCIPLINE,
   DesignConfigError,
+  AgentAlreadyExistsError,
   NotInsideWorkspaceError,
   type DesignPalette,
+  type DisciplineSpec,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
@@ -15,13 +25,33 @@ import { toolCommand } from "./design-tool.js";
 /** The agent's built-in default when no stability gate is configured. */
 const DEFAULT_STABILITY_CHUNKS = 2;
 
+const DISCIPLINE_OPT = { type: "string" as const, short: "D" as const };
+
+function disciplineOf(values: Record<string, unknown>): string {
+  return (values.discipline as string | undefined)?.trim() || DEFAULT_DISCIPLINE;
+}
+
+async function resolveRoot(cwd: string): Promise<string | number> {
+  try {
+    return await requireWorkspaceRoot(cwd);
+  } catch (err) {
+    if (err instanceof NotInsideWorkspaceError) {
+      ui.error(err.message);
+      return 1;
+    }
+    throw err;
+  }
+}
+
 /**
- * `atelier design` — design-engine helpers.
+ * `atelier design` — the design engine.
  *
- * Today: `palette`, the reusable vocabulary the system-design agent's
- * live companion mode loads once at the start of a call so every live
- * update is a cheap reference ("derive, don't generate") instead of an
- * expensive from-scratch generation.
+ * "design" is an umbrella over disciplines (system-design, ui-design,
+ * + custom). Subcommands:
+ *   tool        — which platform drives a discipline
+ *   palette     — the reusable vocabulary the live agent derives from
+ *   live        — tune a discipline's live-companion cadence
+ *   discipline  — list / add design disciplines
  */
 
 const SECTION_LABELS: Record<keyof DesignPalette, string> = {
@@ -35,28 +65,22 @@ const paletteCmd: Command = {
   name: "palette",
   summary: "The reusable design vocabulary (subsystems, features, designs, owners).",
   description:
-    "Derives — deterministically — the building blocks the system-design\n" +
-    "agent can reference by `ref` when sketching live: subsystems (from\n" +
-    "`repo inspect`), capabilities (features), existing system-design\n" +
-    "items, and owners (stakeholders). The live companion loads this once\n" +
-    "at the start of a call and composes from it, so updates stay fast\n" +
-    "and consistent with the real system. --json for the agent.",
+    "Derives — deterministically — the building blocks a design agent\n" +
+    "references by `ref` when sketching live: subsystems (from `repo\n" +
+    "inspect`), capabilities (features), existing designs (items in the\n" +
+    "discipline), and owners. The live companion loads this once per call\n" +
+    "and composes from it. --discipline scopes the `designs` section\n" +
+    "(default system-design); --json for the agent.",
   options: {
     json: { type: "boolean" },
+    discipline: DISCIPLINE_OPT,
   },
   async run({ values, cwd }) {
-    let workspaceRoot: string;
-    try {
-      workspaceRoot = await requireWorkspaceRoot(cwd);
-    } catch (err) {
-      if (err instanceof NotInsideWorkspaceError) {
-        ui.error(err.message);
-        return 1;
-      }
-      throw err;
-    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    const discipline = disciplineOf(values);
 
-    const palette = await buildDesignPalette(workspaceRoot);
+    const palette = await buildDesignPalette(root, { discipline });
 
     if (values.json === true) {
       process.stdout.write(JSON.stringify(palette, null, 2) + "\n");
@@ -66,53 +90,45 @@ const paletteCmd: Command = {
     if (paletteSize(palette) === 0) {
       ui.info("The design palette is empty.");
       ui.print(
-        `  ${ui.dim("Register repos (`atelier repo add`), add features, or run the")}`
+        `  ${ui.dim("Register repos (`atelier repo add`), add features, or run a design")}`
       );
-      ui.print(
-        `  ${ui.dim("system-design agent's workspace-design pass to populate it.")}`
-      );
+      ui.print(`  ${ui.dim("agent's initial pass to populate it.")}`);
       return 0;
     }
 
     for (const key of ["subsystems", "features", "designs", "owners"] as (keyof DesignPalette)[]) {
       const entries = palette[key];
       if (entries.length === 0) continue;
-      ui.print(ui.bold(`${SECTION_LABELS[key]} (${entries.length})`));
+      const label = key === "designs" ? `Existing designs (${discipline})` : SECTION_LABELS[key];
+      ui.print(ui.bold(`${label} (${entries.length})`));
       for (const e of entries) {
         const desc = e.description ? `  ${ui.dim("— " + e.description)}` : "";
         ui.print(`  ${ui.green("·")} ${ui.cyan(e.ref)}  ${e.name}${desc}`);
       }
       ui.blank();
     }
-    ui.print(
-      `  ${ui.dim("The system-design agent references these by `ref` during live mode.")}`
-    );
+    ui.print(`  ${ui.dim("A design agent references these by `ref` during live mode.")}`);
     ui.blank();
     return 0;
   },
 };
 
 // ============================================================
-// design live — tune the live companion's two-track cadence
+// design live — per-discipline two-track tuning
 // ============================================================
 
 const liveShowCmd: Command = {
   name: "show",
-  summary: "Show the live-companion tuning (stability gate, live STT model).",
-  async run({ cwd }) {
-    let workspaceRoot: string;
-    try {
-      workspaceRoot = await requireWorkspaceRoot(cwd);
-    } catch (err) {
-      if (err instanceof NotInsideWorkspaceError) {
-        ui.error(err.message);
-        return 1;
-      }
-      throw err;
-    }
-    const cfg = await loadDesignConfig(workspaceRoot);
+  summary: "Show a discipline's live-companion tuning (stability gate, live STT model).",
+  options: { discipline: DISCIPLINE_OPT },
+  async run({ values, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    const discipline = disciplineOf(values);
+    const cfg = await loadDisciplineConfig(root, discipline);
     const live = cfg?.live;
     const chunks = live?.stabilityChunks ?? DEFAULT_STABILITY_CHUNKS;
+    ui.print(`  ${ui.dim("discipline:")}     ${discipline}`);
     ui.print(
       `  ${ui.dim("stability gate:")} ${chunks} chunk(s)${live?.stabilityChunks === undefined ? ui.dim(" (default)") : ""}`
     );
@@ -125,31 +141,25 @@ const liveShowCmd: Command = {
 
 const liveSetCmd: Command = {
   name: "set",
-  summary: "Tune the live companion (stability gate / live STT model).",
+  summary: "Tune a discipline's live companion (stability gate / live STT model).",
   description:
     "The slow track renders only after a topic is stable for\n" +
     "--stability-chunks chunks (higher = calmer on volatile calls).\n" +
-    "--model picks the fast STT model used live. The system-design\n" +
-    "agent reads these at the start of a live session.",
+    "--model picks the fast STT model used live. --discipline targets\n" +
+    "one (default system-design).",
   options: {
     "stability-chunks": { type: "string" },
     model: { type: "string", short: "m" },
+    discipline: DISCIPLINE_OPT,
   },
   async run({ values, cwd }) {
     if (values["stability-chunks"] === undefined && values.model === undefined) {
       ui.error("Nothing to set. Pass --stability-chunks <n> and/or --model <name>.");
       return 2;
     }
-    let workspaceRoot: string;
-    try {
-      workspaceRoot = await requireWorkspaceRoot(cwd);
-    } catch (err) {
-      if (err instanceof NotInsideWorkspaceError) {
-        ui.error(err.message);
-        return 1;
-      }
-      throw err;
-    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    const discipline = disciplineOf(values);
 
     let stabilityChunks: number | undefined;
     if (values["stability-chunks"] !== undefined) {
@@ -162,11 +172,12 @@ const liveSetCmd: Command = {
     }
 
     try {
-      const cfg = await setLiveConfig(workspaceRoot, {
+      const cfg = await setLiveConfig(root, {
+        discipline,
         stabilityChunks,
         model: values.model as string | undefined,
       });
-      ui.success("Updated live-companion tuning.");
+      ui.success(`Updated ${ui.bold(discipline)} live tuning.`);
       ui.print(`  ${ui.dim("stability gate:")} ${cfg.live?.stabilityChunks ?? DEFAULT_STABILITY_CHUNKS} chunk(s)`);
       if (cfg.live?.model) ui.print(`  ${ui.dim("live STT model:")} ${cfg.live.model}`);
       return 0;
@@ -182,21 +193,151 @@ const liveSetCmd: Command = {
 
 const liveCmd: Command = {
   name: "live",
-  summary: "Tune the live companion's cadence (stability gate, live STT model).",
+  summary: "Tune a discipline's live-companion cadence (stability gate, live STT model).",
   description:
     "The live companion uses a two-track design: a cheap fast track\n" +
     "every chunk + a gated slow track that renders only once a topic is\n" +
-    "stable. These knobs calibrate that gate to your calls.",
+    "stable. These knobs calibrate that gate per discipline.",
   subcommands: [liveShowCmd, liveSetCmd],
+};
+
+// ============================================================
+// design discipline — list / add design disciplines
+// ============================================================
+
+/** Custom (non-built-in) disciplines are installed agents of kind "design". */
+async function customDisciplineIds(workspaceRoot: string): Promise<string[]> {
+  const { agents } = await listAgents(workspaceRoot).catch(() => ({ agents: [] as Awaited<ReturnType<typeof listAgents>>["agents"] }));
+  const builtinIds = new Set(BUILTIN_DISCIPLINES.map((d) => d.id));
+  return agents
+    .filter((a) => a.agent.kind === "design" && !builtinIds.has(a.agent.id))
+    .map((a) => a.agent.id);
+}
+
+const disciplineListCmd: Command = {
+  name: "list",
+  summary: "List design disciplines (built-in + custom) and their tool.",
+  async run({ cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const cfg = await loadDesignConfig(root).catch(() => null);
+    const customIds = await customDisciplineIds(root);
+    const rows: { id: string; name: string; builtin: boolean }[] = [
+      ...BUILTIN_DISCIPLINES.map((d) => ({ id: d.id, name: d.name, builtin: true })),
+      ...customIds.map((id) => ({ id, name: id, builtin: false })),
+    ];
+
+    const idWidth = Math.max("ID".length, ...rows.map((r) => r.id.length));
+    ui.print(`    ${ui.dim("ID".padEnd(idWidth))}  ${ui.dim("TOOL")}`);
+    for (const r of rows) {
+      const tool = cfg?.disciplines[r.id]?.tool;
+      const badge = r.builtin ? ui.dim(" [built-in]") : ui.dim(" [custom]");
+      ui.print(
+        `  ${ui.green("·")} ${r.id.padEnd(idWidth)}  ${tool ?? ui.dim("(none — infers / Markdown)")}${badge}`
+      );
+    }
+    ui.blank();
+    ui.print(`  ${ui.dim("Each discipline gets the full design engine. Install one: `atelier agent install <id>`.")}`);
+    ui.print(`  ${ui.dim("Add your own: `atelier design discipline add <id> --name \"…\" --designs \"…\"`.")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+const disciplineAddCmd: Command = {
+  name: "add",
+  summary: "Add a custom design discipline (generates its agent from the shared engine).",
+  description:
+    "Scaffolds a new discipline under the design umbrella with the same\n" +
+    "engine as system-design / ui-design — tool-aware onboarding, the\n" +
+    "palette, the live two-track companion, refresh, prompted promotion,\n" +
+    "self-improvement. Generates the agent; install it with\n" +
+    "`atelier agent install <id>`.",
+  positionals: ["id?"],
+  options: {
+    id: { type: "string" },
+    name: { type: "string", short: "n" },
+    designs: { type: "string", short: "d" },
+    artifacts: { type: "string", short: "a" },
+    units: { type: "string", short: "u" },
+    tools: { type: "string", short: "t" },
+  },
+  async run({ values, positionals, cwd }) {
+    const name = values.name as string | undefined;
+    if (!name) {
+      ui.error("Missing --name.");
+      ui.print(`  ${ui.dim('Usage: atelier design discipline add <id> --name "Service Design" --designs "service blueprints"')}`);
+      return 2;
+    }
+    const designs = values.designs as string | undefined;
+    if (!designs) {
+      ui.error("Missing --designs (one phrase for what this discipline designs).");
+      return 2;
+    }
+    const rawId = (values.id as string | undefined) ?? positionals[0] ?? name;
+    const id = slugifyDisciplineId(rawId);
+    if (!id) {
+      ui.error(`Could not derive a slug id from "${rawId}".`);
+      return 2;
+    }
+    if (BUILTIN_DISCIPLINES.some((d) => d.id === id)) {
+      ui.error(`"${id}" is a built-in discipline — install it with \`atelier agent install ${id}\`.`);
+      return 1;
+    }
+
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const spec: DisciplineSpec = {
+      id,
+      name,
+      designs,
+      artifacts: (values.artifacts as string | undefined) ?? designs,
+      units: (values.units as string | undefined) ?? "pieces",
+      toolExamples: (values.tools as string | undefined) ?? "any AI-drivable design tool",
+    };
+
+    try {
+      const agent = await addAgent(root, {
+        ...disciplineAgentMeta(spec),
+        instructionUnits: buildDesignDisciplineUnits(spec),
+      });
+      ui.success(`Added design discipline ${ui.bold(agent.id)}.`);
+      ui.blank();
+      ui.print(`  ${ui.dim("→ Install it for Claude:")} atelier agent install ${agent.id}`);
+      ui.print(`  ${ui.dim("→ Pick its tool:")} atelier design tool set <tool> --discipline ${agent.id}`);
+      ui.blank();
+      return 0;
+    } catch (err) {
+      if (err instanceof AgentAlreadyExistsError) {
+        ui.error(`An agent "${id}" already exists. Pick a different id.`);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
+const disciplineCmd: Command = {
+  name: "discipline",
+  summary: "List or add design disciplines (system-design, ui-design, custom).",
+  description:
+    "Disciplines are the kinds of design under the umbrella. Built-ins:\n" +
+    "system-design, ui-design. Add your own (service design, space\n" +
+    "design, …) — each gets the whole design engine from one template.",
+  subcommands: [disciplineListCmd, disciplineAddCmd],
 };
 
 export const designCommand: Command = {
   name: "design",
-  summary: "The design engine: tool selection, palette, and live-companion tuning.",
+  summary: "The design engine: disciplines, tool selection, palette, live tuning.",
   description:
-    "Helpers for the system-design agent:\n" +
-    "  tool     — declare which platform drives the design work\n" +
-    "  palette  — the reusable vocabulary the agent composes from live\n" +
-    "  live     — tune the live companion's two-track cadence",
-  subcommands: [toolCommand, paletteCmd, liveCmd],
+    "design is an umbrella over disciplines (system-design, ui-design, +\n" +
+    "custom), each sharing the same engine:\n" +
+    "  discipline — list / add disciplines\n" +
+    "  tool       — which platform drives a discipline\n" +
+    "  palette    — the reusable vocabulary the agent composes from live\n" +
+    "  live       — tune a discipline's live two-track cadence",
+  subcommands: [disciplineCmd, toolCommand, paletteCmd, liveCmd],
 };
