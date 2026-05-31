@@ -572,6 +572,15 @@ test("system-design live-companion uses the two-track (derive-fast) design", asy
   assert.match(a.instructions, /atelier session watch/);
   assert.match(a.instructions, /new vs modification/i);
 
+  // Finalize is a prompted decision (existing design / new spec / park)
+  // + a self-improvement step that feeds the engine.
+  assert.match(a.instructions, /Fold into the existing design system/);
+  assert.match(a.instructions, /atelier spec new/);
+  assert.match(a.instructions, /--from-session/);
+  assert.match(a.instructions, /Improve the engine/);
+  assert.match(a.instructions, /atelier agent learn system-design/);
+  assert.match(a.instructions, /atelier agent instruction add/);
+
   const paths = workspacePaths(workspaceRoot);
   await fs.access(
     path.join(

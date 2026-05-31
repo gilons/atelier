@@ -205,6 +205,7 @@ function renderReadme(manifest: SpecManifest): string {
   if (manifest.features.length > 0) fm.features = manifest.features;
   if (manifest.codeRefs.length > 0) fm.codeRefs = manifest.codeRefs;
   if (manifest.docRefs.length > 0) fm.docRefs = manifest.docRefs;
+  if (manifest.fromSession !== undefined) fm.fromSession = manifest.fromSession;
   fm.createdAt = manifest.createdAt;
   fm.updatedAt = manifest.updatedAt;
 
@@ -329,6 +330,8 @@ export interface CreateSpecOptions {
   codeRefs?: FeatureCodeRef[];
   /** Additional doc refs. */
   docRefs?: FeatureDocRef[];
+  /** Optional session id this spec was born from (provenance). */
+  fromSession?: string;
   /**
    * Skip cross-reference validation (used by tests and bulk imports).
    * Doc refs are always tolerant — missing docs are reported in
@@ -411,6 +414,7 @@ export async function createSpec(
     createdAt: now,
     updatedAt: now,
   };
+  if (opts.fromSession) manifest.fromSession = opts.fromSession;
 
   // Sanity-check the manifest once more.
   const check = validateSpecManifest(manifest);

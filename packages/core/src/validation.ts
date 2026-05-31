@@ -1083,9 +1083,14 @@ export function validateSpecManifest(
     features,
     codeRefs,
     docRefs,
+    fromSession,
     createdAt,
     updatedAt,
   } = raw;
+
+  if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
+    pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
+  }
 
   if (!isNonEmptyString(id)) {
     pushIssue(issues, "$.id", "must be a non-empty string");
@@ -1196,21 +1201,19 @@ export function validateSpecManifest(
   }
 
   if (issues.length > 0) return { ok: false, issues };
-  return {
-    ok: true,
-    value: {
-      id: id as string,
-      title: title as string,
-      type: type as SpecChangeType,
-      status: status as SpecStatus,
-      features: featuresArr,
-      codeRefs: codeRefsArr,
-      docRefs: docRefsArr,
-      createdAt: createdAt as string,
-      updatedAt: updatedAt as string,
-    },
-    issues: [],
+  const value: SpecManifest = {
+    id: id as string,
+    title: title as string,
+    type: type as SpecChangeType,
+    status: status as SpecStatus,
+    features: featuresArr,
+    codeRefs: codeRefsArr,
+    docRefs: docRefsArr,
+    createdAt: createdAt as string,
+    updatedAt: updatedAt as string,
   };
+  if (fromSession !== undefined) value.fromSession = fromSession as string;
+  return { ok: true, value, issues: [] };
 }
 
 /** Format validation issues into a multi-line human-readable string. */

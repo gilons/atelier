@@ -119,6 +119,24 @@ test("createSpec scaffolds the issue folder", async () => {
   }
 });
 
+test("createSpec records fromSession provenance in the manifest + README", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    const now = new Date("2026-05-31T12:00:00Z");
+    const { manifest, paths } = await createSpec(workspaceRoot, {
+      title: "Add SSO",
+      type: "new-feature",
+      fromSession: "q3-planning-call-2026-05-31-ab12",
+      now,
+    });
+    assert.equal(manifest.fromSession, "q3-planning-call-2026-05-31-ab12");
+    const readme = await fs.readFile(paths.readme, "utf8");
+    assert.match(readme, /fromSession: q3-planning-call-2026-05-31-ab12/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("createSpec validates feature ids against features/", async () => {
   const { umbrella, workspaceRoot } = await workspace();
   try {

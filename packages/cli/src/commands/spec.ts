@@ -83,6 +83,7 @@ const newCmd: Command = {
     feature: { type: "string", multiple: true, short: "f" },
     code: { type: "string", multiple: true },
     doc: { type: "string", multiple: true },
+    "from-session": { type: "string" },
     "no-validate-refs": { type: "boolean" },
   },
   positionals: ["title?"],
@@ -155,6 +156,7 @@ const newCmd: Command = {
         features,
         codeRefs,
         docRefs,
+        fromSession: values["from-session"] as string | undefined,
         skipReferenceValidation: values["no-validate-refs"] === true,
       });
       ui.success(`Scaffolded spec ${ui.bold(manifest.id)}`);

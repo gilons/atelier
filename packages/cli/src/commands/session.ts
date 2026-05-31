@@ -13,6 +13,7 @@ import {
   removeSession,
   listItems,
   loadAudioConfig,
+  listSpecs,
   workspacePaths,
   SessionNotFoundError,
   SessionAlreadyExistsError,
@@ -1599,7 +1600,7 @@ const listCmd: Command = {
 
 const showCmd: Command = {
   name: "show",
-  summary: "Show a session's transcript + items born from it.",
+  summary: "Show a session's transcript + items and specs born from it.",
   positionals: ["id"],
   async run({ positionals, cwd }) {
     const id = positionals[0];
@@ -1648,6 +1649,20 @@ const showCmd: Command = {
       ui.blank();
     } else {
       ui.print(ui.dim("(no items linked back to this session yet)"));
+      ui.blank();
+    }
+
+    // Specs born from this session (e.g. the system-design agent's live
+    // companion finalize step → "create a new spec").
+    const { specs } = await listSpecs(workspaceRoot);
+    const linkedSpecs = specs.filter((s) => s.manifest.fromSession === id);
+    if (linkedSpecs.length > 0) {
+      ui.print(ui.bold(`Specs from this session (${linkedSpecs.length})`));
+      for (const { manifest } of linkedSpecs) {
+        ui.print(
+          `  ${ui.green("·")} ${manifest.id}${ui.dim(" [" + manifest.type + "/" + manifest.status + "]")} — ${manifest.title}`
+        );
+      }
       ui.blank();
     }
 

@@ -705,6 +705,14 @@ export interface SpecManifest {
   codeRefs: FeatureCodeRef[];
   /** Direct doc references (in addition to those pulled via features). */
   docRefs: FeatureDocRef[];
+  /**
+   * Optional session id this spec was born from — e.g. a planning call
+   * where the system-design agent's live companion mode surfaced the
+   * change and the user chose "create a new spec". Lets `session show`
+   * enumerate what a conversation produced. Mirrors the item /
+   * stakeholder `fromSession` convention.
+   */
+  fromSession?: string;
   /** ISO timestamp when first created. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */

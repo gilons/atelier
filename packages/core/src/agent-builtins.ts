@@ -541,22 +541,52 @@ the fast track is still keeping the anchor + questions live.
 Keep it high-level — a glanceable overview, not a spec.`;
 
 const SYSDESIGN_LIVE_FINALIZE = `Finalize when the call ends (\`atelier session check\` reports
-\`status: ended\`).
+\`status: ended\`). This is where the conversation turns into durable
+workspace knowledge — and where atelier's engine improves itself.
 
-1. **Re-transcribe accurately.** Run the recording through the accurate
-   model (medium) for the durable record; drain the last chunks.
-2. **Now do the deferred modeling.** Turn each "proposed" stub from the
-   call into a proper design — promote the stable parts into durable
-   system-design items (\`atelier item add … --classification
-   system-design --from-session <id>\`) and, if a tool is connected,
-   leave the diagram saved + linked. This is the expensive work the
-   live loop intentionally skipped.
-3. Turn unresolved follow-up questions into open items or discrepancies
-   so they aren't lost.
-4. Link the design to the features / specs it affects; suggest
-   \`atelier spec new\` for anything ready to plan.
-5. \`atelier map --rebuild\`; record a learning capturing what the
-   conversation decided.`;
+**1. Re-transcribe accurately + drain.** Run the recording through the
+accurate model (medium) for the durable record; drain the last chunks.
+
+**2. Surface the substantial outcomes.** Distil the call into the few
+things that actually matter — decisions made, new capabilities raised,
+changes to existing systems, open risks. Ignore the chatter. Present
+this short list to the user.
+
+**3. Prompt the user per outcome — don't auto-create.** For each
+substantial outcome, ask the user which way to take it:
+   - **Fold into the existing design system** → update/extend the
+     relevant system-design item(s) + diagram (a modification to
+     something already modelled). Set \`--from-session <id>\`.
+   - **Create a new spec for the product** → \`atelier spec new
+     "<title>" --type <type> --from-session <id>\` (link the features /
+     docs it touches). Use this when it's a new piece of work ready to
+     plan.
+   - **Park it** → leave as an open item or discrepancy
+     (\`atelier discrepancy add\`) so it isn't lost but isn't acted on yet.
+   Wait for the user's choice; this is their call, not yours. Then
+   execute it.
+
+**4. Model the deferred stubs.** Turn each "proposed" stub from the
+live loop into a proper design as part of step 3 — this is the
+expensive modeling the fast/slow tracks intentionally skipped.
+
+**5. Improve the engine (atelier learns from this call).** Fold what
+you learned back in so the next session starts smarter:
+   - **Learnings:** \`atelier agent learn system-design "…"\` — the
+     decisions, the workspace shape, anything durable.
+   - **Palette grows automatically:** the items/features you created in
+     step 3 become new \`ref\`s the next live session can derive from.
+   - **Refine your own playbook:** if the call revealed a better way to
+     run — a recurring question worth asking, a pattern this team uses
+     — add/adjust an instruction unit
+     (\`atelier agent instruction add system-design <slug> …\`).
+   - **Update config** if it changed (e.g. \`atelier design-tool set …\`
+     if the team picked a tool mid-call).
+   - \`atelier map --rebuild\` so the index reflects everything new.
+
+Close by telling the user what was promoted (items / specs created) and
+what you parked, with the session id so it's traceable later via
+\`atelier session show <id>\`.`;
 
 const SYSDESIGN_DETECT = `Find the configured system-design tool before doing anything else.
 
@@ -801,7 +831,7 @@ const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
       {
         slug: "finalize",
         title: "Finalize on call end",
-        description: "Re-transcribe accurately, model the deferred stubs into durable items, map --rebuild, record learnings.",
+        description: "Surface outcomes, prompt: fold into existing design / new spec / park; then improve the engine.",
         detail: SYSDESIGN_LIVE_FINALIZE,
       },
     ],
