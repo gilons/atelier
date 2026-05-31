@@ -13,6 +13,7 @@ import {
 import { listAgents, loadAgent, AgentNotFoundError } from "./agents.js";
 import { listItems } from "./items.js";
 import { listDocs } from "./documentation.js";
+import { listTickets } from "./tickets.js";
 import { listFeatures } from "./features.js";
 import { listSessions } from "./sessions.js";
 import { listStakeholders } from "./stakeholders.js";
@@ -123,6 +124,20 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
         title: `${doc.source}:${doc.docId}`,
         kind: doc.classification ? `doc/${doc.classification}` : "doc",
         description: truncate(doc.overview ?? doc.title),
+      }));
+    },
+  },
+  {
+    dir: "tickets",
+    name: "Tickets",
+    description: "Issues / epics / initiatives indexed from the planning tool.",
+    async loadChildren(root) {
+      const { tickets } = await listTickets(root);
+      return tickets.map(({ ticket }) => ({
+        path: `${ticket.source}/`,
+        title: `${ticket.source}:${ticket.ticketId}`,
+        kind: ticket.status ? `ticket/${ticket.status}` : "ticket",
+        description: truncate(ticket.overview ?? ticket.title),
       }));
     },
   },

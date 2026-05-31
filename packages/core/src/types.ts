@@ -356,6 +356,58 @@ export interface Documentation extends DocFrontMatter {
 }
 
 // ============================================================
+// Tickets — issues / initiatives / stories (the PM surface)
+// ============================================================
+
+/**
+ * A ticket atelier has indexed — issues, epics, initiatives, stories
+ * from a planning tool (Linear, Jira, GitHub Issues, …). One of the
+ * typed surfaces replacing the generic "item".
+ *
+ * Deliberately *lightweight*: atelier indexes a summary + a link +
+ * light status, it does NOT reimplement the tracker. The source of
+ * truth for triage / sprints / full status workflow stays in the
+ * planning tool; atelier holds enough to cross-reference tickets with
+ * code, docs, and design.
+ *
+ * Storage: `.atelier/tickets/<source>/<encoded-ticketId>/summary.md`.
+ */
+export interface TicketFrontMatter {
+  /** Source id (must exist in sources.yaml; typically a `pm` source). */
+  source: string;
+  /** Stable, source-side id (e.g. "ENG-1421", "owner/repo#42"). */
+  ticketId: string;
+  /** Display title. */
+  title: string;
+  /** One-line summary (full summary lives in the body). */
+  overview?: string;
+  /**
+   * Free-form status mirroring the tracker — "open" | "in-progress" |
+   * "done" | "backlog" | … Atelier doesn't enforce a workflow; this is
+   * just a snapshot for cross-referencing.
+   */
+  status?: string;
+  /** Who owns it — a stakeholder id or free-form name. */
+  assignee?: string;
+  /** Pointer the agent follows to open the ticket in the tracker. */
+  link?: string;
+  /** Parent ticket id for hierarchy (initiative → epic → story). */
+  parent?: string;
+  /** Session id this ticket was raised in, when applicable. */
+  fromSession?: string;
+  /** ISO timestamp when first indexed. */
+  createdAt: string;
+  /** ISO timestamp of the most recent structural change. */
+  updatedAt: string;
+}
+
+/** A loaded ticket: front-matter + the summary body. */
+export interface Ticket extends TicketFrontMatter {
+  /** Markdown body — the agent-curated summary. May be empty. */
+  body: string;
+}
+
+// ============================================================
 // Sessions — the speaking-module record of a conversation
 // ============================================================
 

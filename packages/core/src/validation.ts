@@ -11,6 +11,7 @@ import type {
   FeatureItemRef,
   ItemFrontMatter,
   DocFrontMatter,
+  TicketFrontMatter,
   SessionFrontMatter,
   SessionStatus,
   StakeholderFrontMatter,
@@ -580,6 +581,60 @@ export function validateDocFrontMatter(
   if (classification !== undefined) value.classification = classification as string;
   if (link !== undefined) value.link = link as string;
   if (owner !== undefined) value.owner = owner as string;
+  if (fromSession !== undefined) value.fromSession = fromSession as string;
+  return { ok: true, value, issues: [] };
+}
+
+// ============================================================
+// Ticket front-matter
+// ============================================================
+
+export function validateTicketFrontMatter(
+  raw: unknown
+): ValidationResult<TicketFrontMatter> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return { ok: false, issues: [{ path: "$", message: "expected an object at the top level" }] };
+  }
+  const { source, ticketId, title, overview, status, assignee, link, parent, fromSession, createdAt, updatedAt } = raw;
+
+  if (!isNonEmptyString(source)) pushIssue(issues, "$.source", "must be a non-empty string");
+  if (!isNonEmptyString(ticketId)) pushIssue(issues, "$.ticketId", "must be a non-empty string");
+  if (!isNonEmptyString(title)) pushIssue(issues, "$.title", "must be a non-empty string");
+  if (overview !== undefined && typeof overview !== "string") {
+    pushIssue(issues, "$.overview", "if present, must be a string");
+  }
+  if (status !== undefined && !isNonEmptyString(status)) {
+    pushIssue(issues, "$.status", "if present, must be a non-empty string");
+  }
+  if (assignee !== undefined && !isNonEmptyString(assignee)) {
+    pushIssue(issues, "$.assignee", "if present, must be a non-empty string");
+  }
+  if (link !== undefined && !isNonEmptyString(link)) {
+    pushIssue(issues, "$.link", "if present, must be a non-empty string");
+  }
+  if (parent !== undefined && !isNonEmptyString(parent)) {
+    pushIssue(issues, "$.parent", "if present, must be a non-empty string (parent ticket id)");
+  }
+  if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
+    pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
+  }
+  if (!isNonEmptyString(createdAt)) pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
+  if (!isNonEmptyString(updatedAt)) pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
+
+  if (issues.length > 0) return { ok: false, issues };
+  const value: TicketFrontMatter = {
+    source: source as string,
+    ticketId: ticketId as string,
+    title: title as string,
+    createdAt: createdAt as string,
+    updatedAt: updatedAt as string,
+  };
+  if (overview !== undefined) value.overview = overview as string;
+  if (status !== undefined) value.status = status as string;
+  if (assignee !== undefined) value.assignee = assignee as string;
+  if (link !== undefined) value.link = link as string;
+  if (parent !== undefined) value.parent = parent as string;
   if (fromSession !== undefined) value.fromSession = fromSession as string;
   return { ok: true, value, issues: [] };
 }

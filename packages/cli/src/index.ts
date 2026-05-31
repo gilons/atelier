@@ -9,6 +9,7 @@ import { sessionCommand } from "./commands/session.js";
 import { featureCommand } from "./commands/feature.js";
 import { itemCommand } from "./commands/item.js";
 import { docCommand } from "./commands/doc.js";
+import { ticketCommand } from "./commands/ticket.js";
 import { stakeholderCommand } from "./commands/stakeholder.js";
 import { agentCommand } from "./commands/agent.js";
 import { mapCommand } from "./commands/map.js";
@@ -26,6 +27,7 @@ const registry: CommandRegistry = {
     featureCommand,
     itemCommand,
     docCommand,
+    ticketCommand,
     stakeholderCommand,
     agentCommand,
     mapCommand,

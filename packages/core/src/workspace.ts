@@ -89,6 +89,7 @@ export async function initWorkspace(
   await fs.mkdir(paths.features, { recursive: true });
   await fs.mkdir(paths.items, { recursive: true });
   await fs.mkdir(paths.documentation, { recursive: true });
+  await fs.mkdir(paths.tickets, { recursive: true });
   await fs.mkdir(paths.stakeholders, { recursive: true });
   await fs.mkdir(paths.agents, { recursive: true });
   await fs.mkdir(paths.issues, { recursive: true });

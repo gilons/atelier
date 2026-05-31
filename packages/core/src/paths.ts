@@ -52,6 +52,8 @@ export interface WorkspacePaths {
   items: string;
   /** `.atelier/documentation/` — documentation entries (nested by source id) */
   documentation: string;
+  /** `.atelier/tickets/` — ticket entries (nested by source id) */
+  tickets: string;
   /**
    * `.atelier/stakeholders/` — one folder per person involved with
    * the workspace's product. Shared `profile.md` lives in git;
@@ -108,6 +110,7 @@ export function workspacePaths(
     sessions: path.join(atelier, "sessions"),
     items: path.join(atelier, "items"),
     documentation: path.join(atelier, "documentation"),
+    tickets: path.join(atelier, "tickets"),
     stakeholders: path.join(atelier, "stakeholders"),
     agents: path.join(atelier, "agents"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
