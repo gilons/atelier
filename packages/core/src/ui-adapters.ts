@@ -194,6 +194,27 @@ export const BUILTIN_UI_ADAPTERS: readonly UiFrameworkAdapter[] = [
   js("vue", "Vue", 35, { dependency: "vue" }, "none"),
   js("preact", "Preact", 30, { dependency: "preact" }, "none"),
   js("react", "React", 25, { dependency: "react" }, "none"),
+  // Non-JS native support. Flutter has no filesystem routing convention
+  // by default (navigation is code-defined via MaterialApp / go_router),
+  // so routes are `none` — the ui-design agent reads navigation from the
+  // code, or a team that adopts a folder convention authors a file-based
+  // override adapter. App existence + widget components are deterministic.
+  {
+    version: 1,
+    id: "flutter",
+    framework: "Flutter",
+    priority: 60,
+    builtin: true,
+    detect: { manifest: { file: "pubspec.yaml", contains: "(^|\\n)flutter:" } },
+    name: { file: "pubspec.yaml", key: "name" },
+    routes: { strategy: "none" },
+    components: {
+      dirs: ["lib/widgets", "lib/components", "lib/ui", "lib/src/widgets"],
+      extensions: [".dart"],
+      pascalCase: false,
+      contains: "extends (StatelessWidget|StatefulWidget|ConsumerWidget|HookWidget)|State<",
+    },
+  },
 ];
 
 // ============================================================
@@ -503,4 +524,92 @@ export async function loadUiAdapters(workspaceRoot: string): Promise<LoadedUiAda
 
 function sortAdapters(adapters: UiFrameworkAdapter[]): UiFrameworkAdapter[] {
   return adapters.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+}
+
+// ============================================================
+// Scaffolding a new user adapter
+// ============================================================
+
+export class UiAdapterExistsError extends Error {
+  constructor(public readonly file: string) {
+    super(`A UI adapter already exists at ${file} (use --force to overwrite)`);
+    this.name = "UiAdapterExistsError";
+  }
+}
+
+/** A commented, fill-in-the-blanks adapter manifest for the agent/user. */
+export function uiAdapterTemplate(id: string, framework: string): string {
+  return `# UI framework adapter for ${framework}.
+#
+# atelier interprets this declaratively — NO code runs. Fill in the
+# fields below, then \`atelier design apps\` / \`nav\` / \`kit\` discover
+# this framework like any built-in. Validate with \`atelier design
+# adapters show ${id}\`.
+version: 1
+id: ${id}
+framework: ${framework}
+# Higher priority wins when several adapters match one app directory
+# (meta-frameworks should outrank the base libraries they build on).
+priority: 50
+
+# How to recognize an app of this framework at a candidate directory.
+# Provide at least one signal; every signal you provide must hold.
+detect:
+  # A manifest file that must exist, optionally matching a regex:
+  manifest:
+    file: pubspec.yaml
+    contains: 'flutter:'
+  # ...or a dependency declared in package.json:
+  # dependency: react
+  # dependencyPattern: '^@remix-run/'
+  # ...or at least one file matching a glob:
+  # glob: '**/*.dart'
+
+# Where to read the app's display name (omit to use the directory name).
+name:
+  file: pubspec.yaml
+  key: name
+
+# How routes / screens are discovered.
+#   file-based : scan roots, map each file's path to a route
+#   none       : routing lives in code — the agent reads it by hand
+routes:
+  strategy: none
+  # roots: [lib/pages, lib/screens]
+  # include: ['**/*.dart']
+  # exclude: ['**/*.g.dart']
+  # indexBasename: index
+
+# Where reusable components live (optional). \`contains\` is a regex the
+# file's text must match; \`pascalCase\` requires an uppercase filename.
+components:
+  dirs: [lib/widgets]
+  extensions: ['.dart']
+  pascalCase: false
+  contains: 'extends (StatelessWidget|StatefulWidget)'
+`;
+}
+
+/**
+ * Write a starter adapter manifest to `.atelier/ui-adapters/<id>.yaml`.
+ * Refuses to overwrite unless `force`. Returns the file path written.
+ */
+export async function scaffoldUiAdapter(
+  workspaceRoot: string,
+  opts: { id: string; framework?: string; force?: boolean }
+): Promise<string> {
+  const dir = workspacePaths(workspaceRoot).uiAdapters;
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `${opts.id}.yaml`);
+  if (!opts.force) {
+    try {
+      await fs.access(file);
+      throw new UiAdapterExistsError(file);
+    } catch (err) {
+      if (err instanceof UiAdapterExistsError) throw err;
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+  await fs.writeFile(file, uiAdapterTemplate(opts.id, opts.framework ?? opts.id), "utf8");
+  return file;
 }

@@ -12,10 +12,10 @@ import {
 } from "../dist/index.js";
 
 /**
- * Bring-your-own-framework, end-to-end: a user-authored YAML adapter in
- * .atelier/ui-adapters/ teaches atelier to discover a non-JS (Flutter)
- * app — its existence, its file-based routes, and its widget
- * components — with zero changes to core code.
+ * The "bring your own UI framework" surface, end-to-end:
+ *   1. native non-JS support (Flutter is a built-in adapter),
+ *   2. a fully custom framework taught purely via a user YAML adapter,
+ *   3. a user adapter overriding a built-in to add a routing convention.
  */
 
 async function ws() {
@@ -37,42 +37,16 @@ async function gitRepo(umbrella, name) {
   return path.join(umbrella, name);
 }
 
-const FLUTTER_ADAPTER_YAML = [
-  "version: 1",
-  "id: flutter",
-  "framework: Flutter",
-  "priority: 50",
-  "detect:",
-  "  manifest:",
-  "    file: pubspec.yaml",
-  "    contains: '(^|\\n)flutter:'",
-  "name:",
-  "  file: pubspec.yaml",
-  "  key: name",
-  "routes:",
-  "  strategy: file-based",
-  "  roots: [lib/pages]",
-  "  include: ['**/*.dart']",
-  "  indexBasename: home",
-  "components:",
-  "  dirs: [lib/widgets]",
-  "  extensions: ['.dart']",
-  "  pascalCase: false",
-  "  contains: 'extends (StatelessWidget|StatefulWidget)'",
-  "",
-].join("\n");
-
 async function flutterRepo(umbrella) {
   const app = await gitRepo(umbrella, "mobile");
   await write(
     path.join(app, "pubspec.yaml"),
     "name: acme_mobile\ndescription: A sample app\nflutter:\n  sdk: flutter\n"
   );
-  // Routes under lib/pages (home collapses to "/").
+  await write(path.join(app, "lib", "main.dart"), "void main() {}\n");
   await write(path.join(app, "lib", "pages", "home.dart"), "class HomePage {}\n");
   await write(path.join(app, "lib", "pages", "settings.dart"), "class SettingsPage {}\n");
   await write(path.join(app, "lib", "pages", "profile", "edit.dart"), "class EditProfile {}\n");
-  // Widget components under lib/widgets (snake_case files, widget classes).
   await write(
     path.join(app, "lib", "widgets", "primary_button.dart"),
     "class PrimaryButton extends StatelessWidget {}\n"
@@ -81,55 +55,153 @@ async function flutterRepo(umbrella) {
     path.join(app, "lib", "widgets", "user_card.dart"),
     "class UserCard extends StatefulWidget {}\n"
   );
-  // A non-widget helper must NOT count as a component.
   await write(path.join(app, "lib", "widgets", "format_utils.dart"), "String fmt(x) => x;\n");
   return app;
 }
 
-test("a user YAML adapter makes a Flutter app discoverable (apps + nav + components)", async () => {
+// ============================================================
+// 1. Native non-JS support — Flutter is a built-in adapter.
+// ============================================================
+
+test("native: a Flutter app is detected with zero config (built-in adapter)", async () => {
   const { umbrella, workspaceRoot } = await ws();
   try {
     await flutterRepo(umbrella);
     await addRepo(workspaceRoot, { pathInput: "../mobile", cwd: workspaceRoot });
-    // The agent authors the adapter manifest.
-    await write(
-      path.join(workspaceRoot, ".atelier", "ui-adapters", "flutter.yaml"),
-      FLUTTER_ADAPTER_YAML
-    );
 
-    // 1. App detection.
     const apps = await detectApps(workspaceRoot);
     assert.equal(apps.length, 1, JSON.stringify(apps));
     assert.equal(apps[0].framework, "Flutter");
     assert.equal(apps[0].name, "acme_mobile");
     assert.equal(apps[0].adapterId, "flutter");
-    assert.equal(apps[0].ref, "app:mobile");
 
-    // 2. Navigation from the file-based router (home → "/").
+    // Flutter navigation is code-defined → the agent reads it, not atelier.
     const [nav] = await detectNavigation(workspaceRoot);
-    assert.equal(nav.fileBased, true);
-    const routes = nav.routes.map((r) => r.route).sort();
-    assert.deepEqual(routes, ["/", "/profile/edit", "/settings"]);
+    assert.equal(nav.fileBased, false);
+    assert.equal(nav.routes.length, 0);
 
-    // 3. Components: the two widgets, not the helper.
+    // Widget components are deterministic (the two widgets, not the helper).
     const kit = await detectUiKit(workspaceRoot);
-    const widgetSource = kit.components.find((c) => c.dir === "lib/widgets");
-    assert.ok(widgetSource, "lib/widgets recognized as a component source");
-    assert.equal(widgetSource.count, 2);
-    assert.deepEqual(widgetSource.samples.sort(), ["primary_button", "user_card"]);
+    const widgets = kit.components.find((c) => c.dir === "lib/widgets");
+    assert.ok(widgets, "lib/widgets recognized");
+    assert.equal(widgets.count, 2);
+    assert.deepEqual(widgets.samples.sort(), ["primary_button", "user_card"]);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 
-test("without the adapter, the same Flutter app is invisible (proves the adapter drives it)", async () => {
+// ============================================================
+// 2. Bring your own — a custom framework taught only via YAML.
+// ============================================================
+
+const LATTICE_ADAPTER_YAML = [
+  "version: 1",
+  "id: lattice",
+  "framework: Lattice",
+  "priority: 50",
+  "detect:",
+  "  manifest:",
+  "    file: lattice.config",
+  "name:",
+  "  file: lattice.config",
+  "  key: app",
+  "routes:",
+  "  strategy: file-based",
+  "  roots: [views]",
+  "  include: ['**/*.lat']",
+  "  indexBasename: index",
+  "components:",
+  "  dirs: [widgets]",
+  "  extensions: ['.lat']",
+  "  pascalCase: false",
+  "  contains: 'component'",
+  "",
+].join("\n");
+
+async function latticeRepo(umbrella) {
+  const app = await gitRepo(umbrella, "kiosk");
+  await write(path.join(app, "lattice.config"), "app: acme_kiosk\nversion: 2\n");
+  await write(path.join(app, "views", "index.lat"), "view Home\n");
+  await write(path.join(app, "views", "checkout.lat"), "view Checkout\n");
+  await write(path.join(app, "views", "account", "billing.lat"), "view Billing\n");
+  await write(path.join(app, "widgets", "money_field.lat"), "component MoneyField\n");
+  await write(path.join(app, "widgets", "helpers.lat"), "fn helper() {}\n");
+  return app;
+}
+
+test("BYO: a custom framework is taught entirely via a user YAML adapter", async () => {
+  const { umbrella, workspaceRoot } = await ws();
+  try {
+    await latticeRepo(umbrella);
+    await addRepo(workspaceRoot, { pathInput: "../kiosk", cwd: workspaceRoot });
+
+    // No built-in knows "Lattice": invisible until the agent authors one.
+    assert.deepEqual(await detectApps(workspaceRoot), []);
+
+    await write(
+      path.join(workspaceRoot, ".atelier", "ui-adapters", "lattice.yaml"),
+      LATTICE_ADAPTER_YAML
+    );
+
+    const apps = await detectApps(workspaceRoot);
+    assert.equal(apps.length, 1);
+    assert.equal(apps[0].framework, "Lattice");
+    assert.equal(apps[0].name, "acme_kiosk");
+
+    const [nav] = await detectNavigation(workspaceRoot);
+    assert.equal(nav.fileBased, true);
+    assert.deepEqual(nav.routes.map((r) => r.route).sort(), ["/", "/account/billing", "/checkout"]);
+
+    const kit = await detectUiKit(workspaceRoot);
+    const widgets = kit.components.find((c) => c.dir === "widgets");
+    assert.ok(widgets, "widgets/ recognized");
+    assert.equal(widgets.count, 1); // money_field (component), not helpers
+    assert.deepEqual(widgets.samples, ["money_field"]);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+// ============================================================
+// 3. Override — a user adapter teaches a built-in a routing convention.
+// ============================================================
+
+test("override: a user adapter can add a routing convention to a built-in", async () => {
   const { umbrella, workspaceRoot } = await ws();
   try {
     await flutterRepo(umbrella);
     await addRepo(workspaceRoot, { pathInput: "../mobile", cwd: workspaceRoot });
-    // No adapter authored → no built-in matches a Flutter pubspec.
+
+    // This team keeps screens under lib/pages — teach atelier that.
+    await write(
+      path.join(workspaceRoot, ".atelier", "ui-adapters", "flutter.yaml"),
+      [
+        "id: flutter",
+        "framework: Flutter",
+        "priority: 60",
+        "detect:",
+        "  manifest:",
+        "    file: pubspec.yaml",
+        "    contains: 'flutter:'",
+        "name:",
+        "  file: pubspec.yaml",
+        "  key: name",
+        "routes:",
+        "  strategy: file-based",
+        "  roots: [lib/pages]",
+        "  include: ['**/*.dart']",
+        "  indexBasename: home",
+        "",
+      ].join("\n")
+    );
+
     const apps = await detectApps(workspaceRoot);
-    assert.deepEqual(apps, []);
+    assert.equal(apps[0].framework, "Flutter");
+
+    const [nav] = await detectNavigation(workspaceRoot);
+    assert.equal(nav.fileBased, true);
+    assert.deepEqual(nav.routes.map((r) => r.route).sort(), ["/", "/profile/edit", "/settings"]);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }

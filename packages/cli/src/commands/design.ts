@@ -6,6 +6,9 @@ import {
   detectNavigation,
   detectConnections,
   detectUiKit,
+  loadUiAdapters,
+  scaffoldUiAdapter,
+  UiAdapterExistsError,
   buildScreens,
   buildUiOverview,
   addDesign,
@@ -190,10 +193,13 @@ const appsCmd: Command = {
   description:
     "UI work is organized by application. This deterministically lists\n" +
     "the frontend apps (Next.js / React / Vue / SvelteKit / Angular /\n" +
-    "Astro / Nuxt / React Native / …) across all registered repos — the\n" +
-    "discovery entry the ui-design agent starts from. Handles the shapes\n" +
-    "a workspace comes in: many apps across repos, one monorepo of apps,\n" +
-    "or several separate projects. --json for the agent.",
+    "Astro / Nuxt / React Native / Flutter / …) across all registered\n" +
+    "repos by matching each against the UI framework adapters — the\n" +
+    "discovery entry the ui-design agent starts from. For a framework\n" +
+    "atelier doesn't recognize, author an adapter (`atelier design\n" +
+    "adapters scaffold`). Handles the shapes a workspace comes in: many\n" +
+    "apps across repos, one monorepo of apps, or several separate\n" +
+    "projects. --json for the agent.",
   options: { json: { type: "boolean" } },
   async run({ values, cwd }) {
     const root = await resolveRoot(cwd);
@@ -207,6 +213,7 @@ const appsCmd: Command = {
     if (apps.length === 0) {
       ui.info("No frontend apps detected.");
       ui.print(`  ${ui.dim("Register the repos that hold your UI (`atelier repo add ../<dir>`).")}`);
+      ui.print(`  ${ui.dim("Using a framework atelier doesn't recognize? `atelier design adapters scaffold <id>`.")}`);
       return 0;
     }
     const refWidth = Math.max(...apps.map((a) => a.ref.length));
@@ -855,6 +862,144 @@ const artifactCmd: Command = {
   subcommands: [artifactAddCmd, artifactListCmd, artifactShowCmd, artifactUpdateCmd, artifactRemoveCmd],
 };
 
+// ============================================================
+// design adapters — the "bring your own UI framework" registry
+// ============================================================
+
+const STRATEGY_NOTE: Record<string, string> = {
+  none: "routing in code (agent reads it)",
+  "file-based": "file-based routes",
+};
+
+const adaptersListCmd: Command = {
+  name: "list",
+  summary: "List the effective UI framework adapters (built-in + user).",
+  description:
+    "UI discovery (apps / nav / components) matches each app against this\n" +
+    "adapter set. Built-ins ship with atelier; user adapters live in\n" +
+    ".atelier/ui-adapters/*.yaml and override built-ins by id. Higher\n" +
+    "priority wins when several match one app.",
+  options: { json: { type: "boolean" } },
+  async run({ values, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    const { adapters, errors } = await loadUiAdapters(root);
+    if (values.json) {
+      process.stdout.write(JSON.stringify({ adapters, errors: errors.map((e) => ({ file: e.file, error: e.error.message })) }, null, 2) + "\n");
+      return 0;
+    }
+    ui.print(ui.bold(`UI framework adapters (${adapters.length})`));
+    const idW = Math.max(...adapters.map((a) => a.id.length), 3);
+    const fwW = Math.max(...adapters.map((a) => a.framework.length), 9);
+    for (const a of adapters) {
+      const origin = a.builtin ? ui.dim("built-in") : ui.green("user");
+      const routes = STRATEGY_NOTE[a.routes.strategy] ?? `${a.routes.strategy} routes`;
+      ui.print(
+        `  ${ui.cyan(a.id.padEnd(idW))}  ${a.framework.padEnd(fwW)}  ${ui.dim(`p${a.priority}`)}  ${origin}  ${ui.dim("· " + routes)}`
+      );
+    }
+    for (const e of errors) {
+      ui.warn(`Skipped ${e.file}: ${e.error.message}`);
+    }
+    ui.blank();
+    ui.print(
+      `  ${ui.dim("Teach atelier a new framework:")} ${ui.cyan("atelier design adapters scaffold <id> --framework <Name>")}`
+    );
+    return 0;
+  },
+};
+
+const adaptersShowCmd: Command = {
+  name: "show",
+  summary: "Show one adapter's full spec.",
+  positionals: ["id"],
+  options: { json: { type: "boolean" } },
+  async run({ positionals, values, cwd }) {
+    const id = positionals[0];
+    if (!id) {
+      ui.error("Usage: atelier design adapters show <id>");
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    const { adapters } = await loadUiAdapters(root);
+    const a = adapters.find((x) => x.id === id);
+    if (!a) {
+      ui.error(`No UI adapter with id "${id}". Run \`atelier design adapters list\`.`);
+      return 1;
+    }
+    if (values.json) {
+      process.stdout.write(JSON.stringify(a, null, 2) + "\n");
+      return 0;
+    }
+    ui.print(ui.bold(`${a.framework}  ${ui.dim(`(${a.id})`)}`));
+    ui.print(`  ${ui.dim("origin:")}    ${a.builtin ? "built-in" : "user (.atelier/ui-adapters/" + a.id + ".yaml)"}`);
+    ui.print(`  ${ui.dim("priority:")}  ${a.priority}`);
+    ui.print(`  ${ui.dim("detect:")}    ${JSON.stringify(a.detect)}`);
+    if (a.name) ui.print(`  ${ui.dim("name:")}      ${a.name.file} → ${a.name.key}`);
+    ui.print(`  ${ui.dim("routes:")}    ${a.routes.strategy}${a.routes.roots ? " " + JSON.stringify(a.routes.roots) : ""}`);
+    if (a.components) ui.print(`  ${ui.dim("components:")} ${JSON.stringify(a.components)}`);
+    return 0;
+  },
+};
+
+const adaptersScaffoldCmd: Command = {
+  name: "scaffold",
+  summary: "Write a starter adapter manifest for a new framework.",
+  description:
+    "Creates .atelier/ui-adapters/<id>.yaml from a commented template.\n" +
+    "Fill it in (detect / routes / components) and atelier discovers the\n" +
+    "framework deterministically. This is how an agent teaches atelier a\n" +
+    "framework it doesn't support natively — bring your own UI framework.",
+  positionals: ["id"],
+  options: { framework: { type: "string", short: "f" }, force: { type: "boolean" } },
+  async run({ positionals, values, cwd }) {
+    const id = positionals[0];
+    if (!id) {
+      ui.error("Usage: atelier design adapters scaffold <id> [--framework <Name>] [--force]");
+      return 2;
+    }
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(id)) {
+      ui.error(`"${id}" is not a valid adapter id (use a slug: lowercase letters, digits, dashes).`);
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    try {
+      const file = await scaffoldUiAdapter(root, {
+        id,
+        framework: (values.framework as string | undefined)?.trim() || id,
+        force: Boolean(values.force),
+      });
+      ui.success(`Scaffolded ${ui.bold(file)}`);
+      ui.print(`  ${ui.dim("Edit the detect / routes / components rules, then:")}`);
+      ui.print(`    ${ui.cyan(`atelier design adapters show ${id}`)}  ${ui.dim("(validates + prints it)")}`);
+      ui.print(`    ${ui.cyan("atelier design apps")}  ${ui.dim("(discovers apps of this framework)")}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof UiAdapterExistsError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
+const adaptersCmd: Command = {
+  name: "adapters",
+  summary: "UI framework adapters — bring your own UI framework.",
+  description:
+    "Adapters are declarative specs (built-in or user YAML) that teach\n" +
+    "atelier how to discover an app's existence, routes/screens, and\n" +
+    "components for a given UI framework. The unit of extension is data,\n" +
+    "not code — the deterministic core stays AI-free.\n" +
+    "  list      — the effective adapter set (built-in + user)\n" +
+    "  show      — one adapter's full spec\n" +
+    "  scaffold  — write a starter manifest for a new framework",
+  subcommands: [adaptersListCmd, adaptersShowCmd, adaptersScaffoldCmd],
+};
+
 export const designCommand: Command = {
   name: "design",
   summary: "The design engine: disciplines, tool selection, palette, live tuning.",
@@ -870,7 +1015,8 @@ export const designCommand: Command = {
     "  screens    — the per-app screen inventory (design checklist)\n" +
     "  connections— how the apps connect (shared internal code)\n" +
     "  kit        — the UI building blocks (components + design tokens)\n" +
+    "  adapters   — UI framework adapters (bring your own UI framework)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, artifactCmd, toolCommand, checkCmd, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, artifactCmd, toolCommand, checkCmd, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, adaptersCmd, paletteCmd, liveCmd],
 };

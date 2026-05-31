@@ -197,8 +197,14 @@ export async function detectUiKit(workspaceRoot: string): Promise<UiKit> {
 
   for (const r of repos) {
     if (!r.exists) continue;
-    for (const p of r.packages) {
-      const pkgRel = p.path === "." ? "" : p.path;
+    // Candidate dirs: the repo root plus every inspected package. The
+    // root is always probed so a UI app the package scan skipped (e.g. a
+    // framework with no recognized ecosystem manifest) is still covered.
+    const dirs = new Set<string>(["."]);
+    for (const p of r.packages) dirs.add(p.path);
+
+    for (const pkgPath of [...dirs].sort()) {
+      const pkgRel = pkgPath === "." ? "" : pkgPath;
       const pkgAbs = pkgRel ? path.join(r.absPath, pkgRel) : r.absPath;
 
       // Resolve the component-detection rule from the adapter that

@@ -58,11 +58,28 @@ const startMode = wantRepl
   ? runRepl(process.cwd(), registry)
   : dispatch(registry, argv, process.cwd(), ATELIER_VERSION);
 
+/**
+ * Exit only after stdout/stderr have flushed to the OS. `process.exit()`
+ * does NOT wait for buffered output on a pipe, so a large response (e.g.
+ * `design adapters list --json`) can be truncated when piped to a
+ * consumer that isn't draining fast enough. Writing a final empty chunk
+ * with a callback resolves once all previously-queued writes flush.
+ */
+function exitAfterFlush(code: number): void {
+  process.exitCode = code;
+  let remaining = 2;
+  const done = () => {
+    if (--remaining === 0) process.exit(code);
+  };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+}
+
 startMode
   .then((code) => {
-    process.exit(code);
+    exitAfterFlush(code);
   })
   .catch((err) => {
     process.stderr.write(`Fatal: ${(err as Error).stack ?? String(err)}\n`);
-    process.exit(1);
+    exitAfterFlush(1);
   });

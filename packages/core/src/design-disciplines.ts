@@ -78,16 +78,60 @@ separate projects each with their own UI.
    screens and how you move between them. Start from
    \`atelier design nav <app> --json\`, which extracts routes from
    file-based routers (Next / SvelteKit / Astro / Nuxt / Remix / Expo /
-   Gatsby). For apps whose routing lives in code (plain React/Vue/…),
-   read it yourself. Then **record the map as a ui-design artifact**
-   (\`atelier design artifact add ui-design:<app>-navigation --title
-   "<app> — navigation" --kind navigation --app app:<repo>\`), **linking
-   to existing documentation** in the system.
+   Gatsby, or any framework with a file-based adapter). For apps whose
+   routing lives in code (plain React/Vue, Flutter, Compose, SwiftUI,
+   …), \`fileBased\` is false — **read the routing yourself** and, if the
+   team uses a folder convention, consider teaching atelier via an
+   adapter (see "Bring your own UI framework"). Then **record the map as
+   a ui-design artifact** (\`atelier design artifact add
+   ui-design:<app>-navigation --title "<app> — navigation" --kind
+   navigation --app app:<repo>\`), **linking to existing documentation**
+   in the system.
 3. Do this **even without visuals** — the map + doc links come first.
    Visuals are added progressively (as you onboard a feature). Most
    screen designs **already exist** in the design tool — **connect to
    them and build on top**, don't redraw. When useful, split a screen
    set into its own ui-design item, or a new project.`,
+    },
+    {
+      slug: "bring-your-own-framework",
+      title: "Bring your own UI framework (adapters)",
+      description: "Teach atelier an unrecognized framework via a declarative adapter, or read it by hand.",
+      detail: `atelier discovers apps / routes / components by matching each app
+against **UI framework adapters** — declarative specs it interprets
+deterministically (no code runs). Built-ins cover the common web
+frameworks + Flutter; \`atelier design adapters list\` shows the
+effective set.
+
+When you hit a framework atelier **doesn't** recognize (a custom stack,
+Compose, SwiftUI, .NET MAUI, Qt, an in-house toolkit), you have two
+moves — prefer the first when the framework has *conventions*:
+
+1. **Author an adapter (makes it deterministic + free forever).**
+   \`atelier design adapters scaffold <id> --framework "<Name>"\` writes
+   \`.atelier/ui-adapters/<id>.yaml\`. Fill in:
+   - **detect** — how to recognize an app: a \`manifest\` file (+ a
+     \`contains\` regex), a package.json \`dependency\` /
+     \`dependencyPattern\`, or a \`glob\`.
+   - **routes** — \`file-based\` with \`roots\`/\`include\` globs if the
+     framework maps files to screens; else \`none\` (you'll read routing
+     from code).
+   - **components** — \`dirs\` + \`extensions\` (+ a \`contains\` regex
+     like \`@Composable\`, and \`pascalCase: false\` for snake_case
+     filenames).
+   Validate with \`atelier design adapters show <id>\`, then
+   \`atelier design apps\` / \`nav\` / \`kit\` light up. Commit the YAML —
+   it's part of the workspace.
+
+2. **Read it by hand (the fallback).** If the structure is too dynamic
+   for any declarative spec (navigation built imperatively in code),
+   don't force an adapter — read the code yourself and write the
+   screens/nav directly as ui-design artifacts. If you later spot a
+   stable convention, crystallize it into an adapter so the next pass is
+   deterministic.
+
+Record what you learned either way (\`atelier agent learn ui-design
+"…"\`) so the knowledge compounds.`,
     },
     {
       slug: "connected-apps",
