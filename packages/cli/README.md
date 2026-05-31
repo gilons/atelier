@@ -1,71 +1,58 @@
 # @gilons/atelier
 
-> A planning companion for the spec-driven era.
+> Plan your product where your coding agent can act on it.
 
-Atelier is a CLI that sits at the **organization level** (not inside any one repo), maps your product across **code, docs, design, and conversations**, and hands production-grade specs off to whichever coding agent you already use (Claude Code, Codex, Copilot, Cursor, …).
+Your coding agent is great at writing code and terrible at remembering what your product *is* — how the pieces fit, what's decided, what the last meeting changed. **Atelier is the memory and the map.** It keeps a living, version-controlled picture of your product — across code, docs, design, and conversations — and hands your agent production-grade specs and a navigable map to work from.
 
-It **never calls an LLM itself**. Deterministic work — git/project inspection, UI & route detection, the workspace map, validation — runs in plain code. Atelier indexes summaries + links; it never fetches source content or holds credentials. Your agent does the I/O and the judgment.
+It **never calls an LLM itself.** Your agent does the thinking; atelier keeps the facts straight (deterministic, in plain git-tracked markdown). Works *with* the tools you already use — it doesn't replace them.
 
 ## Install
 
 ```bash
 npm install -g @gilons/atelier
-atelier --version
 ```
 
-A single, self-contained package — no peer packages, zero runtime dependencies. Requires Node.js ≥ 20. (Optional macOS system-audio capture uses a bundled Swift helper; everything else is cross-platform.)
+Single self-contained package, zero runtime dependencies. Node.js ≥ 20.
 
-## Use it with your coding agent
-
-Atelier is **agent-agnostic**: the deterministic CLI is the interface, so any coding agent that can run a shell command can drive it. Atelier *authors* its own agents (discovery, system-design, ui-design) as version-controlled markdown, and renders them into the formats your tool discovers.
-
-**Claude Code** — first-class, auto-installed:
+## Set it up with your coding agent
 
 ```bash
-atelier agent install discovery        # writes .claude/commands/atelier/discovery.md
-                                        #    +  .claude/agents/atelier-discovery.md
+cd ~/your-project        # a repo, or an org folder with several repos inside
+atelier init             # scaffold the workspace (version-controlled)
+```
+
+### Claude Code
+
+```bash
+atelier agent install discovery
 atelier agent install system-design
 atelier agent install ui-design
 ```
 
-You then get **slash commands** (`/atelier:discovery`, `/atelier:system-design`, …) and **subagents** Claude can delegate to — no extra config. Re-run any time; the `.claude/` files are regenerated from the canonical definitions in `.atelier/agents/`.
+That's it. In Claude Code you now have slash commands — **`/atelier:discovery`**, `/atelier:system-design`, `/atelier:ui-design` — and subagents Claude can delegate to. Start with `/atelier:discovery`; it maps your workspace and connects your docs/design/tickets.
 
-**Codex, Cursor, Copilot, and others** — point your agent at the workspace. The same agent instructions live as plain markdown at `.atelier/agents/<id>/instructions.md`, and every command is plain, scriptable CLI:
+### Codex, Cursor, Copilot, or any agent
 
-```bash
-atelier map                       # the navigable index your agent reads first
-atelier agent show system-design  # the full playbook for that agent, as markdown
-```
-
-Drop those instructions into your tool's rules/prompt (e.g. `AGENTS.md`, a Cursor rule, a Codex prompt) and it can run the same atelier-driven workflow. The agents also **improve over time** — `atelier agent learn <id> "…"` records durable learnings that fold back into the rendered instructions.
-
-## Quick start
-
-```bash
-cd ~/workspace/myorg     # your org dir, with api/, web/, … inside
-atelier                  # interactive REPL (or use one-shot subcommands)
-```
+Atelier is just a CLI, so any agent that can run a shell command can drive it. Point your agent at the workspace once — e.g. add this to your **`AGENTS.md`** (Codex), a Cursor rule, or your system prompt:
 
 ```
-atelier ❯ /init                         # scaffolds ./planning/.atelier/
-atelier ❯ /repo                          # register repos (gh auto-discovery)
-atelier ❯ /source register notion --name "Company Notion"
-atelier ❯ /doc add notion:<page-id> --title "Onboarding PRD"
-atelier ❯ /map                           # the navigable workspace index
-atelier ❯ /agent install discovery       # render agents into .claude/
+This project uses atelier for planning. Run `atelier map` to orient,
+then `atelier agent show system-design` (or discovery / ui-design) for
+the playbook before making changes.
 ```
 
-## What's inside
+The agent playbooks are plain markdown (`atelier agent show <id>`), so they drop straight into any tool's rules.
 
-- **Typed surfaces** the agent indexes into: `feature`, `doc`, `ticket`, `design artifact`, `discrepancy`, `stakeholder`, `spec`.
-- **The design engine**: disciplines (system-design / ui-design / custom), the live "derive, don't generate" palette, and deterministic UI discovery — `design apps | nav | screens | connections | kit | check`.
-- **Bring-your-own UI framework**: declarative adapters (`design adapters scaffold`) teach atelier any framework — Next/SvelteKit/Flutter ship built in.
-- **The agents layer**: atelier authors agents (`agent add | install | learn`) rendered into `.claude/` as slash commands + subagents that improve over time.
-- **Sessions**: record/import conversations and see what they produced.
+## What you get
+
+- **A living product map** — features, docs, tickets, designs, and recorded conversations, cross-linked and kept in git next to your code.
+- **Specs your agent can build from** — `atelier spec new "Add SSO"` scaffolds a change with context + a clean handoff prompt.
+- **Agents that learn your codebase** — atelier authors them, renders them into your tool, and they get sharper over time.
+- **No lock-in, no black box** — every fact is readable markdown/YAML you can diff and review.
 
 ## Learn more
 
-Full documentation, architecture, and contributing guide: <https://github.com/gilons/atelier>
+Full docs, examples, and contributing guide → **<https://github.com/gilons/atelier>**
 
 ## License
 
