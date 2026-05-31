@@ -34,4 +34,5 @@ export * from "./specs.js";
 export * from "./local-discovery.js";
 export * from "./audio-config.js";
 export * from "./design-config.js";
+export * from "./design-palette.js";
 export { ATELIER_VERSION } from "./version.js";

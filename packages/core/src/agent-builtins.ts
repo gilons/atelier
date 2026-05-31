@@ -441,103 +441,121 @@ instead of rebuilding from scratch.`;
 const SYSDESIGN_LIVE = `Run as a **live planning companion** during a recorded conversation.
 While the team is on a call discussing features, you listen to the
 transcript as it streams in, keep a running high-level design draft,
-and surface follow-up questions to ask in the moment.
+and surface follow-up questions to ask in the moment. This rides
+atelier's speaking module — the recorder + chunked transcription. You
+consume the transcript and react; you don't capture audio.
 
-This rides atelier's speaking module — the recorder + chunked
-transcription. You don't capture audio; you consume the transcript
-and react.
+**This is *near*-real-time, not instant.** Audio is buffered in chunks,
+so expect a few seconds of lag. The goal is a glanceable, evolving
+picture the room reacts to — not a live mirror. Set that expectation.
 
-The loop (see the sub-units): set up the live view → watch the
-transcript → analyze each window → keep the draft + questions current
-→ finalize when the call ends.
+**The one rule that keeps it fast: derive, don't generate.** Everything
+you put on screen live must be a *derivative of something that already
+exists* — a subsystem, feature, existing design, or owner from the
+**design palette** (\`atelier design palette --json\`, loaded ONCE at the
+start). Reference palette entries by their \`ref\` and wire them
+together. Never invent and fully model a new system from scratch
+mid-call — that's slow and drifts out of sync. A genuinely new thing
+becomes a single **"proposed" stub** node now; its real modeling is
+deferred to finalize.
 
-**Cadence.** A chunked recording emits a chunk every ~30–60s
-(\`atelier session check\` reports the interval). React on each new
-chunk, but only rewrite the draft when something meaningful changed —
-don't thrash. Always keep the top 3–5 follow-up questions current.
+**Two tracks, different cadences** — this is how you stay in sync even
+when topics change fast:
+- **Fast track** (every chunk, cheap): figure out *what they're
+  discussing right now*, match it to palette entities, classify
+  new-vs-modification, keep the "Discussing now" anchor + follow-up
+  questions current. Low latency — keep each turn small.
+- **Slow track** (gated): actually (re)render the diagram only when a
+  topic has been **stable for ~2 chunks / ~60–90s**, or the user asks
+  ("show me"). On a fast-moving call this stays quiet, so you never
+  render a diagram for a topic that's already been dropped; on a steady
+  call it builds promptly.
 
-Keep it lightweight and high-level: the goal is a shared picture the
-room can glance at and react to, not a finished spec.`;
+See the sub-units for each track.`;
 
-const SYSDESIGN_LIVE_SETUP = `Set up the live session.
+const SYSDESIGN_LIVE_SETUP = `Pre-flight before you go live.
 
-1. Find the active recording (\`atelier session list\` → the one that's
-   still \`active\`). If none, tell the user to start one:
-   \`atelier session record --chunk 45\` (45s chunks is a good live
-   cadence). Note the session id.
-2. Decide where the live view goes:
-   - **A design tool is connected** (\`atelier design-tool show\` / a
-     \`design\` source): create or open the live diagram/board now and
-     **share its link with the user up front**, so they watch it
-     update in the tool as you draft. (Excalidraw/Figma/Lucid all have
-     shareable live URLs.)
-   - **No tool (Markdown)**: write the initial draft to the session's
-     \`design-draft.md\` and tell the user to run
-     \`atelier session watch <id>\` — it opens a browser view that
-     renders the draft (Mermaid diagrams included) and auto-refreshes
-     as you update it.
-3. Seed the draft with a one-line "what we're designing" placeholder so
-   the view isn't empty.`;
+1. **Pre-compute the substrate.** The expensive understanding should
+   already exist — if \`atelier map\` is thin, run the workspace-design /
+   synthesize passes BEFORE the call. Live mode references this work;
+   it doesn't do it on the hot path.
+2. **Load the palette once.** \`atelier design palette --json\` — the
+   reusable vocabulary (subsystems, features, existing designs, owners)
+   you'll reference by \`ref\` for the whole call. Hold it in context;
+   don't re-fetch every chunk.
+3. **Find the active recording** (\`atelier session list\` → the
+   \`active\` one; else have the user run \`atelier session record
+   --chunk 45\`). For live, transcribe with a **fast STT model**
+   (tiny/base) for responsiveness — you'll re-transcribe accurately at
+   finalize.
+4. **Set up the view:**
+   - **Design tool connected** (\`atelier design-tool show\` / a \`design\`
+     source) → open/create the live diagram and **share its link** with
+     the user now, so they watch it update in the tool.
+   - **No tool (Markdown)** → seed the session's \`design-draft.md\` and
+     tell the user to run \`atelier session watch <id>\` (a browser view
+     that renders the draft + Mermaid and auto-refreshes).
+5. Seed the draft with the **anchor** on top — a blockquote
+   \`> **Discussing:** … · _as of HH:MM:SS_\` — so the view always shows
+   what it currently reflects.`;
 
-const SYSDESIGN_LIVE_WATCH = `Watch the transcript as it streams.
+const SYSDESIGN_LIVE_FAST = `The **fast track** runs every chunk and must stay cheap — it's what
+keeps you in sync with the conversation.
 
-- Loop on \`atelier session check <id>\` at the reported interval. It
-  lists pending audio chunks.
-- Transcribe each pending chunk with your STT (per the session's
-  language/whisper setup) and append it: \`atelier session note <id>
-  --chunk <name> --text "…"\` (this also marks the chunk consumed).
-- Read the transcript delta since your last window — focus on what's
-  new, not the whole history.
-- Keep going until \`atelier session check\` reports \`status: ended\`;
-  then do one final drain + the finalize step.`;
+- \`atelier session check <id>\` → transcribe pending chunks with your
+  fast STT → \`atelier session note <id> --chunk <name> --text "…"\`
+  (also marks the chunk consumed).
+- Read only the **new delta**, not the whole transcript.
+- **Match to the palette:** which existing subsystems / features /
+  designs / owners is this about? Note their \`ref\`s.
+- **Classify new vs modification** against the map + palette: a change
+  to an existing entity, or something new? State it plainly.
+- Update the **anchor** ("Discussing: X · as of …") and the **follow-up
+  questions** (top 3–5, freshest first; drop answered ones).
+- **Do NOT redraw the diagram here** — that's the slow track. Keep this
+  turn small so it keeps up.
 
-const SYSDESIGN_LIVE_ANALYZE = `Analyze each window and update the running draft.
+Good follow-up questions probe what's ambiguous, risky, or unstated:
+scope boundaries, constraints (scale/latency/compliance/deadline), edge
+cases, ownership/dependencies, and conflicts with the existing design.`;
 
-For the new transcript since last time:
-1. **Classify: new vs modification.** Compare what's being discussed
-   against the existing system (\`atelier map\`, system-design items,
-   features). Is this a brand-new capability/system, or a change to
-   something already designed/built? Say which, explicitly, in the
-   draft.
-2. **Update the high-level design draft** — what the thing is, where it
-   fits, the subsystems it touches, and how the design changes. For a
-   modification, show the delta against the current design; for
-   something new, sketch the shape.
-   - Design tool connected → update the live diagram (the user is
-     watching the link).
-   - Markdown → rewrite \`design-draft.md\` (use Mermaid for the
-     diagram; the \`session watch\` view renders it live). Keep it
-     high-level — a glanceable overview, not a spec.
-3. Note assumptions you're making — they become questions.`;
+const SYSDESIGN_LIVE_SLOW = `The **slow track** renders the visualization — gate it so it never
+thrashes.
 
-const SYSDESIGN_LIVE_QUESTIONS = `Surface follow-up questions for the live interaction.
+**When to fire:** a topic has been stable across ~2 chunks (~60–90s),
+or the user explicitly asks ("show me"). On volatile calls, hold off —
+the fast track is still keeping the anchor + questions live.
 
-As you analyze, maintain a short, sharp list of questions the user
-could ask *right now* to move the design forward — the things that are
-ambiguous, risky, or unstated:
-- Scope boundaries ("does this include X, or just Y?").
-- Constraints (scale, latency, compliance, deadlines).
-- Edge cases and failure modes.
-- Ownership and dependencies (which team/service, who decides).
-- Conflicts with the existing design you spotted in the analysis.
+**How to render — derive, don't generate:**
+- Start from the **base** (the existing design, derived from the
+  palette / canonical items / map). Don't redraw it from scratch.
+- Apply a **delta / overlay**: highlight the palette node(s) under
+  discussion; add any genuinely-new thing as a single **"proposed"**
+  node in a distinct style — a stub, not a fully-modelled system.
+- Reference palette entities by \`ref\` so the picture stays consistent
+  with the real system.
+- **Design tool** → push the delta to the live diagram (the user is
+  watching the link). **Markdown** → rewrite \`design-draft.md\`
+  (Mermaid), keeping the anchor on top; \`session watch\` auto-refreshes.
 
-Keep the top 3–5, freshest first. Put them under a
-\`## Follow-up questions\` heading in \`design-draft.md\` (so they show in
-the live view) — or speak them, if you're in a voice loop. Drop
-questions once they've been answered in the conversation.`;
+Keep it high-level — a glanceable overview, not a spec.`;
 
-const SYSDESIGN_LIVE_FINALIZE = `Finalize when the call ends (\`status: ended\`).
+const SYSDESIGN_LIVE_FINALIZE = `Finalize when the call ends (\`atelier session check\` reports
+\`status: ended\`).
 
-1. Do a final transcript drain + analysis pass.
-2. Promote the stable parts of the live draft into durable
+1. **Re-transcribe accurately.** Run the recording through the accurate
+   model (medium) for the durable record; drain the last chunks.
+2. **Now do the deferred modeling.** Turn each "proposed" stub from the
+   call into a proper design — promote the stable parts into durable
    system-design items (\`atelier item add … --classification
    system-design --from-session <id>\`) and, if a tool is connected,
-   leave the diagram saved + linked.
+   leave the diagram saved + linked. This is the expensive work the
+   live loop intentionally skipped.
 3. Turn unresolved follow-up questions into open items or discrepancies
-   so they're not lost.
-4. Link the design to the features/specs it affects; suggest a
-   \`atelier spec new\` for anything that's ready to plan.
-5. \`atelier map --rebuild\`, and record a learning capturing what the
+   so they aren't lost.
+4. Link the design to the features / specs it affects; suggest
+   \`atelier spec new\` for anything ready to plan.
+5. \`atelier map --rebuild\`; record a learning capturing what the
    conversation decided.`;
 
 const SYSDESIGN_DETECT = `Find the configured system-design tool before doing anything else.
@@ -765,31 +783,25 @@ const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
       {
         slug: "setup",
         title: "Set up the live session",
-        description: "Find the active recording; share the tool link, or seed design-draft.md + `session watch`.",
+        description: "Pre-compute the substrate, load the palette, find the recording, set up the view + anchor.",
         detail: SYSDESIGN_LIVE_SETUP,
       },
       {
-        slug: "watch-transcript",
-        title: "Watch the transcript",
-        description: "Loop on `session check`, transcribe chunks, read the delta.",
-        detail: SYSDESIGN_LIVE_WATCH,
+        slug: "fast-track",
+        title: "Fast track — what they're discussing",
+        description: "Cheap, every chunk: match to palette, classify new-vs-modification, keep anchor + questions current.",
+        detail: SYSDESIGN_LIVE_FAST,
       },
       {
-        slug: "analyze",
-        title: "Analyze & update the draft",
-        description: "Classify new-vs-modification against the map; refresh the high-level design.",
-        detail: SYSDESIGN_LIVE_ANALYZE,
-      },
-      {
-        slug: "questions",
-        title: "Surface follow-up questions",
-        description: "Keep 3–5 sharp questions current for the live interaction.",
-        detail: SYSDESIGN_LIVE_QUESTIONS,
+        slug: "slow-track",
+        title: "Slow track — render the diagram",
+        description: "Stability-gated: overlay deltas on the base, derive from the palette, proposed stubs for new things.",
+        detail: SYSDESIGN_LIVE_SLOW,
       },
       {
         slug: "finalize",
         title: "Finalize on call end",
-        description: "Promote the draft to durable items + diagrams; map --rebuild; record learnings.",
+        description: "Re-transcribe accurately, model the deferred stubs into durable items, map --rebuild, record learnings.",
         detail: SYSDESIGN_LIVE_FINALIZE,
       },
     ],

@@ -552,7 +552,7 @@ test("system-design carries the synthesize-map (design ⇄ code ⇄ docs ⇄ pla
   );
 });
 
-test("system-design carries the live-companion (on-a-call) sub-tree", async () => {
+test("system-design live-companion uses the two-track (derive-fast) design", async () => {
   const { workspaceRoot } = await workspace();
   await materializeBuiltin(workspaceRoot, "system-design");
   const units = await listInstructionUnits(workspaceRoot, "system-design");
@@ -561,12 +561,15 @@ test("system-design carries the live-companion (on-a-call) sub-tree", async () =
   const a = await loadAgent(workspaceRoot, "system-design");
   assert.match(a.instructions, /## Live companion mode/);
   assert.match(a.instructions, /### Set up the live session/);
-  assert.match(a.instructions, /### Watch the transcript/);
-  assert.match(a.instructions, /### Surface follow-up questions/);
-  // Rides the speaking module + the markdown live view.
+  assert.match(a.instructions, /### Fast track/);
+  assert.match(a.instructions, /### Slow track/);
+  // The two-track latency design + the derive-don't-generate rule.
+  assert.match(a.instructions, /derive, don't generate/i);
+  assert.match(a.instructions, /atelier design palette/);
+  assert.match(a.instructions, /stable for ~2 chunks/);
+  // Still rides the speaking module + the markdown live view.
   assert.match(a.instructions, /atelier session check/);
   assert.match(a.instructions, /atelier session watch/);
-  // Classifies new-vs-modification against the map.
   assert.match(a.instructions, /new vs modification/i);
 
   const paths = workspacePaths(workspaceRoot);
@@ -576,7 +579,7 @@ test("system-design carries the live-companion (on-a-call) sub-tree", async () =
       "system-design",
       "instructions",
       "live-companion",
-      "questions",
+      "fast-track",
       "detail.md"
     )
   );
