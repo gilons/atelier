@@ -10,6 +10,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { toolCommand } from "./design-tool.js";
 
 /** The agent's built-in default when no stability gate is configured. */
 const DEFAULT_STABILITY_CHUNKS = 2;
@@ -191,11 +192,11 @@ const liveCmd: Command = {
 
 export const designCommand: Command = {
   name: "design",
-  summary: "Design-engine helpers (palette + live-companion tuning).",
+  summary: "The design engine: tool selection, palette, and live-companion tuning.",
   description:
-    "Helpers for the system-design agent. `palette` emits the reusable\n" +
-    "vocabulary the agent composes from during live companion mode;\n" +
-    "`live` tunes the live two-track cadence.\n" +
-    "(To declare which design tool drives the work, see `design-tool`.)",
-  subcommands: [paletteCmd, liveCmd],
+    "Helpers for the system-design agent:\n" +
+    "  tool     — declare which platform drives the design work\n" +
+    "  palette  — the reusable vocabulary the agent composes from live\n" +
+    "  live     — tune the live companion's two-track cadence",
+  subcommands: [toolCommand, paletteCmd, liveCmd],
 };

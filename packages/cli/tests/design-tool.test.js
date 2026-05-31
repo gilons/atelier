@@ -26,10 +26,10 @@ async function setup() {
   return { umbrella, workspaceRoot };
 }
 
-test("design-tool show reports 'none' before anything is set", async () => {
+test("design tool show reports 'none' before anything is set", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
-    const result = runCli(["design-tool", "show"], workspaceRoot);
+    const result = runCli(["design", "tool", "show"], workspaceRoot);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /No system-design tool set/);
   } finally {
@@ -37,14 +37,14 @@ test("design-tool show reports 'none' before anything is set", async () => {
   }
 });
 
-test("design-tool set then show round-trips", async () => {
+test("design tool set then show round-trips", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
-    const set = runCli(["design-tool", "set", "figma", "--note", "file key ABC"], workspaceRoot);
+    const set = runCli(["design", "tool", "set", "figma", "--note", "file key ABC"], workspaceRoot);
     assert.equal(set.status, 0, `stderr: ${set.stderr}\nstdout: ${set.stdout}`);
     assert.match(set.stdout, /set to figma/);
 
-    const show = runCli(["design-tool", "show"], workspaceRoot);
+    const show = runCli(["design", "tool", "show"], workspaceRoot);
     assert.match(show.stdout, /figma/);
     assert.match(show.stdout, /file key ABC/);
 
@@ -56,14 +56,14 @@ test("design-tool set then show round-trips", async () => {
   }
 });
 
-test("design-tool clear removes the setting", async () => {
+test("design tool clear removes the setting", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
-    runCli(["design-tool", "set", "excalidraw"], workspaceRoot);
-    const clear = runCli(["design-tool", "clear"], workspaceRoot);
+    runCli(["design", "tool", "set", "excalidraw"], workspaceRoot);
+    const clear = runCli(["design", "tool", "clear"], workspaceRoot);
     assert.equal(clear.status, 0);
     assert.match(clear.stdout, /Cleared/);
-    const show = runCli(["design-tool", "show"], workspaceRoot);
+    const show = runCli(["design", "tool", "show"], workspaceRoot);
     assert.match(show.stdout, /No system-design tool set/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });

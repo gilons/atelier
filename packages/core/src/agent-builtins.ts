@@ -495,7 +495,7 @@ const SYSDESIGN_LIVE_SETUP = `Pre-flight before you go live.
    model + **stability gate** (how many stable chunks before the slow
    track renders); honor them, or use the defaults it prints.
 4. **Set up the view:**
-   - **Design tool connected** (\`atelier design-tool show\` / a \`design\`
+   - **Design tool connected** (\`atelier design tool show\` / a \`design\`
      source) → open/create the live diagram and **share its link** with
      the user now, so they watch it update in the tool.
    - **No tool (Markdown)** → seed the session's \`design-draft.md\` and
@@ -587,7 +587,7 @@ you learned back in so the next session starts smarter:
      run — a recurring question worth asking, a pattern this team uses
      — add/adjust an instruction unit
      (\`atelier agent instruction add system-design <slug> …\`).
-   - **Update config** if it changed (e.g. \`atelier design-tool set …\`
+   - **Update config** if it changed (e.g. \`atelier design tool set …\`
      if the team picked a tool mid-call).
    - \`atelier map --rebuild\` so the index reflects everything new.
 
@@ -597,7 +597,7 @@ what you parked, with the session id so it's traceable later via
 
 const SYSDESIGN_DETECT = `Find the configured system-design tool before doing anything else.
 
-- **Check the explicit setting first:** \`atelier design-tool show\`.
+- **Check the explicit setting first:** \`atelier design tool show\`.
   If it names a tool, that's authoritative — use it (and read its
   backing \`design\` source runbook if one is linked).
 - Otherwise run \`atelier source list\` and look for sources with
@@ -606,7 +606,7 @@ const SYSDESIGN_DETECT = `Find the configured system-design tool before doing an
   there.
 - If exactly one design source exists, use it. If several, ask which
   is the system-design tool, then pin it for next time:
-  \`atelier design-tool set <tool> --source <id>\`.
+  \`atelier design tool set <tool> --source <id>\`.
 - If none exists, go to "Onboard a design tool".
 - Read the chosen source's runbook (\`atelier source show <id>\`) to
   learn how to connect (MCP server name, browser tool, token env var).`;

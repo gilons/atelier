@@ -11,12 +11,12 @@ import type { Command } from "../command.js";
 import { ui } from "../ui.js";
 
 /**
- * `atelier design-tool` — declare the workspace's system-design tool.
+ * `atelier design tool` — declare the workspace's system-design tool.
  *
  * The system-design agent reads this to know what drives the design
  * work (Figma / Excalidraw / Lucidchart / … or "markdown"). It's an
  * explicit, queryable alternative to inferring from `design` sources +
- * the agent's learnings.
+ * the agent's learnings. Mounted as the `tool` subcommand of `design`.
  */
 
 async function resolveRoot(cwd: string): Promise<string | number> {
@@ -40,7 +40,7 @@ const showCmd: Command = {
 
     const cfg = await loadDesignConfig(root);
     if (!cfg || !cfg.tool) {
-      const hint = mode === "repl" ? "/design-tool set <tool>" : "atelier design-tool set <tool>";
+      const hint = mode === "repl" ? "/design tool set <tool>" : "atelier design tool set <tool>";
       ui.info("No system-design tool set.");
       ui.print(
         `  ${ui.dim(`The system-design agent will infer from \`design\` sources, else use Markdown.`)}`
@@ -76,7 +76,7 @@ const setCmd: Command = {
     const [tool] = positionals;
     if (!tool) {
       ui.error("Missing <tool> argument.");
-      ui.print(`  ${ui.dim('Usage: atelier design-tool set figma [--source <id>] [--note "..."]')}`);
+      ui.print(`  ${ui.dim('Usage: atelier design tool set figma [--source <id>] [--note "..."]')}`);
       return 2;
     }
     const root = await resolveRoot(cwd);
@@ -130,8 +130,8 @@ const clearCmd: Command = {
   },
 };
 
-export const designToolCommand: Command = {
-  name: "design-tool",
+export const toolCommand: Command = {
+  name: "tool",
   summary: "Declare the workspace's system-design tool (Figma / Excalidraw / …).",
   description:
     "The system-design agent reads this to know what drives the design\n" +

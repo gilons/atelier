@@ -148,7 +148,7 @@ async function writeDesignConfig(
     "Atelier system-design config for this workspace.\n" +
       "`tool` is what drives the design work; `live` tunes the live\n" +
       "companion (stability gate, live STT model). Manage with\n" +
-      "`atelier design-tool …` and `atelier design live …`."
+      "`atelier design tool …` and `atelier design live …`."
   );
 }
 

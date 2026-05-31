@@ -12,7 +12,6 @@ import { stakeholderCommand } from "./commands/stakeholder.js";
 import { agentCommand } from "./commands/agent.js";
 import { mapCommand } from "./commands/map.js";
 import { designCommand } from "./commands/design.js";
-import { designToolCommand } from "./commands/design-tool.js";
 import { discrepancyCommand } from "./commands/discrepancy.js";
 import { specCommand } from "./commands/spec.js";
 import { runRepl } from "./repl.js";
@@ -29,7 +28,6 @@ const registry: CommandRegistry = {
     agentCommand,
     mapCommand,
     designCommand,
-    designToolCommand,
     discrepancyCommand,
     specCommand,
   ],
