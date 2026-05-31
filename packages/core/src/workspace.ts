@@ -212,13 +212,17 @@ function renderWorkspaceReadme(name: string, description?: string): string {
   lines.push("## Layout");
   lines.push("");
   lines.push("- `workspace.yaml` — workspace metadata");
-  lines.push("- `sources.yaml` — documentation sources Atelier reads from");
+  lines.push("- `sources.yaml` — registered connectors (Notion, Jira, Figma, …); agents fetch, atelier doesn't");
   lines.push("- `repos.yaml` — code repositories registered with this workspace");
   lines.push("- `features/` — the feature map (one markdown file per feature)");
-  lines.push("- `docs/` — the doc map (one markdown file per indexed document, nested by source)");
+  lines.push("- `documentation/` — indexed doc summaries + links, nested by source");
+  lines.push("- `tickets/` — indexed tracker items (issues / epics), nested by source");
+  lines.push("- `designs/` — design artifacts, nested by discipline (system-design / ui-design / …)");
+  lines.push("- `sessions/` — recorded conversations (transcript + provenance)");
+  lines.push("- `stakeholders/` — people involved with the product");
+  lines.push("- `agents/` — agent definitions atelier authors (rendered into `.claude/`)");
+  lines.push("- `ui-adapters/` — bring-your-own UI framework adapters (YAML)");
   lines.push("- `discrepancies.yaml` — log of doc-vs-code mismatches");
-  lines.push("- `ui/` — the page map and per-page layout descriptions");
-  lines.push("- `issues/` — issue folders, one per planned change");
   lines.push("- `cache/` — local cache (gitignored)");
   lines.push("");
   lines.push("## Next steps");
@@ -230,11 +234,14 @@ function renderWorkspaceReadme(name: string, description?: string): string {
   lines.push("atelier repo add ../web");
   lines.push("```");
   lines.push("");
-  lines.push("Add a documentation source:");
+  lines.push("Register a source (a connector the agent drives), then index from it:");
   lines.push("");
   lines.push("```sh");
-  lines.push("atelier source add notion");
+  lines.push('atelier source register notion --name "Company Notion"');
+  lines.push("atelier doc add notion:<page-id> --title \"...\"");
   lines.push("```");
+  lines.push("");
+  lines.push("Generate a workspace map any time with `atelier map`.");
   lines.push("");
   return lines.join("\n");
 }
