@@ -56,6 +56,13 @@ export interface WorkspacePaths {
    * `private.md` is gitignored.
    */
   stakeholders: string;
+  /**
+   * `.atelier/agents/` — canonical agent definitions atelier authors
+   * for AI tools to discover. One folder per agent (agent.yaml +
+   * instructions.md + learnings.md). Rendered into `.claude/` via
+   * `atelier agent install`.
+   */
+  agents: string;
   /** `.atelier/discrepancies.yaml` — running discrepancy log */
   discrepanciesLog: string;
   /** `.atelier/issues/` — issue folders */
@@ -66,6 +73,13 @@ export interface WorkspacePaths {
   cache: string;
   /** `.atelier/README.md` — human entry-point */
   readme: string;
+  /**
+   * `<root>/.claude/` — the connected AI tool's extension directory.
+   * NOT inside `.atelier/`: it lives at the workspace root because
+   * that's where Claude Code looks. `atelier agent install` renders
+   * generated slash commands + subagents under here.
+   */
+  claudeDir: string;
 }
 
 /**
@@ -92,10 +106,12 @@ export function workspacePaths(
     sessions: path.join(atelier, "sessions"),
     items: path.join(atelier, "items"),
     stakeholders: path.join(atelier, "stakeholders"),
+    agents: path.join(atelier, "agents"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
     issues: path.join(atelier, "issues"),
     ui: path.join(atelier, "ui"),
     cache: path.join(atelier, "cache"),
     readme: path.join(atelier, "README.md"),
+    claudeDir: path.join(root, ".claude"),
   };
 }

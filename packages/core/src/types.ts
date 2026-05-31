@@ -487,6 +487,96 @@ export interface Stakeholder extends StakeholderFrontMatter {
 
 
 // ============================================================
+// Agents — atelier-authored playbooks that AI tools discover + run
+// ============================================================
+
+/**
+ * An agent atelier produces for a connected AI tool (Claude Code,
+ * …) to discover and run. Atelier itself never calls an LLM — it's
+ * the *author and registry* of agents; the AI tool is the runtime.
+ *
+ * Storage shape (folder per agent):
+ *
+ *   .atelier/agents/<id>/
+ *     agent.yaml        — these metadata fields.
+ *     instructions.md   — the agent's playbook / system prompt. This
+ *                         is the part that "self-improves": the agent
+ *                         (via the AI tool) refines it over time.
+ *     learnings.md      — append-only log of durable facts the agent
+ *                         discovered about THIS workspace ("planning
+ *                         lives in Linear", "design is Figma file X").
+ *                         Folded into the rendered artifact so the
+ *                         agent carries accumulated context next run.
+ *
+ * `atelier agent install <id>` renders the canonical def into
+ * Claude-discoverable files under `.claude/` (a slash command + a
+ * subagent). The canonical `.atelier/agents/` copy is the source of
+ * truth; the `.claude/` files are generated and re-rendered whenever
+ * instructions or learnings change.
+ */
+export interface AgentFrontMatter {
+  /** Slug id, unique within the workspace. Folder name on disk. */
+  id: string;
+  /** Display name. */
+  name: string;
+  /**
+   * Optional classification — "discovery", "system-design", or any
+   * free-form label. Lets list views group agents by what they do.
+   */
+  kind?: string;
+  /**
+   * One-line statement of what the agent is for. Rendered as the
+   * slash command's `description` frontmatter (what shows in the
+   * `/` menu).
+   */
+  purpose: string;
+  /**
+   * Richer "when should the AI delegate to this agent" text. Rendered
+   * as the subagent's `description` frontmatter, which drives Claude's
+   * auto-delegation. Falls back to {@link AgentFrontMatter.purpose}
+   * when empty.
+   */
+  description?: string;
+  /**
+   * Optional argument hint for the slash command (e.g. "[surface to
+   * focus on]"). Rendered as the command's `argument-hint`.
+   */
+  argumentHint?: string;
+  /**
+   * Tools the rendered artifacts are allowed to use (e.g. ["Bash",
+   * "Read"]). Rendered as `allowed-tools` (command) / `tools`
+   * (subagent). Omit to inherit all tools.
+   */
+  tools?: string[];
+  /**
+   * Model override for the rendered subagent ("sonnet" | "opus" |
+   * "haiku" | "inherit"). Omit to inherit the session model.
+   */
+  model?: string;
+  /**
+   * True for agents atelier ships as built-in templates (discovery,
+   * system-design). User-authored agents have this false/absent.
+   * Informational — lets list views badge built-ins.
+   */
+  builtin?: boolean;
+  /** Bumped each time the canonical def changes structurally. */
+  version: number;
+  /** ISO timestamp — when atelier first wrote this agent. */
+  createdAt: string;
+  /** ISO timestamp — most recent change to instructions/learnings/meta. */
+  updatedAt: string;
+}
+
+/** A loaded agent: metadata + playbook body + accumulated learnings. */
+export interface Agent extends AgentFrontMatter {
+  /** Body of instructions.md (the self-improving playbook). */
+  instructions: string;
+  /** Body of learnings.md (append-only workspace facts). May be empty. */
+  learnings: string;
+}
+
+
+// ============================================================
 // Discrepancy log (Slice 7 — schema only, detection in Phase 3)
 // ============================================================
 

@@ -13,6 +13,7 @@ import type {
   SessionFrontMatter,
   SessionStatus,
   StakeholderFrontMatter,
+  AgentFrontMatter,
   Discrepancy,
   DiscrepancyLog,
   DiscrepancySeverity,
@@ -710,6 +711,123 @@ export function validateStakeholderFrontMatter(
   if (Array.isArray(ownerships)) value.ownerships = ownerships as string[];
   if (summary !== undefined) value.summary = summary as string;
   if (Array.isArray(fromSessions)) value.fromSessions = fromSessions as string[];
+  return { ok: true, value, issues: [] };
+}
+
+// ============================================================
+// Agent front-matter (agent.yaml)
+// ============================================================
+
+// Same slug shape as features/stakeholders. Also constrains what the
+// rendered Claude subagent `name` can be (lowercase + hyphens).
+const AGENT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+const VALID_AGENT_MODELS: ReadonlySet<string> = new Set([
+  "sonnet",
+  "opus",
+  "haiku",
+  "inherit",
+]);
+
+export function validateAgentFrontMatter(
+  raw: unknown
+): ValidationResult<AgentFrontMatter> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return {
+      ok: false,
+      issues: [{ path: "$", message: "expected an object at the top level" }],
+    };
+  }
+  const {
+    id,
+    name,
+    kind,
+    purpose,
+    description,
+    argumentHint,
+    tools,
+    model,
+    builtin,
+    version,
+    createdAt,
+    updatedAt,
+  } = raw;
+
+  if (!isNonEmptyString(id)) {
+    pushIssue(issues, "$.id", "must be a non-empty string");
+  } else if (!AGENT_ID_PATTERN.test(id)) {
+    pushIssue(
+      issues,
+      "$.id",
+      'must be a lowercase slug — letters, digits, hyphens (e.g. "discovery")'
+    );
+  }
+  if (!isNonEmptyString(name)) {
+    pushIssue(issues, "$.name", "must be a non-empty string");
+  }
+  if (kind !== undefined && !isNonEmptyString(kind)) {
+    pushIssue(issues, "$.kind", "if present, must be a non-empty string");
+  }
+  if (!isNonEmptyString(purpose)) {
+    pushIssue(issues, "$.purpose", "must be a non-empty string (one-line statement of what the agent is for)");
+  }
+  if (description !== undefined && typeof description !== "string") {
+    pushIssue(issues, "$.description", "if present, must be a string");
+  }
+  if (argumentHint !== undefined && typeof argumentHint !== "string") {
+    pushIssue(issues, "$.argumentHint", "if present, must be a string");
+  }
+  if (tools !== undefined) {
+    if (!Array.isArray(tools)) {
+      pushIssue(issues, "$.tools", 'if present, must be a list of tool names (e.g. ["Bash","Read"])');
+    } else if (tools.some((t) => !isNonEmptyString(t))) {
+      pushIssue(issues, "$.tools", "every tool entry must be a non-empty string");
+    }
+  }
+  if (model !== undefined) {
+    if (!isNonEmptyString(model)) {
+      pushIssue(issues, "$.model", "if present, must be a non-empty string");
+    } else if (!VALID_AGENT_MODELS.has(model)) {
+      pushIssue(
+        issues,
+        "$.model",
+        `if present, must be one of: ${Array.from(VALID_AGENT_MODELS).join(", ")}`
+      );
+    }
+  }
+  if (builtin !== undefined && typeof builtin !== "boolean") {
+    pushIssue(issues, "$.builtin", "if present, must be a boolean");
+  }
+  if (
+    typeof version !== "number" ||
+    !Number.isInteger(version) ||
+    version < 1
+  ) {
+    pushIssue(issues, "$.version", "must be a positive integer");
+  }
+  if (!isNonEmptyString(createdAt)) {
+    pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
+  }
+  if (!isNonEmptyString(updatedAt)) {
+    pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+  const value: AgentFrontMatter = {
+    id: id as string,
+    name: name as string,
+    purpose: purpose as string,
+    version: version as number,
+    createdAt: createdAt as string,
+    updatedAt: updatedAt as string,
+  };
+  if (kind !== undefined) value.kind = kind as string;
+  if (description !== undefined) value.description = description as string;
+  if (argumentHint !== undefined) value.argumentHint = argumentHint as string;
+  if (Array.isArray(tools)) value.tools = tools as string[];
+  if (model !== undefined) value.model = model as string;
+  if (builtin !== undefined) value.builtin = builtin as boolean;
   return { ok: true, value, issues: [] };
 }
 
