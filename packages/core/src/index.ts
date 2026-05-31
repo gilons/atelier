@@ -24,6 +24,7 @@ export * from "./ui-routes.js";
 export * from "./ui-connections.js";
 export * from "./ui-kit.js";
 export * from "./ui-screens.js";
+export * from "./ui-overview.js";
 export * from "./sources.js";
 export * from "./sessions.js";
 export * from "./features.js";

@@ -220,6 +220,37 @@ test("design screens lists each app's screens grouped by section", async () => {
   }
 });
 
+test("design check gives a one-shot UI overview", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const mono = path.join(umbrella, "platform");
+    await write(path.join(mono, ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/platform.git\n');
+    await write(path.join(mono, "package.json"), '{"name":"platform","workspaces":["apps/*","packages/*"]}');
+    await write(path.join(mono, "packages", "ui", "package.json"), '{"name":"@acme/ui"}');
+    await write(path.join(mono, "packages", "ui", "components", "Button.tsx"), "");
+    await write(path.join(mono, "apps", "web", "package.json"), '{"name":"@acme/web","dependencies":{"next":"14","@acme/ui":"workspace:*"}}');
+    await write(path.join(mono, "apps", "web", "app", "page.tsx"), "");
+    await write(path.join(mono, "apps", "admin", "package.json"), '{"name":"@acme/admin","dependencies":{"astro":"4","@acme/ui":"workspace:*"}}');
+    await write(path.join(mono, "apps", "admin", "src", "pages", "index.astro"), "");
+    assert.equal(runCli(["repo", "add", "../platform"], workspaceRoot).status, 0);
+
+    const result = runCli(["design", "check"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /UI overview — 2 apps/);
+    assert.match(result.stdout, /Screens:/);
+    assert.match(result.stdout, /Connections:/);
+    assert.match(result.stdout, /Components:/);
+
+    const json = JSON.parse(runCli(["design", "check", "--json"], workspaceRoot).stdout);
+    assert.equal(json.apps.length, 2);
+    assert.equal(json.totalScreens, 2);
+    assert.equal(json.connections, 1);
+    assert.equal(json.designSystemConnections, 1);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

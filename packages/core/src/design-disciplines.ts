@@ -68,7 +68,10 @@ function UI_DESIGN_EXTRA_UNITS(): InstructionUnit[] {
 shapes: many apps across repos, one monorepo holding several apps, or
 separate projects each with their own UI.
 
-1. **Enumerate the apps first:** \`atelier design apps --json\` lists the
+0. **Get the lay of the land:** \`atelier design check\` is the one-shot
+   overview — apps + frameworks, screen counts, connections, and the
+   design-system kit. Start here, then drill in.
+1. **Enumerate the apps:** \`atelier design apps --json\` lists the
    frontend apps (Next.js / React / Vue / SvelteKit / …) across the
    registered repos. That's your inventory.
 2. For **each app**, build a **complete navigation map** — its routes /

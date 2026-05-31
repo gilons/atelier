@@ -7,6 +7,7 @@ import {
   detectConnections,
   detectUiKit,
   buildScreens,
+  buildUiOverview,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -116,6 +117,56 @@ const paletteCmd: Command = {
       ui.blank();
     }
     ui.print(`  ${ui.dim("A design agent references these by `ref` during live mode.")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+// ============================================================
+// design check — one-shot UI overview (all detectors)
+// ============================================================
+
+const checkCmd: Command = {
+  name: "check",
+  summary: "One-shot UI overview — apps, screens, connections, components, tokens.",
+  description:
+    "Runs every UI detector at once for the lay of the land: how many\n" +
+    "apps + their frameworks, total screens, cross-app connections, and\n" +
+    "the design-system kit (components + tokens). The ui-design agent\n" +
+    "reads this at the start of a cold run. --json for the agent.",
+  options: { json: { type: "boolean" } },
+  async run({ values, cwd, mode }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const o = await buildUiOverview(root);
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify(o, null, 2) + "\n");
+      return 0;
+    }
+    if (o.apps.length === 0) {
+      ui.info("No frontend apps detected.");
+      ui.print(`  ${ui.dim("Register the repos that hold your UI (`atelier repo add ../<dir>`), or run the discovery agent.")}`);
+      return 0;
+    }
+
+    ui.print(ui.bold(`UI overview — ${o.apps.length} app${o.apps.length === 1 ? "" : "s"}`));
+    const refW = Math.max(...o.apps.map((a) => a.ref.length));
+    const fwW = Math.max(...o.apps.map((a) => a.framework.length));
+    for (const a of o.apps) {
+      const screens = a.fileBased ? `${a.screens} screen${a.screens === 1 ? "" : "s"}` : "routing in code";
+      ui.print(`  ${ui.green("·")} ${ui.cyan(a.ref.padEnd(refW))}  ${a.framework.padEnd(fwW)}  ${ui.dim(screens)}`);
+    }
+    ui.blank();
+    ui.print(`  ${ui.dim("Screens:")}     ${o.totalScreens} total`);
+    ui.print(
+      `  ${ui.dim("Connections:")} ${o.connections}${o.designSystemConnections ? ` (${o.designSystemConnections} design system)` : ""}`
+    );
+    ui.print(`  ${ui.dim("Components:")}  ${o.componentSources} source${o.componentSources === 1 ? "" : "s"} (${o.totalComponents} components)`);
+    ui.print(`  ${ui.dim("Tokens:")}      ${o.tokenSources} source${o.tokenSources === 1 ? "" : "s"}`);
+    ui.blank();
+    const hint = mode === "repl" ? "/agent install ui-design" : "atelier agent install ui-design";
+    ui.print(`  ${ui.dim(`Drill in: design apps · nav · screens · connections · kit. Run the agent: \`${hint}\`.`)}`);
     ui.blank();
     return 0;
   },
@@ -581,6 +632,7 @@ export const designCommand: Command = {
     "custom), each sharing the same engine:\n" +
     "  discipline — list / add disciplines\n" +
     "  tool       — which platform drives a discipline\n" +
+    "  check      — one-shot UI overview (apps + screens + connections + kit)\n" +
     "  apps       — detect the frontend apps (the UI discovery entry)\n" +
     "  nav        — extract each app's routes (navigation map seed)\n" +
     "  screens    — the per-app screen inventory (design checklist)\n" +
@@ -588,5 +640,5 @@ export const designCommand: Command = {
     "  kit        — the UI building blocks (components + design tokens)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, toolCommand, checkCmd, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
 };
