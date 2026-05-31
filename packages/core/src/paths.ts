@@ -55,6 +55,12 @@ export interface WorkspacePaths {
   /** `.atelier/designs/` — design artifacts (nested by discipline) */
   designs: string;
   /**
+   * `.atelier/ui-adapters/` — user-authored UI framework adapters
+   * (one YAML per framework). The "bring your own UI framework" layer;
+   * built-in adapters live in code, these extend/override them.
+   */
+  uiAdapters: string;
+  /**
    * `.atelier/stakeholders/` — one folder per person involved with
    * the workspace's product. Shared `profile.md` lives in git;
    * `private.md` is gitignored.
@@ -111,6 +117,7 @@ export function workspacePaths(
     documentation: path.join(atelier, "documentation"),
     tickets: path.join(atelier, "tickets"),
     designs: path.join(atelier, "designs"),
+    uiAdapters: path.join(atelier, "ui-adapters"),
     stakeholders: path.join(atelier, "stakeholders"),
     agents: path.join(atelier, "agents"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
