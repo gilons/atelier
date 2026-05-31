@@ -92,12 +92,20 @@ separate projects each with their own UI.
       description: "When a tool is onboarded, render the cross-app connections; else capture in Mermaid.",
       detail: `Once a design tool is onboarded, **visually show how the apps connect
 to each other** — cross-app navigation, shared auth / session, deep
-links, a shared design system. Produce a **connections view** (apps as
-nodes, the links between them as edges) directly in the tool, and
-mirror a summary item into atelier. Without a tool yet, capture the
-connections in the navigation-map markdown (Mermaid). This whole-
-product picture is the thing a team rarely has in one place — lead with
-it.`,
+links, a shared design system.
+
+Start from \`atelier design connections --json\`: it infers the
+deterministic edges from the package graph — apps that share internal
+code (a shared design system, API client, auth lib), with the
+design-system ones flagged. Connections that live in URLs / deep links
+/ API calls aren't in there — read those from the apps' code yourself
+and add them.
+
+Produce a **connections view** (apps as nodes, the links between them
+as edges) directly in the tool, and mirror a summary item into atelier.
+Without a tool yet, capture the connections in the navigation-map
+markdown (Mermaid). This whole-product picture is the thing a team
+rarely has in one place — lead with it.`,
     },
     {
       slug: "multiple-boards",

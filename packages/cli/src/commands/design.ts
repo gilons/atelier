@@ -4,6 +4,7 @@ import {
   paletteSize,
   detectApps,
   detectNavigation,
+  detectConnections,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -199,6 +200,54 @@ const navCmd: Command = {
       ui.blank();
     }
     ui.print(`  ${ui.dim("The ui-design agent documents these as a navigation map + links to docs.")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+// ============================================================
+// design connections — how the apps connect (shared internal code)
+// ============================================================
+
+const connectionsCmd: Command = {
+  name: "connections",
+  summary: "Infer how the apps connect (shared internal/workspace packages).",
+  description:
+    "Reads the package graph to find apps that share internal code — a\n" +
+    "shared design system, API client, or auth lib. Those are the\n" +
+    "deterministic edges in the 'how do the apps connect' view; the\n" +
+    "ui-design agent renders them in the tool. Connections that live in\n" +
+    "URLs / deep links / APIs aren't inferable here — the agent reads\n" +
+    "those from code. --json for the agent.",
+  options: { json: { type: "boolean" } },
+  async run({ values, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const graph = await detectConnections(root);
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify(graph, null, 2) + "\n");
+      return 0;
+    }
+    if (graph.apps.length === 0) {
+      ui.info("No frontend apps detected.");
+      return 0;
+    }
+    if (graph.edges.length === 0) {
+      ui.info(`No shared internal code across the ${graph.apps.length} app(s).`);
+      ui.print(
+        `  ${ui.dim("Apps may still connect via URLs / APIs — the ui-design agent reads those from code.")}`
+      );
+      return 0;
+    }
+    ui.print(ui.bold("Connections (apps sharing internal code)"));
+    for (const e of graph.edges) {
+      const tag = e.designSystem ? ui.cyan(" [design system]") : "";
+      ui.print(`  ${ui.green("·")} ${e.package}${tag}`);
+      ui.print(`      ${ui.dim(e.apps.join("  ·  "))}`);
+    }
+    ui.blank();
+    ui.print(`  ${ui.dim("The ui-design agent renders these as the connected-apps view (`design discipline`: ui-design).")}`);
     ui.blank();
     return 0;
   },
@@ -430,7 +479,8 @@ export const designCommand: Command = {
     "  tool       — which platform drives a discipline\n" +
     "  apps       — detect the frontend apps (the UI discovery entry)\n" +
     "  nav        — extract each app's routes (navigation map seed)\n" +
+    "  connections— how the apps connect (shared internal code)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, connectionsCmd, paletteCmd, liveCmd],
 };

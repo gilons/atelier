@@ -146,6 +146,31 @@ test("design nav extracts an app's routes", async () => {
   }
 });
 
+test("design connections infers shared-code edges between apps", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const mono = path.join(umbrella, "platform");
+    await write(path.join(mono, ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/platform.git\n');
+    await write(path.join(mono, "package.json"), '{"name":"platform","workspaces":["apps/*","packages/*"]}');
+    await write(path.join(mono, "packages", "ui", "package.json"), '{"name":"@acme/ui"}');
+    await write(path.join(mono, "apps", "web", "package.json"), '{"name":"@acme/web","dependencies":{"next":"14","@acme/ui":"workspace:*"}}');
+    await write(path.join(mono, "apps", "admin", "package.json"), '{"name":"@acme/admin","dependencies":{"react":"18","@acme/ui":"workspace:*"}}');
+    assert.equal(runCli(["repo", "add", "../platform"], workspaceRoot).status, 0);
+
+    const result = runCli(["design", "connections"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /@acme\/ui/);
+    assert.match(result.stdout, /design system/);
+
+    const json = JSON.parse(runCli(["design", "connections", "--json"], workspaceRoot).stdout);
+    const edge = json.edges.find((e) => e.package === "@acme/ui");
+    assert.ok(edge && edge.designSystem === true);
+    assert.equal(edge.apps.length, 2);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

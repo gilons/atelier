@@ -21,6 +21,7 @@ export * from "./discovery.js";
 export * from "./project-inspect.js";
 export * from "./ui-apps.js";
 export * from "./ui-routes.js";
+export * from "./ui-connections.js";
 export * from "./sources.js";
 export * from "./sessions.js";
 export * from "./features.js";
