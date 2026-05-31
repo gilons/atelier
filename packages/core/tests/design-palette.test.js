@@ -94,6 +94,17 @@ test("buildDesignPalette derives subsystems, features, designs, owners with stab
   await fs.rm(umbrella, { recursive: true, force: true });
 });
 
+test("buildDesignPalette includes detected frontend apps", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  await write(path.join(umbrella, "web", ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/web.git\n');
+  await write(path.join(umbrella, "web", "package.json"), '{"name":"web","dependencies":{"next":"14"}}');
+  await addRepo(workspaceRoot, { pathInput: "../web", cwd: workspaceRoot });
+
+  const palette = await buildDesignPalette(workspaceRoot, { discipline: "ui-design" });
+  assert.ok(palette.apps.some((a) => a.ref === "app:web" && a.kind === "app"));
+  await fs.rm(umbrella, { recursive: true, force: true });
+});
+
 test("buildDesignPalette skips repos that aren't cloned locally", async () => {
   const { workspaceRoot } = await workspace();
   // Register a repo whose local dir doesn't exist.

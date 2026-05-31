@@ -34,6 +34,83 @@ export interface DisciplineSpec {
   toolExamples: string;
   /** True for atelier's built-in disciplines. */
   builtin?: boolean;
+  /**
+   * Optional discipline-specific instruction units, spliced into the
+   * tree after "initial design". Lets a discipline add its own
+   * mechanics (e.g. UI's app navigation map) on top of the shared
+   * engine without forking the template.
+   */
+  extraUnits?: InstructionUnit[];
+  /**
+   * Optional note appended to the live-companion setup unit — e.g.
+   * UI's "sketch into a separate draft project, not the main board".
+   */
+  liveDraftNote?: string;
+}
+
+// ============================================================
+// UI-design — discipline-specific units
+// ============================================================
+
+/**
+ * UI design's specialization on top of the shared engine: applications
+ * are the discovery entry, each gets a documented navigation map, the
+ * apps' connections are shown in the tool, and multiple design boards
+ * (one per app/project) are first-class.
+ */
+function UI_DESIGN_EXTRA_UNITS(): InstructionUnit[] {
+  return [
+    {
+      slug: "app-navigation-map",
+      title: "Applications & navigation maps",
+      description: "Enumerate apps (design apps); map each app's navigation; document + link to docs.",
+      detail: `UI work is organized by **application**, and a workspace comes in
+shapes: many apps across repos, one monorepo holding several apps, or
+separate projects each with their own UI.
+
+1. **Enumerate the apps first:** \`atelier design apps --json\` lists the
+   frontend apps (Next.js / React / Vue / SvelteKit / …) across the
+   registered repos. That's your inventory.
+2. For **each app**, build a **complete navigation map** — its routes /
+   screens and how you move between them — and **document it as a
+   ui-design item** (\`atelier item add <source>:<id> --title "<app> —
+   navigation" --classification ui-design\`), **linking to existing
+   documentation** in the system (docRefs on the feature/item).
+3. Do this **even without visuals** — the map + doc links come first.
+   Visuals are added progressively (as you onboard a feature). Most
+   screen designs **already exist** in the design tool — **connect to
+   them and build on top**, don't redraw. When useful, split a screen
+   set into its own ui-design item, or a new project.`,
+    },
+    {
+      slug: "connected-apps",
+      title: "Show how applications connect",
+      description: "When a tool is onboarded, render the cross-app connections; else capture in Mermaid.",
+      detail: `Once a design tool is onboarded, **visually show how the apps connect
+to each other** — cross-app navigation, shared auth / session, deep
+links, a shared design system. Produce a **connections view** (apps as
+nodes, the links between them as edges) directly in the tool, and
+mirror a summary item into atelier. Without a tool yet, capture the
+connections in the navigation-map markdown (Mermaid). This whole-
+product picture is the thing a team rarely has in one place — lead with
+it.`,
+    },
+    {
+      slug: "multiple-boards",
+      title: "Multiple design boards / sources",
+      description: "Account for one board per app/project; map each app to its board.",
+      detail: `Companies often run **multiple UI design boards** — one per app or
+project. Account for that:
+
+- Register **each board as its own \`design\` source\`** (the company may
+  have several).
+- **Map each app to its board** — note it in the app's ui-design item
+  and the source's runbook.
+- \`atelier design tool set <tool> --discipline ui-design\` records the
+  default board; when apps use different boards, record the per-app
+  board on the item. Never assume a single board for everything.`,
+    },
+  ];
 }
 
 // ============================================================
@@ -54,10 +131,16 @@ export const BUILTIN_DISCIPLINES: readonly DisciplineSpec[] = [
     id: "ui-design",
     name: "UI Design",
     designs: "user interfaces",
-    artifacts: "screens, user flows, components, and design tokens",
-    units: "screens / flows / surfaces",
+    artifacts: "applications, navigation maps, screens, flows, components, and design tokens",
+    units: "applications (across repos / a monorepo / separate projects)",
     toolExamples: "Figma / Sketch / Penpot",
     builtin: true,
+    liveDraftNote:
+      "**UI live preview is a separate draft, never the main board.** " +
+      "Create a separate draft project / page in the design tool (or a " +
+      "separate design-draft.md) and sketch there during the call — " +
+      "promote into the main board only at finalize, if the user approves.",
+    extraUnits: UI_DESIGN_EXTRA_UNITS(),
   },
 ];
 
@@ -274,7 +357,9 @@ trade-offs behind them. Tie each piece to the features it implements
 discrepancies so they aren't lost. Keep everything in the title +
 one-line-description index shape.`;
 
-  return [
+  const setupDetail = spec.liveDraftNote ? `${liveSetup}\n\n${spec.liveDraftNote}` : liveSetup;
+
+  const units: InstructionUnit[] = [
     {
       slug: "overview",
       title: `Overview — ${spec.name} as a design discipline`,
@@ -311,6 +396,8 @@ one-line-description index shape.`;
       description: `Cold-start: enumerate ${spec.units}, analyze, document, diagram.`,
       detail: bootstrap,
     },
+    // Discipline-specific units (e.g. UI's app navigation map) splice in here.
+    ...(spec.extraUnits ?? []),
     {
       slug: "refresh-design",
       title: "Refresh an existing design (diff, don't rebuild)",
@@ -329,7 +416,7 @@ one-line-description index shape.`;
       description: `Derive-fast, two-track: keep a live draft + follow-up questions.`,
       detail: liveOverview,
       children: [
-        { slug: "setup", title: "Set up the live session", description: "Load the palette, set up the view + anchor.", detail: liveSetup },
+        { slug: "setup", title: "Set up the live session", description: "Load the palette, set up the view + anchor.", detail: setupDetail },
         { slug: "loop", title: "The two-track loop", description: "Fast track every chunk; gated slow-track render.", detail: liveLoop },
         { slug: "finalize", title: "Finalize on call end", description: "Prompt: fold into design / new spec / park; then improve the engine.", detail: liveFinalize },
       ],
@@ -341,6 +428,7 @@ one-line-description index shape.`;
       detail: deliverables,
     },
   ];
+  return units;
 }
 
 /** Metadata for the agent generated from a discipline spec. */

@@ -552,6 +552,32 @@ test("system-design carries the synthesize-map (design ⇄ code ⇄ docs ⇄ pla
   );
 });
 
+test("ui-design ships from the shared template with UI-specific specialization", async () => {
+  const { workspaceRoot } = await workspace();
+  assert.ok(findBuiltinAgent("ui-design"));
+  await materializeBuiltin(workspaceRoot, "ui-design");
+  const units = await listInstructionUnits(workspaceRoot, "ui-design");
+  const slugs = units.map((u) => u.slug);
+  // Shared engine units…
+  for (const s of ["overview", "detect-tool", "onboard-tool", "initial-design", "refresh-design", "live-companion", "deliverables"]) {
+    assert.ok(slugs.includes(s), `missing shared unit ${s}`);
+  }
+  // …plus UI-specific units.
+  assert.ok(slugs.includes("app-navigation-map"));
+  assert.ok(slugs.includes("connected-apps"));
+  assert.ok(slugs.includes("multiple-boards"));
+
+  const a = await loadAgent(workspaceRoot, "ui-design");
+  // Apps are the discovery entry; live preview is a separate draft.
+  assert.match(a.instructions, /atelier design apps/);
+  assert.match(a.instructions, /navigation map/i);
+  assert.match(a.instructions, /separate draft/i);
+  assert.match(a.instructions, /multiple UI design boards/i);
+  // Still the discipline-scoped engine.
+  assert.match(a.instructions, /--discipline ui-design/);
+  assert.match(a.instructions, /## Live companion mode/);
+});
+
 test("system-design carries the refresh (diff-don't-rebuild) sub-tree", async () => {
   const { workspaceRoot } = await workspace();
   await materializeBuiltin(workspaceRoot, "system-design");

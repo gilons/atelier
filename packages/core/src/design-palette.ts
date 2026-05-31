@@ -1,4 +1,5 @@
 import { inspectProjects } from "./project-inspect.js";
+import { detectApps } from "./ui-apps.js";
 import { listFeatures } from "./features.js";
 import { listItems } from "./items.js";
 import { listStakeholders } from "./stakeholders.js";
@@ -30,8 +31,8 @@ export interface PaletteEntry {
    *   owner     → "stakeholder:<id>"
    */
   ref: string;
-  /** "subsystem" | "feature" | "design" | "owner". */
-  kind: "subsystem" | "feature" | "design" | "owner";
+  /** "subsystem" | "app" | "feature" | "design" | "owner". */
+  kind: "subsystem" | "app" | "feature" | "design" | "owner";
   /** Display name. */
   name: string;
   /** One-line descriptor. */
@@ -41,9 +42,11 @@ export interface PaletteEntry {
 export interface DesignPalette {
   /** Deployable/runnable units derived from registered repos. */
   subsystems: PaletteEntry[];
+  /** Frontend applications detected across the repos (UI discovery entry). */
+  apps: PaletteEntry[];
   /** Capabilities from the feature map. */
   features: PaletteEntry[];
-  /** Existing system-design artifacts (items classified system-design). */
+  /** Existing design artifacts for the discipline (items classified accordingly). */
   designs: PaletteEntry[];
   /** People who own parts of the system. */
   owners: PaletteEntry[];
@@ -113,6 +116,12 @@ export async function buildDesignPalette(
     }
   }
 
+  const apps: PaletteEntry[] = [];
+  const detectedApps = await detectApps(workspaceRoot).catch(() => []);
+  for (const a of detectedApps) {
+    apps.push({ ref: a.ref, kind: "app", name: a.name, description: a.framework });
+  }
+
   const features: PaletteEntry[] = [];
   const { features: feats } = await listFeatures(workspaceRoot).catch(() => ({ features: [] as Awaited<ReturnType<typeof listFeatures>>["features"] }));
   for (const { feature } of feats) {
@@ -150,10 +159,16 @@ export async function buildDesignPalette(
     });
   }
 
-  return { subsystems, features, designs, owners };
+  return { subsystems, apps, features, designs, owners };
 }
 
 /** Total number of entries across all sections. */
 export function paletteSize(p: DesignPalette): number {
-  return p.subsystems.length + p.features.length + p.designs.length + p.owners.length;
+  return (
+    p.subsystems.length +
+    p.apps.length +
+    p.features.length +
+    p.designs.length +
+    p.owners.length
+  );
 }

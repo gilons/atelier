@@ -2,6 +2,7 @@ import {
   requireWorkspaceRoot,
   buildDesignPalette,
   paletteSize,
+  detectApps,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -56,6 +57,7 @@ async function resolveRoot(cwd: string): Promise<string | number> {
 
 const SECTION_LABELS: Record<keyof DesignPalette, string> = {
   subsystems: "Subsystems",
+  apps: "Apps",
   features: "Features",
   designs: "Existing designs",
   owners: "Owners",
@@ -96,7 +98,7 @@ const paletteCmd: Command = {
       return 0;
     }
 
-    for (const key of ["subsystems", "features", "designs", "owners"] as (keyof DesignPalette)[]) {
+    for (const key of ["apps", "subsystems", "features", "designs", "owners"] as (keyof DesignPalette)[]) {
       const entries = palette[key];
       if (entries.length === 0) continue;
       const label = key === "designs" ? `Existing designs (${discipline})` : SECTION_LABELS[key];
@@ -108,6 +110,46 @@ const paletteCmd: Command = {
       ui.blank();
     }
     ui.print(`  ${ui.dim("A design agent references these by `ref` during live mode.")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+// ============================================================
+// design apps — the UI discovery entry
+// ============================================================
+
+const appsCmd: Command = {
+  name: "apps",
+  summary: "Detect the frontend applications across the workspace's repos.",
+  description:
+    "UI work is organized by application. This deterministically lists\n" +
+    "the frontend apps (Next.js / React / Vue / SvelteKit / Angular /\n" +
+    "Astro / Nuxt / React Native / …) across all registered repos — the\n" +
+    "discovery entry the ui-design agent starts from. Handles the shapes\n" +
+    "a workspace comes in: many apps across repos, one monorepo of apps,\n" +
+    "or several separate projects. --json for the agent.",
+  options: { json: { type: "boolean" } },
+  async run({ values, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const apps = await detectApps(root);
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify({ apps }, null, 2) + "\n");
+      return 0;
+    }
+    if (apps.length === 0) {
+      ui.info("No frontend apps detected.");
+      ui.print(`  ${ui.dim("Register the repos that hold your UI (`atelier repo add ../<dir>`).")}`);
+      return 0;
+    }
+    const refWidth = Math.max(...apps.map((a) => a.ref.length));
+    for (const a of apps) {
+      ui.print(`  ${ui.green("·")} ${ui.cyan(a.ref.padEnd(refWidth))}  ${a.name}  ${ui.dim(a.framework)}`);
+    }
+    ui.blank();
+    ui.print(`  ${ui.dim("The ui-design agent maps each app's navigation + connects them. `atelier agent install ui-design`.")}`);
     ui.blank();
     return 0;
   },
@@ -337,7 +379,8 @@ export const designCommand: Command = {
     "custom), each sharing the same engine:\n" +
     "  discipline — list / add disciplines\n" +
     "  tool       — which platform drives a discipline\n" +
+    "  apps       — detect the frontend apps (the UI discovery entry)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, toolCommand, appsCmd, paletteCmd, liveCmd],
 };

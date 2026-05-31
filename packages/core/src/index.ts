@@ -19,6 +19,7 @@ export * from "./repos.js";
 export * from "./git-hosts.js";
 export * from "./discovery.js";
 export * from "./project-inspect.js";
+export * from "./ui-apps.js";
 export * from "./sources.js";
 export * from "./sessions.js";
 export * from "./features.js";

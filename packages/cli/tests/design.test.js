@@ -104,6 +104,25 @@ test("atelier design live set rejects a bad gate", async () => {
   }
 });
 
+test("design apps detects the workspace's frontend apps", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    await write(path.join(umbrella, "web", ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/web.git\n');
+    await write(path.join(umbrella, "web", "package.json"), '{"name":"web","dependencies":{"next":"14"}}');
+    assert.equal(runCli(["repo", "add", "../web"], workspaceRoot).status, 0);
+
+    const result = runCli(["design", "apps"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /app:web/);
+    assert.match(result.stdout, /Next\.js/);
+
+    const json = JSON.parse(runCli(["design", "apps", "--json"], workspaceRoot).stdout);
+    assert.ok(json.apps.some((a) => a.ref === "app:web" && a.framework === "Next.js"));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
