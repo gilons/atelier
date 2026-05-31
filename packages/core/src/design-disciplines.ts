@@ -108,6 +108,27 @@ markdown (Mermaid). This whole-product picture is the thing a team
 rarely has in one place — lead with it.`,
     },
     {
+      slug: "design-system",
+      title: "Design system — components & tokens",
+      description: "Inventory the component sources + design tokens; compose screens from them.",
+      detail: `Inventory the reusable UI building blocks before designing screens —
+they're your "derive, don't reinvent" vocabulary.
+
+- \`atelier design kit --json\` lists the **component sources** (the
+  dirs / packages where components live, with counts + sample names)
+  and the **design-token sources** (Tailwind config, tokens.json,
+  theme files) across the workspace.
+- Connect the **design tool's** component library + token styles to
+  these **code sources** — they should be the same system, named the
+  same way. Flag drift (a token in the tool that's not in code, or
+  vice-versa) as a discrepancy.
+- When you design or sketch a screen, **compose from the existing
+  components + tokens** (reference them by name), don't invent new ones
+  unless the screen genuinely needs them.
+- Document the design system itself as a ui-design item, linking the
+  code sources + the tool's library.`,
+    },
+    {
       slug: "multiple-boards",
       title: "Multiple design boards / sources",
       description: "Account for one board per app/project; map each app to its board.",

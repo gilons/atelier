@@ -5,6 +5,7 @@ import {
   detectApps,
   detectNavigation,
   detectConnections,
+  detectUiKit,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -60,6 +61,8 @@ async function resolveRoot(cwd: string): Promise<string | number> {
 const SECTION_LABELS: Record<keyof DesignPalette, string> = {
   subsystems: "Subsystems",
   apps: "Apps",
+  components: "Components",
+  tokens: "Design tokens",
   features: "Features",
   designs: "Existing designs",
   owners: "Owners",
@@ -100,7 +103,7 @@ const paletteCmd: Command = {
       return 0;
     }
 
-    for (const key of ["apps", "subsystems", "features", "designs", "owners"] as (keyof DesignPalette)[]) {
+    for (const key of ["apps", "components", "tokens", "subsystems", "features", "designs", "owners"] as (keyof DesignPalette)[]) {
       const entries = palette[key];
       if (entries.length === 0) continue;
       const label = key === "designs" ? `Existing designs (${discipline})` : SECTION_LABELS[key];
@@ -248,6 +251,56 @@ const connectionsCmd: Command = {
     }
     ui.blank();
     ui.print(`  ${ui.dim("The ui-design agent renders these as the connected-apps view (`design discipline`: ui-design).")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+// ============================================================
+// design kit — the UI building blocks (components + tokens)
+// ============================================================
+
+const kitCmd: Command = {
+  name: "kit",
+  summary: "Detect the UI building blocks — component sources + design tokens.",
+  description:
+    "Reads the reusable UI vocabulary from code: where components live\n" +
+    "(component dirs across apps + shared packages, with counts +\n" +
+    "samples) and where design tokens live (Tailwind config, tokens.json,\n" +
+    "theme files). The ui-design live companion composes screens from\n" +
+    "these — reference an existing component / token, don't reinvent one.\n" +
+    "--json for the agent.",
+  options: { json: { type: "boolean" } },
+  async run({ values, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const kit = await detectUiKit(root);
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify(kit, null, 2) + "\n");
+      return 0;
+    }
+    if (kit.components.length === 0 && kit.tokens.length === 0) {
+      ui.info("No components or design tokens detected.");
+      ui.print(`  ${ui.dim("Register the repos that hold your UI; component dirs + token configs are picked up automatically.")}`);
+      return 0;
+    }
+    if (kit.components.length > 0) {
+      ui.print(ui.bold(`Component sources (${kit.components.length})`));
+      for (const c of kit.components) {
+        const samples = c.samples.length > 0 ? `  ${ui.dim(c.samples.slice(0, 4).join(", "))}` : "";
+        ui.print(`  ${ui.green("·")} ${ui.cyan(c.ref)}  ${ui.dim(c.count + " components")}${samples}`);
+      }
+      ui.blank();
+    }
+    if (kit.tokens.length > 0) {
+      ui.print(ui.bold(`Design tokens (${kit.tokens.length})`));
+      for (const t of kit.tokens) {
+        ui.print(`  ${ui.green("·")} ${ui.cyan(t.ref)}  ${ui.dim(t.kind)}`);
+      }
+      ui.blank();
+    }
+    ui.print(`  ${ui.dim("The ui-design agent composes screens from these (derive, don't reinvent).")}`);
     ui.blank();
     return 0;
   },
@@ -480,7 +533,8 @@ export const designCommand: Command = {
     "  apps       — detect the frontend apps (the UI discovery entry)\n" +
     "  nav        — extract each app's routes (navigation map seed)\n" +
     "  connections— how the apps connect (shared internal code)\n" +
+    "  kit        — the UI building blocks (components + design tokens)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, connectionsCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
 };

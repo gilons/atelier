@@ -565,6 +565,7 @@ test("ui-design ships from the shared template with UI-specific specialization",
   // …plus UI-specific units.
   assert.ok(slugs.includes("app-navigation-map"));
   assert.ok(slugs.includes("connected-apps"));
+  assert.ok(slugs.includes("design-system"));
   assert.ok(slugs.includes("multiple-boards"));
 
   const a = await loadAgent(workspaceRoot, "ui-design");

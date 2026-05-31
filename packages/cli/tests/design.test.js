@@ -171,6 +171,32 @@ test("design connections infers shared-code edges between apps", async () => {
   }
 });
 
+test("design kit detects component sources + design tokens", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const repo = path.join(umbrella, "platform");
+    await write(path.join(repo, ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/platform.git\n');
+    await write(path.join(repo, "package.json"), '{"name":"@acme/ui"}');
+    await write(path.join(repo, "src", "components", "Button.tsx"), "export const Button=()=>null");
+    await write(path.join(repo, "src", "components", "Card.tsx"), "export const Card=()=>null");
+    await write(path.join(repo, "tailwind.config.ts"), "export default {}");
+    assert.equal(runCli(["repo", "add", "../platform"], workspaceRoot).status, 0);
+
+    const result = runCli(["design", "kit"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /Component sources/);
+    assert.match(result.stdout, /Button/);
+    assert.match(result.stdout, /Design tokens/);
+    assert.match(result.stdout, /tailwind/);
+
+    const json = JSON.parse(runCli(["design", "kit", "--json"], workspaceRoot).stdout);
+    assert.ok(json.components.some((c) => c.dir.endsWith("src/components") && c.count === 2));
+    assert.ok(json.tokens.some((t) => t.kind === "tailwind"));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

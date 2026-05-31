@@ -1,5 +1,6 @@
 import { inspectProjects } from "./project-inspect.js";
 import { detectApps } from "./ui-apps.js";
+import { detectUiKit } from "./ui-kit.js";
 import { listFeatures } from "./features.js";
 import { listItems } from "./items.js";
 import { listStakeholders } from "./stakeholders.js";
@@ -31,8 +32,8 @@ export interface PaletteEntry {
    *   owner     → "stakeholder:<id>"
    */
   ref: string;
-  /** "subsystem" | "app" | "feature" | "design" | "owner". */
-  kind: "subsystem" | "app" | "feature" | "design" | "owner";
+  /** "subsystem" | "app" | "component" | "token" | "feature" | "design" | "owner". */
+  kind: "subsystem" | "app" | "component" | "token" | "feature" | "design" | "owner";
   /** Display name. */
   name: string;
   /** One-line descriptor. */
@@ -44,6 +45,10 @@ export interface DesignPalette {
   subsystems: PaletteEntry[];
   /** Frontend applications detected across the repos (UI discovery entry). */
   apps: PaletteEntry[];
+  /** Reusable component sources (dirs/packages of components). */
+  components: PaletteEntry[];
+  /** Design-token sources (Tailwind config, tokens.json, theme files). */
+  tokens: PaletteEntry[];
   /** Capabilities from the feature map. */
   features: PaletteEntry[];
   /** Existing design artifacts for the discipline (items classified accordingly). */
@@ -122,6 +127,27 @@ export async function buildDesignPalette(
     apps.push({ ref: a.ref, kind: "app", name: a.name, description: a.framework });
   }
 
+  const components: PaletteEntry[] = [];
+  const tokens: PaletteEntry[] = [];
+  const kit = await detectUiKit(workspaceRoot).catch(() => ({ components: [], tokens: [] }));
+  for (const c of kit.components) {
+    const sample = c.samples.length > 0 ? `: ${c.samples.slice(0, 4).join(", ")}…` : "";
+    components.push({
+      ref: c.ref,
+      kind: "component",
+      name: c.dir,
+      description: truncate(`${c.count} component${c.count === 1 ? "" : "s"}${sample}`),
+    });
+  }
+  for (const t of kit.tokens) {
+    tokens.push({
+      ref: t.ref,
+      kind: "token",
+      name: t.file,
+      description: t.kind,
+    });
+  }
+
   const features: PaletteEntry[] = [];
   const { features: feats } = await listFeatures(workspaceRoot).catch(() => ({ features: [] as Awaited<ReturnType<typeof listFeatures>>["features"] }));
   for (const { feature } of feats) {
@@ -159,7 +185,7 @@ export async function buildDesignPalette(
     });
   }
 
-  return { subsystems, apps, features, designs, owners };
+  return { subsystems, apps, components, tokens, features, designs, owners };
 }
 
 /** Total number of entries across all sections. */
@@ -167,6 +193,8 @@ export function paletteSize(p: DesignPalette): number {
   return (
     p.subsystems.length +
     p.apps.length +
+    p.components.length +
+    p.tokens.length +
     p.features.length +
     p.designs.length +
     p.owners.length
