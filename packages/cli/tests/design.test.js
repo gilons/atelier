@@ -197,6 +197,29 @@ test("design kit detects component sources + design tokens", async () => {
   }
 });
 
+test("design screens lists each app's screens grouped by section", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    await write(path.join(umbrella, "web", ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/web.git\n');
+    await write(path.join(umbrella, "web", "package.json"), '{"name":"web","dependencies":{"next":"14"}}');
+    await write(path.join(umbrella, "web", "app", "page.tsx"), "");
+    await write(path.join(umbrella, "web", "app", "blog", "[slug]", "page.tsx"), "");
+    assert.equal(runCli(["repo", "add", "../web"], workspaceRoot).status, 0);
+
+    const result = runCli(["design", "screens"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /app:web/);
+    assert.match(result.stdout, /Home/);
+    assert.match(result.stdout, /blog \/ \[slug\]/);
+
+    const json = JSON.parse(runCli(["design", "screens", "--json"], workspaceRoot).stdout);
+    assert.equal(json.apps[0].total, 2);
+    assert.ok(json.apps[0].sections.some((s) => s.section === "blog"));
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

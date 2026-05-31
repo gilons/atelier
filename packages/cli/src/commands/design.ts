@@ -6,6 +6,7 @@ import {
   detectNavigation,
   detectConnections,
   detectUiKit,
+  buildScreens,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -251,6 +252,56 @@ const connectionsCmd: Command = {
     }
     ui.blank();
     ui.print(`  ${ui.dim("The ui-design agent renders these as the connected-apps view (`design discipline`: ui-design).")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+// ============================================================
+// design screens — the screen inventory (design checklist)
+// ============================================================
+
+const screensCmd: Command = {
+  name: "screens",
+  summary: "The per-app screen inventory (routes → screens to design).",
+  description:
+    "Reframes each app's routes as the screens it needs designed,\n" +
+    "grouped by section — the deterministic checklist the design tool\n" +
+    "should have a frame for. The ui-design agent uses it to find gaps\n" +
+    "(screens with no frame) and drift. Pass an app to scope to one;\n" +
+    "--json for the agent.",
+  positionals: ["app?"],
+  options: { json: { type: "boolean" } },
+  async run({ values, positionals, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const screens = await buildScreens(root, { app: positionals[0] });
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify({ apps: screens }, null, 2) + "\n");
+      return 0;
+    }
+    if (screens.length === 0) {
+      ui.info("No frontend apps detected.");
+      return 0;
+    }
+    for (const a of screens) {
+      ui.print(`${ui.bold(a.app.ref)}  ${ui.dim(a.app.framework)}  ${ui.dim(a.total + " screen" + (a.total === 1 ? "" : "s"))}`);
+      if (!a.fileBased) {
+        ui.print(`  ${ui.dim("(routing is in code — the ui-design agent enumerates screens)")}`);
+      } else if (a.total === 0) {
+        ui.print(`  ${ui.dim("(no screens found)")}`);
+      } else {
+        for (const s of a.sections) {
+          ui.print(`  ${ui.dim(s.section)}`);
+          for (const sc of s.screens) {
+            ui.print(`    ${ui.green("·")} ${sc.label}  ${ui.dim(sc.route)}${sc.dynamic ? ui.dim("  (dynamic)") : ""}`);
+          }
+        }
+      }
+      ui.blank();
+    }
+    ui.print(`  ${ui.dim("The ui-design agent ensures the design tool has a frame per screen.")}`);
     ui.blank();
     return 0;
   },
@@ -532,9 +583,10 @@ export const designCommand: Command = {
     "  tool       — which platform drives a discipline\n" +
     "  apps       — detect the frontend apps (the UI discovery entry)\n" +
     "  nav        — extract each app's routes (navigation map seed)\n" +
+    "  screens    — the per-app screen inventory (design checklist)\n" +
     "  connections— how the apps connect (shared internal code)\n" +
     "  kit        — the UI building blocks (components + design tokens)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, screensCmd, connectionsCmd, kitCmd, paletteCmd, liveCmd],
 };

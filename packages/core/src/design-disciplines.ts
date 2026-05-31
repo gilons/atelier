@@ -108,6 +108,27 @@ markdown (Mermaid). This whole-product picture is the thing a team
 rarely has in one place — lead with it.`,
     },
     {
+      slug: "screen-coverage",
+      title: "Screen coverage & drift",
+      description: "Use design screens as the checklist; find gaps + drift vs the tool.",
+      detail: `Keep the **screens that exist** and the **screens that are designed**
+in sync.
+
+- \`atelier design screens --json\` is the deterministic checklist —
+  every route is a screen the design tool should have a frame for,
+  grouped by section.
+- **Coverage gaps:** screens in the inventory with **no frame** in the
+  tool (and no ui-design item) — these are undesigned. List them so the
+  team can prioritize.
+- **Drift the other way:** frames / ui-design items that **don't map to
+  any current screen** — likely stale (a removed route) or ahead of the
+  code (designed, not yet built). Flag stale ones as discrepancies;
+  note ahead-of-code ones as planned.
+- Re-run after routes change; coverage is a moving target. Precise
+  per-frame status needs the tool — you read its frames; atelier gives
+  you the authoritative screen list to check against.`,
+    },
+    {
       slug: "design-system",
       title: "Design system — components & tokens",
       description: "Inventory the component sources + design tokens; compose screens from them.",
