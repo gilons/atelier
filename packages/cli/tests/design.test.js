@@ -123,6 +123,29 @@ test("design apps detects the workspace's frontend apps", async () => {
   }
 });
 
+test("design nav extracts an app's routes", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    await write(path.join(umbrella, "web", ".git", "config"), '[remote "origin"]\n\turl = git@github.com:acme/web.git\n');
+    await write(path.join(umbrella, "web", "package.json"), '{"name":"web","dependencies":{"next":"14"}}');
+    await write(path.join(umbrella, "web", "app", "page.tsx"), "");
+    await write(path.join(umbrella, "web", "app", "blog", "[slug]", "page.tsx"), "");
+    assert.equal(runCli(["repo", "add", "../web"], workspaceRoot).status, 0);
+
+    const result = runCli(["design", "nav"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /app:web/);
+    assert.match(result.stdout, /\/blog\/\[slug\]/);
+    assert.match(result.stdout, /dynamic/);
+
+    const json = JSON.parse(runCli(["design", "nav", "app:web", "--json"], workspaceRoot).stdout);
+    const routes = json.apps[0].routes.map((r) => r.route).sort();
+    assert.deepEqual(routes, ["/", "/blog/[slug]"]);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("design discipline list shows built-in disciplines", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

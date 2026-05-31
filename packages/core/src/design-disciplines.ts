@@ -72,10 +72,14 @@ separate projects each with their own UI.
    frontend apps (Next.js / React / Vue / SvelteKit / …) across the
    registered repos. That's your inventory.
 2. For **each app**, build a **complete navigation map** — its routes /
-   screens and how you move between them — and **document it as a
-   ui-design item** (\`atelier item add <source>:<id> --title "<app> —
-   navigation" --classification ui-design\`), **linking to existing
-   documentation** in the system (docRefs on the feature/item).
+   screens and how you move between them. Start from
+   \`atelier design nav <app> --json\`, which extracts routes from
+   file-based routers (Next / SvelteKit / Astro / Nuxt / Remix / Expo /
+   Gatsby). For apps whose routing lives in code (plain React/Vue/…),
+   read it yourself. Then **document the map as a ui-design item**
+   (\`atelier item add <source>:<id> --title "<app> — navigation"
+   --classification ui-design\`), **linking to existing documentation**
+   in the system (docRefs on the feature/item).
 3. Do this **even without visuals** — the map + doc links come first.
    Visuals are added progressively (as you onboard a feature). Most
    screen designs **already exist** in the design tool — **connect to

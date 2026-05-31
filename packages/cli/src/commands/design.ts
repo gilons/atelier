@@ -3,6 +3,7 @@ import {
   buildDesignPalette,
   paletteSize,
   detectApps,
+  detectNavigation,
   loadDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
@@ -150,6 +151,54 @@ const appsCmd: Command = {
     }
     ui.blank();
     ui.print(`  ${ui.dim("The ui-design agent maps each app's navigation + connects them. `atelier agent install ui-design`.")}`);
+    ui.blank();
+    return 0;
+  },
+};
+
+// ============================================================
+// design nav — per-app navigation (route) map
+// ============================================================
+
+const navCmd: Command = {
+  name: "nav",
+  summary: "Extract each app's navigation (routes) from its file-based router.",
+  description:
+    "Reads routes deterministically from file-based routers (Next.js,\n" +
+    "SvelteKit, Astro, Nuxt, Remix, Expo, Gatsby) — the seed for an app's\n" +
+    "navigation map. Pass an app (ref / name / repo) to scope to one.\n" +
+    "Apps whose routing lives in code (plain React/Vue/…) report no\n" +
+    "routes — the ui-design agent reads those itself. --json for the agent.",
+  positionals: ["app?"],
+  options: { json: { type: "boolean" } },
+  async run({ values, positionals, cwd }) {
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+
+    const navs = await detectNavigation(root, { app: positionals[0] });
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify({ apps: navs }, null, 2) + "\n");
+      return 0;
+    }
+    if (navs.length === 0) {
+      ui.info("No frontend apps detected.");
+      ui.print(`  ${ui.dim("Register the repos that hold your UI, then `atelier design apps`.")}`);
+      return 0;
+    }
+    for (const { app, routes, fileBased } of navs) {
+      ui.print(`${ui.bold(app.ref)}  ${ui.dim(app.framework)}`);
+      if (!fileBased) {
+        ui.print(`  ${ui.dim("(routing is in code — the ui-design agent reads it)")}`);
+      } else if (routes.length === 0) {
+        ui.print(`  ${ui.dim("(no routes found)")}`);
+      } else {
+        for (const r of routes) {
+          ui.print(`  ${ui.green("·")} ${r.route}${r.dynamic ? ui.dim("  (dynamic)") : ""}`);
+        }
+      }
+      ui.blank();
+    }
+    ui.print(`  ${ui.dim("The ui-design agent documents these as a navigation map + links to docs.")}`);
     ui.blank();
     return 0;
   },
@@ -380,7 +429,8 @@ export const designCommand: Command = {
     "  discipline — list / add disciplines\n" +
     "  tool       — which platform drives a discipline\n" +
     "  apps       — detect the frontend apps (the UI discovery entry)\n" +
+    "  nav        — extract each app's routes (navigation map seed)\n" +
     "  palette    — the reusable vocabulary the agent composes from live\n" +
     "  live       — tune a discipline's live two-track cadence",
-  subcommands: [disciplineCmd, toolCommand, appsCmd, paletteCmd, liveCmd],
+  subcommands: [disciplineCmd, toolCommand, appsCmd, navCmd, paletteCmd, liveCmd],
 };
