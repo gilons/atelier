@@ -4,7 +4,7 @@ import { workspacePaths } from "./paths.js";
 import { validateDocFrontMatter, formatIssues } from "./validation.js";
 import { loadSourcesConfig } from "./sources.js";
 import { WorkspaceValidationError } from "./workspace.js";
-import { encodeItemFilenameStem } from "./items.js";
+import { encodeFilenameStem } from "./filename-encode.js";
 import {
   splitFrontMatter,
   parseFrontMatterYaml,
@@ -59,7 +59,7 @@ export class DocReferenceValidationError extends Error {
 
 function docFolderPath(workspaceRoot: string, source: string, docId: string): string {
   const root = workspacePaths(workspaceRoot).documentation;
-  return path.join(root, source, encodeItemFilenameStem(docId));
+  return path.join(root, source, encodeFilenameStem(docId));
 }
 function docSummaryPath(workspaceRoot: string, source: string, docId: string): string {
   return path.join(docFolderPath(workspaceRoot, source, docId), "summary.md");

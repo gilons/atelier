@@ -25,10 +25,10 @@ import type { Session, SessionFrontMatter } from "./types.js";
  * native recording mode (`atelier session record`) can be layered
  * on later without changing this storage shape.
  *
- * Items created from a session set their `fromSession` field to the
- * session id, so `loadItemsFromSession(id)` (and the CLI's
- * `atelier session show <id>`) can enumerate "what came out of this
- * conversation" later.
+ * Typed surfaces created from a session (documentation, tickets,
+ * design artifacts, specs) set their `fromSession` field to the
+ * session id, so `atelier session show <id>` can enumerate "what
+ * came out of this conversation" later.
  */
 
 export class SessionNotFoundError extends Error {
@@ -329,8 +329,9 @@ export async function listSessions(workspaceRoot: string): Promise<{
  * Delete a session — removes the whole folder (session.yaml +
  * transcript.md + anything else the agent dropped in there).
  *
- * Items that referenced this session via `fromSession` are NOT
- * touched — they keep the orphaned id in their front-matter. That's
+ * Docs, tickets, and designs that referenced this session via
+ * `fromSession` are NOT touched — they keep the orphaned id in their
+ * front-matter. That's
  * intentional: a deleted session may still be useful provenance
  * even if the audio/transcript is gone. The agent or user can
  * decide later whether to scrub the references.

@@ -587,8 +587,9 @@ expensive modeling the fast/slow tracks intentionally skipped.
 you learned back in so the next session starts smarter:
    - **Learnings:** \`atelier agent learn system-design "…"\` — the
      decisions, the workspace shape, anything durable.
-   - **Palette grows automatically:** the items/features you created in
-     step 3 become new \`ref\`s the next live session can derive from.
+   - **Palette grows automatically:** the design artifacts/features you
+     created in step 3 become new \`ref\`s the next live session can
+     derive from.
    - **Refine your own playbook:** if the call revealed a better way to
      run — a recurring question worth asking, a pattern this team uses
      — add/adjust an instruction unit
@@ -646,7 +647,8 @@ architecture sketches.
 - Register a \`design\` source whose runbook records the integration and
   where the scene files live.
 - Commit the \`.excalidraw\` files alongside code; index a markdown
-  summary as an atelier item so the design is discoverable via the map.`;
+  summary as a design artifact (\`atelier design artifact add\`) so the
+  design is discoverable via the map.`;
 
 const SYSDESIGN_LUCIDCHART = `Lucidchart — hosted diagramming.
 

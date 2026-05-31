@@ -28,7 +28,7 @@ export * from "./ui-overview.js";
 export * from "./sources.js";
 export * from "./sessions.js";
 export * from "./features.js";
-export * from "./items.js";
+export * from "./filename-encode.js";
 export * from "./documentation.js";
 export * from "./tickets.js";
 export * from "./designs.js";

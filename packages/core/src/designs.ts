@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { workspacePaths } from "./paths.js";
 import { validateDesignArtifactFrontMatter, formatIssues } from "./validation.js";
 import { WorkspaceValidationError } from "./workspace.js";
-import { encodeItemFilenameStem } from "./items.js";
+import { encodeFilenameStem } from "./filename-encode.js";
 import {
   splitFrontMatter,
   parseFrontMatterYaml,
@@ -42,7 +42,7 @@ export class DesignFileError extends Error {
 }
 
 function designFolderPath(workspaceRoot: string, discipline: string, id: string): string {
-  return path.join(workspacePaths(workspaceRoot).designs, discipline, encodeItemFilenameStem(id));
+  return path.join(workspacePaths(workspaceRoot).designs, discipline, encodeFilenameStem(id));
 }
 function designSummaryPath(workspaceRoot: string, discipline: string, id: string): string {
   return path.join(designFolderPath(workspaceRoot, discipline, id), "summary.md");

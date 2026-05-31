@@ -6,7 +6,9 @@ import {
   listRepos,
   listSources,
   listFeatures,
-  listItems,
+  listDocs,
+  listTickets,
+  listDesigns,
   inferRepoContext,
   findNearbyWorkspace,
   discoverLocal,
@@ -225,17 +227,20 @@ async function renderWorkspaceStatus(
 ): Promise<void> {
   try {
     const { workspace } = await loadWorkspace(ctx.workspaceRoot!);
-    const [{ organization, repos }, sources, { features }, { items }] = await Promise.all([
-      listRepos(ctx.workspaceRoot!),
-      listSources(ctx.workspaceRoot!),
-      listFeatures(ctx.workspaceRoot!),
-      listItems(ctx.workspaceRoot!),
-    ]);
+    const [{ organization, repos }, sources, { features }, { docs }, { tickets }, { designs }] =
+      await Promise.all([
+        listRepos(ctx.workspaceRoot!),
+        listSources(ctx.workspaceRoot!),
+        listFeatures(ctx.workspaceRoot!),
+        listDocs(ctx.workspaceRoot!),
+        listTickets(ctx.workspaceRoot!),
+        listDesigns(ctx.workspaceRoot!),
+      ]);
     ui.print(`  ${ui.dim("Workspace:")} ${ui.bold(workspace.name)}`);
     ui.print(`  ${ui.dim("Location:")}  ${ctx.workspaceRoot}`);
     if (organization) ui.print(`  ${ui.dim("Org:")}       ${organization}`);
     ui.print(
-      `  ${ui.dim("Inventory:")} ${repos.length} repo(s) · ${sources.length} source(s) · ${features.length} feature(s) · ${items.length} item(s)`
+      `  ${ui.dim("Inventory:")} ${repos.length} repo(s) · ${sources.length} source(s) · ${features.length} feature(s) · ${docs.length} doc(s) · ${tickets.length} ticket(s) · ${designs.length} design(s)`
     );
 
     // Discovery hint: how many local-but-unregistered candidates do

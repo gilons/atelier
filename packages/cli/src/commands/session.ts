@@ -11,7 +11,9 @@ import {
   listSessionChunks,
   markChunkConsumed,
   removeSession,
-  listItems,
+  listDocs,
+  listTickets,
+  listDesigns,
   loadAudioConfig,
   listSpecs,
   workspacePaths,
@@ -46,16 +48,17 @@ import { PromptSession } from "../prompt.js";
  * Atelier's "speaking-module" surface. The agent (Claude voice mode,
  * Otter, Whisper sidecar, a phone pipeline) does the actual
  * transcription; this command tree captures the session boundary,
- * stores the transcript chunks the agent appends, and lets items
- * created downstream point back via `fromSession`.
+ * stores the transcript chunks the agent appends, and lets the typed
+ * surfaces created downstream point back via `fromSession`.
  *
  * Workflow:
  *
  *   1. `atelier session start --title "Q3 planning"`            → returns an id
  *   2. (agent transcribes live) `atelier session note <id> ...` → appends chunks
  *   3. `atelier session end <id>`                                → closes the session
- *   4. (agent extracts ideas) `atelier item add ... --from-session <id>`
- *   5. `atelier session show <id>`                               → transcript + items
+ *   4. (agent extracts ideas) `atelier doc|ticket add ... --from-session <id>`
+ *      or `atelier design artifact add ... --from-session <id>`
+ *   5. `atelier session show <id>`                               → transcript + outputs
  *
  * For pre-recorded conversations, `atelier session import` skips the
  * live-append cycle and creates the session + populates transcript +
@@ -348,16 +351,22 @@ function printCheckFollowUp(
     if (pending.length === 0) {
       ui.print(`  Recording is done and every chunk is consumed.`);
       ui.print(
-        `  Extract items from ${ui.cyan(`.atelier/sessions/${id}/transcript.md`)} and link them back:`
+        `  Extract outputs from ${ui.cyan(`.atelier/sessions/${id}/transcript.md`)} and link them back:`
       );
       ui.print(
-        `    ${ui.cyan(`atelier item add <source>:<itemId> --title "..." --from-session ${id}`)}`
+        `    ${ui.cyan(`atelier doc add <source>:<docId> --title "..." --from-session ${id}`)}`
+      );
+      ui.print(
+        `    ${ui.cyan(`atelier ticket add <source>:<ticketId> --title "..." --from-session ${id}`)}`
+      );
+      ui.print(
+        `    ${ui.cyan(`atelier design artifact add <discipline>:<id> --title "..." --from-session ${id}`)}`
       );
     } else {
       ui.print(
         `  Once the pending chunks above are drained, re-run ${ui.cyan(`atelier session check ${id}`)} —`
       );
-      ui.print(`  it'll switch to item-extraction mode.`);
+      ui.print(`  it'll switch to extraction mode.`);
     }
   }
   ui.blank();
@@ -1430,10 +1439,16 @@ function printChunkedSessionEndedFollowUp(id: string, title: string): void {
   );
   ui.print(`    3. When pending hits zero, read the assembled transcript at`);
   ui.print(
-    `       ${ui.cyan(`.atelier/sessions/${id}/transcript.md`)} and extract items via:`
+    `       ${ui.cyan(`.atelier/sessions/${id}/transcript.md`)} and extract outputs via:`
   );
   ui.print(
-    `         ${ui.cyan(`atelier item add <source>:<itemId> --title "..." --from-session ${id}`)}`
+    `         ${ui.cyan(`atelier doc add <source>:<docId> --title "..." --from-session ${id}`)}`
+  );
+  ui.print(
+    `         ${ui.cyan(`atelier ticket add <source>:<ticketId> --title "..." --from-session ${id}`)}`
+  );
+  ui.print(
+    `         ${ui.cyan(`atelier design artifact add <discipline>:<id> --title "..." --from-session ${id}`)}`
   );
   ui.blank();
   ui.print(`  Session: ${ui.dim(title)} (id ${ui.bold(id)})`);
@@ -1486,9 +1501,10 @@ const endCmd: Command = {
  *
  * Tells the agent to:
  *   1. Read the transcript.
- *   2. Extract ideas → propose items (categorized as docs/design/pm).
- *   3. For each idea, suggest `atelier item add ... --from-session <id>`
- *      so the new item points back at the conversation.
+ *   2. Extract ideas → route each to the typed surface that fits
+ *      (documentation, ticket, or design artifact).
+ *   3. For each idea, suggest the matching `... add --from-session <id>`
+ *      so the new entry points back at the conversation.
  *   4. Surface action items to the user before committing.
  */
 function printSessionEndedFollowUp(
@@ -1512,29 +1528,30 @@ function printSessionEndedFollowUp(
       `       ${ui.cyan(`atelier session note ${id} --text-file <transcript.txt>`)}`
     );
     ui.blank();
-    ui.print(`  2. Then extract items from the transcript:`);
+    ui.print(`  2. Then extract outputs from the transcript:`);
   } else {
-    ui.print(`  1. Extract items from the transcript:`);
+    ui.print(`  1. Extract outputs from the transcript:`);
   }
   ui.print(
     `     Read the transcript at ${ui.cyan(`.atelier/sessions/${id}/transcript.md`)} and propose`
   );
-  ui.print(`     items for the user to confirm. For each idea, decide:`);
-  ui.print(`    - which category fits: ${ui.dim("docs | design | pm")}`);
-  ui.print(`    - which registered source under that category to attach to`);
-  ui.print(`      (run ${ui.dim("`atelier source list`")} if you're not sure)`);
-  ui.print(`    - what classification ("ticket", "frame", "prd", …) the source's tool uses`);
+  ui.print(`     outputs for the user to confirm. For each idea, decide which`);
+  ui.print(`     typed surface it belongs to:`);
+  ui.print(`    - ${ui.dim("documentation")} → a doc summary: ${ui.cyan("atelier doc add <source>:<docId>")}`);
+  ui.print(`    - ${ui.dim("ticket / PM work")} → a tracker entry: ${ui.cyan("atelier ticket add <source>:<ticketId>")}`);
+  ui.print(`    - ${ui.dim("design")} → a design artifact: ${ui.cyan("atelier design artifact add <discipline>:<id>")}`);
+  ui.print(`     (run ${ui.dim("`atelier source list`")} for doc/ticket sources if you're not sure)`);
   ui.blank();
-  ui.print("  Confirm each idea with the user, then create the item linking back");
-  ui.print("  to this session so the conversation stays discoverable:");
+  ui.print("  Confirm each idea with the user, then create the entry linking back");
+  ui.print("  to this session so the conversation stays discoverable, e.g.:");
   ui.print(
-    `    ${ui.cyan(`atelier item add <source>:<itemId> --title "..." --link <url> \\`)}`
+    `    ${ui.cyan(`atelier doc add <source>:<docId> --title "..." --link <url> \\`)}`
   );
   ui.print(`      ${ui.cyan(`--from-session ${id} --body-text "<summary>"`)}`);
   ui.blank();
-  ui.print("  For design-category sources, you can also drive the user's design");
-  ui.print(`  tool (Figma, Excalidraw, …) directly via its MCP / browser ext to`);
-  ui.print(`  scaffold the frame before recording the atelier item.`);
+  ui.print("  For design outputs, you can also drive the user's design tool");
+  ui.print(`  (Figma, Excalidraw, …) directly via its MCP / browser ext to`);
+  ui.print(`  scaffold the frame before recording the design artifact.`);
   ui.blank();
   ui.print(`  Session: ${ui.dim(title)} (id ${ui.bold(id)})`);
   ui.blank();
@@ -1600,7 +1617,7 @@ const listCmd: Command = {
 
 const showCmd: Command = {
   name: "show",
-  summary: "Show a session's transcript + items and specs born from it.",
+  summary: "Show a session's transcript + docs, tickets, designs, and specs born from it.",
   positionals: ["id"],
   async run({ positionals, cwd }) {
     const id = positionals[0];
@@ -1637,18 +1654,44 @@ const showCmd: Command = {
     }
     ui.blank();
 
-    // Items linked back to this session via fromSession.
-    const { items } = await listItems(workspaceRoot);
-    const linked = items.filter((d) => d.item.fromSession === id);
-    if (linked.length > 0) {
-      ui.print(ui.bold(`Items from this session (${linked.length})`));
-      for (const { item } of linked) {
-        const cls = item.classification ? ` [${item.classification}]` : "";
-        ui.print(`  ${ui.green("·")} ${item.source}:${item.docId}${ui.dim(cls)} — ${item.title}`);
+    // Typed surfaces linked back to this session via fromSession:
+    // documentation, tickets, and design artifacts.
+    const [{ docs }, { tickets }, { designs }] = await Promise.all([
+      listDocs(workspaceRoot),
+      listTickets(workspaceRoot),
+      listDesigns(workspaceRoot),
+    ]);
+    const linkedDocs = docs.filter((d) => d.doc.fromSession === id);
+    const linkedTickets = tickets.filter((t) => t.ticket.fromSession === id);
+    const linkedDesigns = designs.filter((d) => d.design.fromSession === id);
+    const linkedTotal = linkedDocs.length + linkedTickets.length + linkedDesigns.length;
+
+    if (linkedDocs.length > 0) {
+      ui.print(ui.bold(`Documentation from this session (${linkedDocs.length})`));
+      for (const { doc } of linkedDocs) {
+        const cls = doc.classification ? ` [${doc.classification}]` : "";
+        ui.print(`  ${ui.green("·")} ${doc.source}:${doc.docId}${ui.dim(cls)} — ${doc.title}`);
       }
       ui.blank();
-    } else {
-      ui.print(ui.dim("(no items linked back to this session yet)"));
+    }
+    if (linkedTickets.length > 0) {
+      ui.print(ui.bold(`Tickets from this session (${linkedTickets.length})`));
+      for (const { ticket } of linkedTickets) {
+        const st = ticket.status ? ` [${ticket.status}]` : "";
+        ui.print(`  ${ui.green("·")} ${ticket.source}:${ticket.ticketId}${ui.dim(st)} — ${ticket.title}`);
+      }
+      ui.blank();
+    }
+    if (linkedDesigns.length > 0) {
+      ui.print(ui.bold(`Designs from this session (${linkedDesigns.length})`));
+      for (const { design } of linkedDesigns) {
+        const kind = design.kind ? ` [${design.kind}]` : "";
+        ui.print(`  ${ui.green("·")} ${design.discipline}:${design.id}${ui.dim(kind)} — ${design.title}`);
+      }
+      ui.blank();
+    }
+    if (linkedTotal === 0) {
+      ui.print(ui.dim("(no documentation, tickets, or designs linked back to this session yet)"));
       ui.blank();
     }
 

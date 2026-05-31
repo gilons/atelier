@@ -4,7 +4,7 @@ import { workspacePaths } from "./paths.js";
 import { validateTicketFrontMatter, formatIssues } from "./validation.js";
 import { loadSourcesConfig } from "./sources.js";
 import { WorkspaceValidationError } from "./workspace.js";
-import { encodeItemFilenameStem } from "./items.js";
+import { encodeFilenameStem } from "./filename-encode.js";
 import {
   splitFrontMatter,
   parseFrontMatterYaml,
@@ -49,7 +49,7 @@ export class TicketReferenceValidationError extends Error {
 }
 
 function ticketFolderPath(workspaceRoot: string, source: string, ticketId: string): string {
-  return path.join(workspacePaths(workspaceRoot).tickets, source, encodeItemFilenameStem(ticketId));
+  return path.join(workspacePaths(workspaceRoot).tickets, source, encodeFilenameStem(ticketId));
 }
 function ticketSummaryPath(workspaceRoot: string, source: string, ticketId: string): string {
   return path.join(ticketFolderPath(workspaceRoot, source, ticketId), "summary.md");

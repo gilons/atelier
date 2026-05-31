@@ -9,7 +9,6 @@ import type {
   FeatureStatus,
   FeatureCodeRef,
   FeatureItemRef,
-  ItemFrontMatter,
   DocFrontMatter,
   TicketFrontMatter,
   DesignArtifactFrontMatter,
@@ -453,83 +452,6 @@ export function validateFeatureFrontMatter(
     updatedAt: updatedAt as string,
   };
   if (description !== undefined) value.description = description as string;
-  return { ok: true, value, issues: [] };
-}
-
-// ============================================================
-// Item front-matter
-// ============================================================
-
-export function validateItemFrontMatter(
-  raw: unknown
-): ValidationResult<ItemFrontMatter> {
-  const issues: ValidationIssue[] = [];
-  if (!isObject(raw)) {
-    return {
-      ok: false,
-      issues: [{ path: "$", message: "expected an object at the top level" }],
-    };
-  }
-  const {
-    source,
-    docId,
-    title,
-    overview,
-    classification,
-    link,
-    parent,
-    fromSession,
-    createdAt,
-    updatedAt,
-  } = raw;
-
-  if (!isNonEmptyString(source)) {
-    pushIssue(issues, "$.source", "must be a non-empty string");
-  }
-  if (!isNonEmptyString(docId)) {
-    pushIssue(issues, "$.docId", "must be a non-empty string");
-  }
-  if (!isNonEmptyString(title)) {
-    pushIssue(issues, "$.title", "must be a non-empty string");
-  }
-  if (overview !== undefined && typeof overview !== "string") {
-    pushIssue(issues, "$.overview", "if present, must be a string");
-  }
-  // Classification is free-form text now (a PM ticket isn't a doc
-  // PRD); the vocabulary depends on the source's category and we
-  // don't enforce it.
-  if (classification !== undefined && typeof classification !== "string") {
-    pushIssue(issues, "$.classification", "if present, must be a string");
-  }
-  if (link !== undefined && !isNonEmptyString(link)) {
-    pushIssue(issues, "$.link", "if present, must be a non-empty string");
-  }
-  if (parent !== undefined && !isNonEmptyString(parent)) {
-    pushIssue(issues, "$.parent", "if present, must be a non-empty string (itemId of the parent item in the same source)");
-  }
-  if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
-    pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id that birthed this item)");
-  }
-  if (!isNonEmptyString(createdAt)) {
-    pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
-  }
-  if (!isNonEmptyString(updatedAt)) {
-    pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
-  }
-
-  if (issues.length > 0) return { ok: false, issues };
-  const value: ItemFrontMatter = {
-    source: source as string,
-    docId: docId as string,
-    title: title as string,
-    createdAt: createdAt as string,
-    updatedAt: updatedAt as string,
-  };
-  if (overview !== undefined) value.overview = overview as string;
-  if (classification !== undefined) value.classification = classification as string;
-  if (link !== undefined) value.link = link as string;
-  if (parent !== undefined) value.parent = parent as string;
-  if (fromSession !== undefined) value.fromSession = fromSession as string;
   return { ok: true, value, issues: [] };
 }
 

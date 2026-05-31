@@ -48,8 +48,6 @@ export interface WorkspacePaths {
    * one folder per session containing session.yaml + transcript.md.
    */
   sessions: string;
-  /** `.atelier/items/` — item map entries (nested by source id) — legacy, being split into typed surfaces */
-  items: string;
   /** `.atelier/documentation/` — documentation entries (nested by source id) */
   documentation: string;
   /** `.atelier/tickets/` — ticket entries (nested by source id) */
@@ -110,7 +108,6 @@ export function workspacePaths(
     features: path.join(atelier, "features"),
     sources: path.join(atelier, "sources"),
     sessions: path.join(atelier, "sessions"),
-    items: path.join(atelier, "items"),
     documentation: path.join(atelier, "documentation"),
     tickets: path.join(atelier, "tickets"),
     designs: path.join(atelier, "designs"),

@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { workspacePaths } from "./paths.js";
 import { validateSpecManifest, formatIssues } from "./validation.js";
 import { loadFeature, FeatureNotFoundError } from "./features.js";
-import { loadItem, ItemNotFoundError } from "./items.js";
+import { loadDoc, DocNotFoundError } from "./documentation.js";
 import { loadReposConfig } from "./repos.js";
 import {
   splitFrontMatter,
@@ -468,16 +468,16 @@ export async function createSpec(
   const resolvedDocs = [] as RenderContextInput["resolvedDocs"];
   for (const ref of uniqueDocRefs) {
     try {
-      const item = await loadItem(workspaceRoot, ref.source, ref.docId);
+      const doc = await loadDoc(workspaceRoot, ref.source, ref.docId);
       resolvedDocs.push({
         ref,
-        title: item.title,
-        summary: item.overview,
-        classification: item.classification,
+        title: doc.title,
+        summary: doc.overview,
+        classification: doc.classification,
         found: true,
       });
     } catch (err) {
-      if (err instanceof ItemNotFoundError) {
+      if (err instanceof DocNotFoundError) {
         resolvedDocs.push({ ref, found: false });
       } else {
         throw err;

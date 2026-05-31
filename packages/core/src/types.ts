@@ -22,11 +22,13 @@
  *   - `pm` — product management: Linear/Jira/Asana initiatives,
  *     milestones, epics, tickets.
  *
- * The category influences which command the agent uses to add
- * items (`atelier item add --category <c>`) and how atelier
- * filters them in list views. The source's underlying integration
- * (MCP server, browser ext, REST) is still the agent's problem;
- * atelier just tags the source so items can be grouped sensibly.
+ * The category influences which typed-surface command the agent
+ * uses to index a source's content — `docs`/`pm` sources feed
+ * `atelier doc add` / `atelier ticket add`, while `design` work is
+ * captured via `atelier design artifact add`. The source's
+ * underlying integration (MCP server, browser ext, REST) is still
+ * the agent's problem; atelier just tags the source so entries can
+ * be grouped sensibly.
  */
 export type SourceCategory = "docs" | "design" | "pm";
 
@@ -227,87 +229,10 @@ export interface Feature extends FeatureFrontMatter {
 }
 
 // ============================================================
-// Items (the workspace index — docs, design, PM, all unified)
-// ============================================================
-
-/**
- * Structured fields from an item's YAML front-matter.
- *
- * Items are atelier's unit of indexed knowledge — one per
- * tracked artifact (a PRD, a Figma frame, a Linear ticket, …).
- * Atelier doesn't store source content; the markdown body IS
- * the agent-curated summary. To re-read the underlying artifact,
- * the agent follows `link` via its own integrations.
- */
-export interface ItemFrontMatter {
-  /** Source id (must exist in sources.yaml). */
-  source: string;
-  /**
-   * Stable, source-side identifier. Opaque to atelier — the agent
-   * picks a slug meaningful within the source. Named `docId` for
-   * back-compat with the prior model; semantically the id of any
-   * indexed thing regardless of category.
-   */
-  docId: string;
-  /** Display title. */
-  title: string;
-  /** Optional one-line elevator summary (full summary lives in body). */
-  overview?: string;
-  /**
-   * Free-form classification string. The vocabulary depends on the
-   * source's category:
-   *
-   *   - docs:   "prd" | "rfc" | "runbook" | "transcript" | "policy" | …
-   *   - design: "frame" | "screen" | "component" | "flow" | "system" | …
-   *   - pm:     "initiative" | "milestone" | "epic" | "ticket" | "story" | …
-   *
-   * Atelier doesn't enforce any of these — the agent picks
-   * whatever its tool natively uses.
-   */
-  classification?: string;
-  /**
-   * Pointer to the underlying artifact the agent can use to fetch
-   * the full content. Format is up to the source: URL for web docs,
-   * MCP page id, file path, ticket id, frame node, etc. Atelier
-   * doesn't dereference it.
-   */
-  link?: string;
-  /**
-   * Optional parent itemId. Used to express hierarchy within a
-   * single source (initiative → milestone → ticket, design file →
-   * frame, etc.). Atelier doesn't enforce that the parent exists or
-   * is the right type — list views render the tree based on what
-   * the agent wrote.
-   */
-  parent?: string;
-  /**
-   * Optional session id this item was born from. Set when the
-   * agent creates an item out of a live conversation captured by
-   * the speaking module (`atelier session start` → notes → end →
-   * agent extracts items). Lets `/session show` enumerate items
-   * that came out of a given conversation later.
-   */
-  fromSession?: string;
-  /** ISO timestamp when first registered. */
-  createdAt: string;
-  /** ISO timestamp of the most recent structural change. */
-  updatedAt: string;
-}
-
-/**
- * A loaded item: front-matter + the summary markdown body.
- * The body is whatever shape the agent wrote — typically a 1-2
- * sentence overview, a `## Keywords` list, and a `## Anchors`
- * list. Atelier doesn't enforce structure; the agent follow-up
- * block printed after `/item add` suggests one.
- */
-export interface Item extends ItemFrontMatter {
-  /** Markdown body — the agent-written summary. May be empty. */
-  body: string;
-}
-
-// ============================================================
 // Documentation — knowledge artifacts (PRDs, RFCs, runbooks, …)
+//
+// (The former generic `Item` type was split into three typed
+// surfaces — Documentation, Ticket, DesignArtifact — below.)
 // ============================================================
 
 /**

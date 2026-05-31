@@ -11,7 +11,6 @@ import {
 } from "./folder-index.js";
 
 import { listAgents, loadAgent, AgentNotFoundError } from "./agents.js";
-import { listItems } from "./items.js";
 import { listDocs } from "./documentation.js";
 import { listTickets } from "./tickets.js";
 import { listDesigns } from "./designs.js";
@@ -97,20 +96,6 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
         title: agent.name,
         kind: "agent",
         description: truncate(agent.purpose),
-      }));
-    },
-  },
-  {
-    dir: "items",
-    name: "Items",
-    description: "Indexed knowledge — docs, design, PM items (agent-curated summaries).",
-    async loadChildren(root) {
-      const { items } = await listItems(root);
-      return items.map(({ item }) => ({
-        path: `${item.source}/`,
-        title: `${item.source}:${item.docId}`,
-        kind: item.classification ? `item/${item.classification}` : "item",
-        description: truncate(item.overview ?? item.title),
       }));
     },
   },
