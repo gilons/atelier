@@ -1,5 +1,5 @@
 // Bundle the CLI + @atelier/core (+ yaml) into one self-contained ESM
-// file for publishing as a single npm package (@gilons/atelier).
+// file for publishing as a single npm package (@gilons-ai/atelier).
 //
 // Dev keeps the clean two-package monorepo (core is a library, cli
 // consumes it); only the *published* artifact is a single bundle with
