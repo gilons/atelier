@@ -316,8 +316,25 @@ async function buildNode(
   const atelier = workspacePaths(workspaceRoot).atelier;
   const absDir = relPath === "" ? atelier : path.join(atelier, relPath);
 
-  const sidecar = await readFolderIndex(absDir);
-  const idx = sidecar ?? (await deriveIndex(workspaceRoot, relPath));
+  // Prefer LIVE derivation over the on-disk sidecar wherever atelier
+  // can derive the node from current content (the workspace root, the
+  // content sections, agent folders, sources). That keeps `atelier
+  // map` always-fresh without anyone running `--rebuild` after every
+  // change. Only fall back to the sidecar where nothing is derivable
+  // — instruction-tree units and arbitrary folders, whose index.yaml
+  // IS the source of truth. `--rebuild` still materializes the
+  // derivable sidecars for a committed, self-describing snapshot.
+  const derived = await deriveIndex(workspaceRoot, relPath);
+  let idx: FolderIndex | null;
+  let hasIndex: boolean;
+  if (derived) {
+    idx = derived;
+    hasIndex = await fileExists(path.join(absDir, INDEX_FILE));
+  } else {
+    const sidecar = await readFolderIndex(absDir);
+    idx = sidecar;
+    hasIndex = sidecar !== null;
+  }
 
   // Last-resort: a bare directory we know nothing about.
   if (!idx) {
@@ -339,7 +356,7 @@ async function buildNode(
     kind: idx.kind,
     description: idx.description,
     relPath,
-    hasIndex: sidecar !== null,
+    hasIndex,
   };
 
   if (depth > 0 && idx.children && idx.children.length > 0) {

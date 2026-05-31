@@ -219,6 +219,12 @@ documents what it finds, and produces the workspace's first set of
 diagrams. On later runs you *refine* that design rather than
 regenerate it.
 
+**Going deep?** Beyond designing from code, build a reconciled,
+whole-company picture: pull the existing designs from the design tool,
+gather intent from the documentation and planning tools, map it all to
+the actual code, and surface where they diverge — see "Synthesize the
+deep workspace map".
+
 Record durable facts with \`atelier agent learn system-design "…"\` —
 especially **which tool is selected** and the workspace's shape — so
 your knowledge compounds across runs instead of restarting.`;
@@ -324,14 +330,119 @@ Keep diagrams consistent (same notation, same naming as the
 inventory). Mirror each into atelier as a system-design item with a
 link so they're discoverable via \`atelier map\`.`;
 
+const SYSDESIGN_SYNTHESIZE = `Build a **deep, reconciled understanding of the whole workspace** by
+pulling together everything the team already has — the existing
+designs, the documentation, the planning, and the actual code — into
+one navigable map.
+
+Designing from code alone misses intent and history. The connected
+tools hold the rest, so use all of them:
+- **Design tool** (the configured \`design\` source) — diagrams already
+  drawn. Pull them down to see what's already modelled.
+- **Documentation** (\`docs\` sources) — PRDs, RFCs, runbooks: what the
+  system is *supposed* to do.
+- **Planning** (\`pm\` sources) — initiatives, roadmap, tickets: what's
+  *being* built and why.
+- **Code** (registered repos) — what's *actually* built: the real
+  business logic, the ground truth.
+
+The flow (sub-units): pull existing design → gather docs & planning →
+map to code → reconcile the differences → produce the detailed map.
+
+**Respect the smart discovery convention throughout.** Store findings
+as many small, well-titled items — each with a one-line description —
+not one giant document, so the map stays scannable and an agent can
+drill only where it needs. Run \`atelier map\` to confirm it reads
+cleanly top-down as you go.`;
+
+const SYSDESIGN_PULL_DESIGN = `Pull down the existing design from the connected tool.
+
+- Confirm the design tool (see "Detect the configured tool"). Read its
+  runbook (\`atelier source show <id>\`) for how to fetch — MCP / REST /
+  browser. If no design tool is connected, note it and rely on docs +
+  code; offer to onboard one.
+- Enumerate the existing diagrams / files / frames and pull their
+  content via your integration.
+- For each meaningful design, index a summary as an atelier item:
+  \`atelier item add <design-source>:<id> --title "…" --classification system-design --link <url>\`
+  with a concise body (what it depicts — components, flows) and a
+  one-line overview. Keep the title + overview tight: that's what the
+  map shows.
+- Flag designs that look stale or contradict each other — you'll
+  reconcile them against the code next.`;
+
+const SYSDESIGN_GATHER = `Gather intent from the documentation and planning tools.
+
+- \`atelier source list\` shows what's connected (categories \`docs\` and
+  \`pm\`). If one is missing, suggest the discovery agent to connect it.
+- **Documentation** (\`docs\`): pull the PRDs / RFCs / runbooks that
+  describe what the system should do; index summaries as items with a
+  crisp one-line overview each.
+- **Planning** (\`pm\`): pull the initiatives / epics / roadmap and the
+  significant tickets; index the ones that shape the architecture, and
+  note which capability each maps to.
+- Capture *intent and direction* — don't mirror every ticket.
+  Summarize; keep each item's description to one line.`;
+
+const SYSDESIGN_MAP_TO_CODE = `Establish what's actually built — the ground truth.
+
+- \`atelier repo inspect --json\` for structure, then read the code that
+  implements each capability: entry points, routes/handlers, domain
+  modules, data models, integrations.
+- For each capability, pin down the real **business logic**: the rules
+  the code actually enforces, the data it owns, the calls it makes.
+- Tie capabilities to code with features:
+  \`atelier feature add "<capability>" --code <repo>:<path>\`.`;
+
+const SYSDESIGN_RECONCILE = `Reconcile design + docs + planning against the code. This is the core
+value — surfacing where intent and reality diverge.
+
+For each capability, compare what the design / docs / planning say with
+what the code does:
+- **Match** — note it; that part of the design is trustworthy.
+- **Drift** — documented/designed behavior differs from the code's
+  business logic. Log it:
+  \`atelier discrepancy add\` with the doc/design claim, the observed
+  code behavior, a severity, and the doc + code refs.
+- **Missing** — designed/planned but not built, or built but
+  undocumented/undesigned. Capture as discrepancies or open items.
+
+Be specific: cite the code path *and* the design/doc source on every
+finding so it's actionable.`;
+
+const SYSDESIGN_DETAILED_MAP = `Produce the detailed, integrated map — the deep picture of what the
+workspace / company actually is and does.
+
+Structure it as a navigable tree, not a wall of text (respect the
+smart discovery convention — every node a title + one-line
+description):
+- A top **workspace overview** system-design item: the capabilities,
+  the subsystems, and how they relate — each line a pointer with a
+  one-line description, not the full detail.
+- Per-capability / per-subsystem items, each carrying: structure, the
+  code that implements it, the docs/design that describe it, the
+  planning that drives it, the owner (stakeholder), and any open
+  discrepancies. Tight title + one-line overview on each.
+- Diagrams (configured tool or Mermaid) for the landscape + key
+  subsystems, linked from the items.
+
+Then run \`atelier map --rebuild\` so the index.yaml tree reflects the
+new structure, and verify \`atelier map\` reads cleanly top-down.
+Record the workspace shape as a learning so future runs refine it
+instead of rebuilding from scratch.`;
+
 const SYSDESIGN_DETECT = `Find the configured system-design tool before doing anything else.
 
-- Run \`atelier source list\` and look for sources with category
-  \`design\`.
-- Re-read your learnings (\`atelier agent show system-design\`) — the
-  selected tool is recorded there once chosen.
+- **Check the explicit setting first:** \`atelier design-tool show\`.
+  If it names a tool, that's authoritative — use it (and read its
+  backing \`design\` source runbook if one is linked).
+- Otherwise run \`atelier source list\` and look for sources with
+  category \`design\`. Re-read your learnings
+  (\`atelier agent show system-design\`) — a prior choice is recorded
+  there.
 - If exactly one design source exists, use it. If several, ask which
-  is the system-design tool and record the choice as a learning.
+  is the system-design tool, then pin it for next time:
+  \`atelier design-tool set <tool> --source <id>\`.
 - If none exists, go to "Onboard a design tool".
 - Read the chosen source's runbook (\`atelier source show <id>\`) to
   learn how to connect (MCP server name, browser tool, token env var).`;
@@ -495,6 +606,44 @@ const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
         title: "Diagram the workspace",
         description: "Landscape/context + per-project container views, via tool or Mermaid.",
         detail: SYSDESIGN_WORKSPACE_DIAGRAMS,
+      },
+    ],
+  },
+  {
+    slug: "synthesize-map",
+    title: "Synthesize the deep workspace map",
+    description: "Pull existing design + docs + planning, map to code, reconcile divergences.",
+    detail: SYSDESIGN_SYNTHESIZE,
+    children: [
+      {
+        slug: "pull-existing-design",
+        title: "Pull existing design",
+        description: "Fetch diagrams already drawn in the connected design tool; index summaries.",
+        detail: SYSDESIGN_PULL_DESIGN,
+      },
+      {
+        slug: "gather-docs-planning",
+        title: "Gather docs & planning",
+        description: "Capture intent from documentation + planning sources.",
+        detail: SYSDESIGN_GATHER,
+      },
+      {
+        slug: "map-to-code",
+        title: "Map to code",
+        description: "Read the code to establish the real business logic — the ground truth.",
+        detail: SYSDESIGN_MAP_TO_CODE,
+      },
+      {
+        slug: "reconcile",
+        title: "Reconcile design vs code",
+        description: "Compare intent vs reality; log drift/missing as discrepancies.",
+        detail: SYSDESIGN_RECONCILE,
+      },
+      {
+        slug: "detailed-map",
+        title: "Produce the detailed map",
+        description: "Navigable tree of capabilities → code/docs/design/planning/owner.",
+        detail: SYSDESIGN_DETAILED_MAP,
       },
     ],
   },

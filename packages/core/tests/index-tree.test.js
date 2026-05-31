@@ -160,6 +160,19 @@ test("refreshWorkspaceIndex writes root + section + agent index.yaml", async () 
   assert.equal(root.hasIndex, true);
 });
 
+test("buildWorkspaceMap stays fresh after a mutation without --rebuild", async () => {
+  const { workspaceRoot } = await workspace();
+  // Materialize a snapshot, THEN add content. The sidecar is now stale.
+  await refreshWorkspaceIndex(workspaceRoot);
+  await addFeature(workspaceRoot, { name: "Late Feature", status: "planned" });
+
+  // Live derivation must surface the new feature even though the
+  // on-disk root/section index.yaml predates it.
+  const root = await buildWorkspaceMap(workspaceRoot, { depth: 2 });
+  const features = findChild(root, "Features");
+  assert.ok(findChild(features, "Late Feature"), "map went stale after a write");
+});
+
 test("refreshWorkspaceIndex is idempotent", async () => {
   const { workspaceRoot } = await workspace();
   await installAgent(workspaceRoot, "discovery");

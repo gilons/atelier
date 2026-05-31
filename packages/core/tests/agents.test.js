@@ -523,6 +523,35 @@ test("system-design carries the initial-workspace-design bootstrap sub-tree", as
   );
 });
 
+test("system-design carries the synthesize-map (design ⇄ code ⇄ docs ⇄ planning) sub-tree", async () => {
+  const { workspaceRoot } = await workspace();
+  await materializeBuiltin(workspaceRoot, "system-design");
+  const units = await listInstructionUnits(workspaceRoot, "system-design");
+  assert.ok(units.some((u) => u.slug === "synthesize-map"));
+
+  const a = await loadAgent(workspaceRoot, "system-design");
+  assert.match(a.instructions, /## Synthesize the deep workspace map/);
+  assert.match(a.instructions, /### Pull existing design/);
+  assert.match(a.instructions, /### Gather docs & planning/);
+  assert.match(a.instructions, /### Map to code/);
+  assert.match(a.instructions, /### Reconcile design vs code/);
+  assert.match(a.instructions, /### Produce the detailed map/);
+  // The reconcile step drives the discrepancy log.
+  assert.match(a.instructions, /atelier discrepancy add/);
+
+  const paths = workspacePaths(workspaceRoot);
+  await fs.access(
+    path.join(
+      paths.agents,
+      "system-design",
+      "instructions",
+      "synthesize-map",
+      "reconcile",
+      "detail.md"
+    )
+  );
+});
+
 // ============================================================
 // workspace integration
 // ============================================================
