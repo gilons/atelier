@@ -1708,6 +1708,104 @@ const removeCmd: Command = {
   },
 };
 
+const watchCmd: Command = {
+  name: "watch",
+  summary: "Live-preview a session's design draft (Mermaid markdown) in the browser.",
+  description:
+    "Opens a localhost page that renders this session's design-draft.md\n" +
+    "and auto-refreshes as the system-design agent's live companion mode\n" +
+    "updates it during a call. This is the Markdown visualization for\n" +
+    "when no Figma/Excalidraw/Lucid is connected — when a design tool IS\n" +
+    "connected, the agent shares that tool's live link instead.\n\n" +
+    "Runs until you press Ctrl-C. The page pulls markdown-it + Mermaid\n" +
+    "from a CDN, so the view needs internet (recording does not).",
+  positionals: ["id"],
+  options: {
+    port: { type: "string" },
+    "no-open": { type: "boolean" },
+  },
+  async run({ values, positionals, cwd }) {
+    const id = positionals[0];
+    if (!id) {
+      ui.error("Usage: atelier session watch <id>");
+      return 2;
+    }
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
+    let session;
+    try {
+      session = await loadSession(workspaceRoot, id);
+    } catch (err) {
+      if (err instanceof SessionNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
+    const draftPath = path.join(workspacePaths(workspaceRoot).sessions, id, "design-draft.md");
+    // Seed a placeholder so the page has something to show before the
+    // agent's first update.
+    try {
+      await fs.access(draftPath);
+    } catch {
+      await fs.writeFile(
+        draftPath,
+        `# Live design draft — ${session.title}\n\n_Waiting for the conversation… the system-design agent will fill this in as you talk._\n`,
+        "utf8"
+      );
+    }
+
+    let port: number | undefined;
+    if (values.port !== undefined) {
+      const parsed = Number(values.port);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        ui.error("--port must be a non-negative integer.");
+        return 2;
+      }
+      port = parsed;
+    }
+
+    const { startDesignPreviewServer, openInBrowser } = await import("../design-preview.js");
+    const server = await startDesignPreviewServer({
+      draftPath,
+      title: `${session.title} — live design`,
+      port,
+    });
+
+    ui.success(`Live design preview: ${ui.cyan(server.url)}`);
+    ui.print(
+      `  ${ui.dim("Auto-refreshes as the agent updates")} ${ui.dim(draftPath)}`
+    );
+    ui.print(`  ${ui.dim("Press Ctrl-C to stop.")}`);
+    ui.blank();
+
+    if (values["no-open"] !== true) openInBrowser(server.url);
+
+    await new Promise<void>((resolve) => {
+      const stop = () => {
+        process.removeListener("SIGINT", stop);
+        process.removeListener("SIGTERM", stop);
+        resolve();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    await server.close();
+    ui.print(ui.dim("Preview stopped."));
+    return 0;
+  },
+};
+
 export const sessionCommand: Command = {
   name: "session",
   summary: "Record conversations + link items back to them.",
@@ -1727,6 +1825,7 @@ export const sessionCommand: Command = {
     endCmd,
     listCmd,
     showCmd,
+    watchCmd,
     removeCmd,
   ],
 };

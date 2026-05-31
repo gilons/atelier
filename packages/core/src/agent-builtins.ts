@@ -225,6 +225,13 @@ gather intent from the documentation and planning tools, map it all to
 the actual code, and surface where they diverge — see "Synthesize the
 deep workspace map".
 
+**On a call?** Run as a live planning companion — see "Live companion
+mode". You listen to the recorded conversation as it streams, keep a
+running high-level design draft (in the connected tool, or as Markdown
+the user watches via \`atelier session watch <id>\`), classify whether
+each idea is new or a change to the existing system, and surface
+follow-up questions to ask in the moment.
+
 Record durable facts with \`atelier agent learn system-design "…"\` —
 especially **which tool is selected** and the workspace's shape — so
 your knowledge compounds across runs instead of restarting.`;
@@ -430,6 +437,108 @@ Then run \`atelier map --rebuild\` so the index.yaml tree reflects the
 new structure, and verify \`atelier map\` reads cleanly top-down.
 Record the workspace shape as a learning so future runs refine it
 instead of rebuilding from scratch.`;
+
+const SYSDESIGN_LIVE = `Run as a **live planning companion** during a recorded conversation.
+While the team is on a call discussing features, you listen to the
+transcript as it streams in, keep a running high-level design draft,
+and surface follow-up questions to ask in the moment.
+
+This rides atelier's speaking module — the recorder + chunked
+transcription. You don't capture audio; you consume the transcript
+and react.
+
+The loop (see the sub-units): set up the live view → watch the
+transcript → analyze each window → keep the draft + questions current
+→ finalize when the call ends.
+
+**Cadence.** A chunked recording emits a chunk every ~30–60s
+(\`atelier session check\` reports the interval). React on each new
+chunk, but only rewrite the draft when something meaningful changed —
+don't thrash. Always keep the top 3–5 follow-up questions current.
+
+Keep it lightweight and high-level: the goal is a shared picture the
+room can glance at and react to, not a finished spec.`;
+
+const SYSDESIGN_LIVE_SETUP = `Set up the live session.
+
+1. Find the active recording (\`atelier session list\` → the one that's
+   still \`active\`). If none, tell the user to start one:
+   \`atelier session record --chunk 45\` (45s chunks is a good live
+   cadence). Note the session id.
+2. Decide where the live view goes:
+   - **A design tool is connected** (\`atelier design-tool show\` / a
+     \`design\` source): create or open the live diagram/board now and
+     **share its link with the user up front**, so they watch it
+     update in the tool as you draft. (Excalidraw/Figma/Lucid all have
+     shareable live URLs.)
+   - **No tool (Markdown)**: write the initial draft to the session's
+     \`design-draft.md\` and tell the user to run
+     \`atelier session watch <id>\` — it opens a browser view that
+     renders the draft (Mermaid diagrams included) and auto-refreshes
+     as you update it.
+3. Seed the draft with a one-line "what we're designing" placeholder so
+   the view isn't empty.`;
+
+const SYSDESIGN_LIVE_WATCH = `Watch the transcript as it streams.
+
+- Loop on \`atelier session check <id>\` at the reported interval. It
+  lists pending audio chunks.
+- Transcribe each pending chunk with your STT (per the session's
+  language/whisper setup) and append it: \`atelier session note <id>
+  --chunk <name> --text "…"\` (this also marks the chunk consumed).
+- Read the transcript delta since your last window — focus on what's
+  new, not the whole history.
+- Keep going until \`atelier session check\` reports \`status: ended\`;
+  then do one final drain + the finalize step.`;
+
+const SYSDESIGN_LIVE_ANALYZE = `Analyze each window and update the running draft.
+
+For the new transcript since last time:
+1. **Classify: new vs modification.** Compare what's being discussed
+   against the existing system (\`atelier map\`, system-design items,
+   features). Is this a brand-new capability/system, or a change to
+   something already designed/built? Say which, explicitly, in the
+   draft.
+2. **Update the high-level design draft** — what the thing is, where it
+   fits, the subsystems it touches, and how the design changes. For a
+   modification, show the delta against the current design; for
+   something new, sketch the shape.
+   - Design tool connected → update the live diagram (the user is
+     watching the link).
+   - Markdown → rewrite \`design-draft.md\` (use Mermaid for the
+     diagram; the \`session watch\` view renders it live). Keep it
+     high-level — a glanceable overview, not a spec.
+3. Note assumptions you're making — they become questions.`;
+
+const SYSDESIGN_LIVE_QUESTIONS = `Surface follow-up questions for the live interaction.
+
+As you analyze, maintain a short, sharp list of questions the user
+could ask *right now* to move the design forward — the things that are
+ambiguous, risky, or unstated:
+- Scope boundaries ("does this include X, or just Y?").
+- Constraints (scale, latency, compliance, deadlines).
+- Edge cases and failure modes.
+- Ownership and dependencies (which team/service, who decides).
+- Conflicts with the existing design you spotted in the analysis.
+
+Keep the top 3–5, freshest first. Put them under a
+\`## Follow-up questions\` heading in \`design-draft.md\` (so they show in
+the live view) — or speak them, if you're in a voice loop. Drop
+questions once they've been answered in the conversation.`;
+
+const SYSDESIGN_LIVE_FINALIZE = `Finalize when the call ends (\`status: ended\`).
+
+1. Do a final transcript drain + analysis pass.
+2. Promote the stable parts of the live draft into durable
+   system-design items (\`atelier item add … --classification
+   system-design --from-session <id>\`) and, if a tool is connected,
+   leave the diagram saved + linked.
+3. Turn unresolved follow-up questions into open items or discrepancies
+   so they're not lost.
+4. Link the design to the features/specs it affects; suggest a
+   \`atelier spec new\` for anything that's ready to plan.
+5. \`atelier map --rebuild\`, and record a learning capturing what the
+   conversation decided.`;
 
 const SYSDESIGN_DETECT = `Find the configured system-design tool before doing anything else.
 
@@ -644,6 +753,44 @@ const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
         title: "Produce the detailed map",
         description: "Navigable tree of capabilities → code/docs/design/planning/owner.",
         detail: SYSDESIGN_DETAILED_MAP,
+      },
+    ],
+  },
+  {
+    slug: "live-companion",
+    title: "Live companion mode (on a call)",
+    description: "Listen to a recorded conversation; keep a live design draft + follow-up questions.",
+    detail: SYSDESIGN_LIVE,
+    children: [
+      {
+        slug: "setup",
+        title: "Set up the live session",
+        description: "Find the active recording; share the tool link, or seed design-draft.md + `session watch`.",
+        detail: SYSDESIGN_LIVE_SETUP,
+      },
+      {
+        slug: "watch-transcript",
+        title: "Watch the transcript",
+        description: "Loop on `session check`, transcribe chunks, read the delta.",
+        detail: SYSDESIGN_LIVE_WATCH,
+      },
+      {
+        slug: "analyze",
+        title: "Analyze & update the draft",
+        description: "Classify new-vs-modification against the map; refresh the high-level design.",
+        detail: SYSDESIGN_LIVE_ANALYZE,
+      },
+      {
+        slug: "questions",
+        title: "Surface follow-up questions",
+        description: "Keep 3–5 sharp questions current for the live interaction.",
+        detail: SYSDESIGN_LIVE_QUESTIONS,
+      },
+      {
+        slug: "finalize",
+        title: "Finalize on call end",
+        description: "Promote the draft to durable items + diagrams; map --rebuild; record learnings.",
+        detail: SYSDESIGN_LIVE_FINALIZE,
       },
     ],
   },

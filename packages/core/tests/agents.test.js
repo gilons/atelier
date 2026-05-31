@@ -552,6 +552,36 @@ test("system-design carries the synthesize-map (design ⇄ code ⇄ docs ⇄ pla
   );
 });
 
+test("system-design carries the live-companion (on-a-call) sub-tree", async () => {
+  const { workspaceRoot } = await workspace();
+  await materializeBuiltin(workspaceRoot, "system-design");
+  const units = await listInstructionUnits(workspaceRoot, "system-design");
+  assert.ok(units.some((u) => u.slug === "live-companion"));
+
+  const a = await loadAgent(workspaceRoot, "system-design");
+  assert.match(a.instructions, /## Live companion mode/);
+  assert.match(a.instructions, /### Set up the live session/);
+  assert.match(a.instructions, /### Watch the transcript/);
+  assert.match(a.instructions, /### Surface follow-up questions/);
+  // Rides the speaking module + the markdown live view.
+  assert.match(a.instructions, /atelier session check/);
+  assert.match(a.instructions, /atelier session watch/);
+  // Classifies new-vs-modification against the map.
+  assert.match(a.instructions, /new vs modification/i);
+
+  const paths = workspacePaths(workspaceRoot);
+  await fs.access(
+    path.join(
+      paths.agents,
+      "system-design",
+      "instructions",
+      "live-companion",
+      "questions",
+      "detail.md"
+    )
+  );
+});
+
 // ============================================================
 // workspace integration
 // ============================================================
