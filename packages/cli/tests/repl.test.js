@@ -83,7 +83,7 @@ test("REPL dispatches /feature add to the underlying CLI", async () => {
     assert.match(result.stdout, /csv-export/);
     // Verify on disk too.
     const yaml = await fs.readFile(
-      path.join(ws, ".planning", "features", "csv-export.md"),
+      path.join(ws, ".atelier", "features", "csv-export.md"),
       "utf8"
     );
     assert.match(yaml, /name: CSV Export/);
@@ -180,7 +180,7 @@ test("REPL auto-register flow registers the current repo on y", async () => {
     assert.equal(result.status, 0, result.stderr);
     // The api repo should now be registered in the planning workspace.
     const reposYaml = await fs.readFile(
-      path.join(planning, ".planning", "repos.yaml"),
+      path.join(planning, ".atelier", "repos.yaml"),
       "utf8"
     );
     assert.match(reposYaml, /name: api/);

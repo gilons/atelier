@@ -56,7 +56,7 @@ test("atelier discrepancy add logs an entry", async () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /Logged discrepancy/);
     const yaml = await fs.readFile(
-      path.join(root, ".planning", "discrepancies.yaml"),
+      path.join(root, ".atelier", "discrepancies.yaml"),
       "utf8"
     );
     assert.match(yaml, /severity: high/);

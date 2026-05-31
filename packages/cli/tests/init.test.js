@@ -51,7 +51,7 @@ test("atelier init creates a planning workspace", async () => {
   try {
     const result = runCli(["init", "--name", "MyProduct"], root);
     assert.equal(result.status, 0, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
-    const planning = path.join(root, ".planning");
+    const planning = path.join(root, ".atelier");
     const stat = await fs.stat(planning);
     assert.ok(stat.isDirectory());
     // workspace.yaml exists and contains the name
@@ -82,7 +82,7 @@ test("atelier init --force overwrites existing workspace", async () => {
     assert.equal(result.status, 0);
     result = runCli(["init", "--name", "Second", "--force"], root);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    const ws = await fs.readFile(path.join(root, ".planning", "workspace.yaml"), "utf8");
+    const ws = await fs.readFile(path.join(root, ".atelier", "workspace.yaml"), "utf8");
     assert.match(ws, /name: Second/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -96,7 +96,7 @@ test("atelier init defaults workspace name to directory basename", async () => {
   try {
     const result = runCli(["init"], root);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-    const ws = await fs.readFile(path.join(root, ".planning", "workspace.yaml"), "utf8");
+    const ws = await fs.readFile(path.join(root, ".atelier", "workspace.yaml"), "utf8");
     assert.match(ws, /name: MyOrg/);
   } finally {
     await fs.rm(parent, { recursive: true, force: true });

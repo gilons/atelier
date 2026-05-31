@@ -66,9 +66,9 @@ test("atelier spec new scaffolds an issue folder", async () => {
     );
     assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
     assert.match(result.stdout, /Scaffolded spec/);
-    const dirs = await fs.readdir(path.join(workspaceRoot, ".planning", "issues"));
+    const dirs = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
     assert.equal(dirs.length, 1);
-    const dir = path.join(workspaceRoot, ".planning", "issues", dirs[0]);
+    const dir = path.join(workspaceRoot, ".atelier", "issues", dirs[0]);
     for (const f of ["README.md", "spec.md", "context.md", "prompt.md"]) {
       const stat = await fs.stat(path.join(dir, f));
       assert.ok(stat.isFile(), `${f} missing`);
@@ -108,9 +108,9 @@ test("atelier spec new --feature pulls feature refs", async () => {
       workspaceRoot
     );
     assert.equal(result.status, 0, result.stderr);
-    const dirs = await fs.readdir(path.join(workspaceRoot, ".planning", "issues"));
+    const dirs = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
     const context = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "issues", dirs[0], "context.md"),
+      path.join(workspaceRoot, ".atelier", "issues", dirs[0], "context.md"),
       "utf8"
     );
     assert.match(context, /### `reports`/);
@@ -152,7 +152,7 @@ test("atelier spec set-status changes status", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
     runCli(["spec", "new", "X", "--type", "bug"], workspaceRoot);
-    const dirs = await fs.readdir(path.join(workspaceRoot, ".planning", "issues"));
+    const dirs = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
     const id = dirs[0];
     const result = runCli(["spec", "set-status", id, "ready"], workspaceRoot);
     assert.equal(result.status, 0, result.stderr);
@@ -167,11 +167,11 @@ test("atelier spec remove deletes the folder", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
     runCli(["spec", "new", "X", "--type", "bug"], workspaceRoot);
-    const dirs = await fs.readdir(path.join(workspaceRoot, ".planning", "issues"));
+    const dirs = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
     const id = dirs[0];
     const result = runCli(["spec", "remove", id], workspaceRoot);
     assert.equal(result.status, 0);
-    const after = await fs.readdir(path.join(workspaceRoot, ".planning", "issues"));
+    const after = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
     assert.equal(after.length, 0);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });

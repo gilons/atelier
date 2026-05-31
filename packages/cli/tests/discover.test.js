@@ -201,7 +201,7 @@ test("repo discover --add-cloned registers locally-cloned candidates", async () 
 
     // Verify they're in repos.yaml now.
     const repos = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "repos.yaml"),
+      path.join(workspaceRoot, ".atelier", "repos.yaml"),
       "utf8"
     );
     assert.match(repos, /name: web/);

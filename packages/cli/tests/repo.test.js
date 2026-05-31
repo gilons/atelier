@@ -22,7 +22,7 @@ function runCli(args, cwd) {
  * Build the canonical layout:
  *   <umbrella>/
  *   ├── planning/        (workspace root)
- *   │   └── .planning/
+ *   │   └── .atelier/
  *   └── <siblings>/
  */
 async function setupCanonical(repos = []) {
@@ -75,7 +75,7 @@ test("atelier repo add ../api registers a sibling repo", async () => {
     assert.match(result.stdout, /myorg/);
 
     const repos = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "repos.yaml"),
+      path.join(workspaceRoot, ".atelier", "repos.yaml"),
       "utf8"
     );
     assert.match(repos, /name: api/);
@@ -96,7 +96,7 @@ test("atelier repo add works from a subdirectory of the workspace", async () => 
     const result = runCli(["repo", "add", "../../../api"], sub);
     assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
     const repos = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "repos.yaml"),
+      path.join(workspaceRoot, ".atelier", "repos.yaml"),
       "utf8"
     );
     assert.match(repos, /localPath:\s*['"]?\.\.\/api['"]?/);
@@ -113,7 +113,7 @@ test("atelier repo add accepts an absolute path", async () => {
     const result = runCli(["repo", "add", path.join(umbrella, "api")], workspaceRoot);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     const repos = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "repos.yaml"),
+      path.join(workspaceRoot, ".atelier", "repos.yaml"),
       "utf8"
     );
     // Stored as relative even though input was absolute.
@@ -207,7 +207,7 @@ test("atelier repo remove unregisters by name", async () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /Unregistered/);
     const repos = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "repos.yaml"),
+      path.join(workspaceRoot, ".atelier", "repos.yaml"),
       "utf8"
     );
     assert.doesNotMatch(repos, /name: api/);
@@ -249,7 +249,7 @@ test("atelier repo add --name overrides the derived name", async () => {
     );
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     const repos = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "repos.yaml"),
+      path.join(workspaceRoot, ".atelier", "repos.yaml"),
       "utf8"
     );
     assert.match(repos, /name: backend-api/);

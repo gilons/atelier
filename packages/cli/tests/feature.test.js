@@ -61,7 +61,7 @@ test("atelier feature add creates a feature with a derived id", async () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
     assert.match(result.stdout, /Added feature/);
     assert.match(result.stdout, /csv-export/);
-    const filePath = path.join(workspaceRoot, ".planning", "features", "csv-export.md");
+    const filePath = path.join(workspaceRoot, ".atelier", "features", "csv-export.md");
     const text = await fs.readFile(filePath, "utf8");
     assert.match(text, /^---\n/);
     assert.match(text, /id: csv-export/);
@@ -82,7 +82,7 @@ test("atelier feature add accepts --name flag in place of positional", async () 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /reports/);
     const text = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "features", "reports.md"),
+      path.join(workspaceRoot, ".atelier", "features", "reports.md"),
       "utf8"
     );
     assert.match(text, /status: in-progress/);
@@ -124,7 +124,7 @@ test("atelier feature add --code references a registered repo", async () => {
     );
     assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
     const text = await fs.readFile(
-      path.join(workspaceRoot, ".planning", "features", "reports.md"),
+      path.join(workspaceRoot, ".atelier", "features", "reports.md"),
       "utf8"
     );
     assert.match(text, /repo: api/);
@@ -253,7 +253,7 @@ test("atelier feature remove deletes the file", async () => {
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /Removed feature/);
     const exists = await fs
-      .access(path.join(workspaceRoot, ".planning", "features", "search.md"))
+      .access(path.join(workspaceRoot, ".atelier", "features", "search.md"))
       .then(() => true)
       .catch(() => false);
     assert.equal(exists, false);
