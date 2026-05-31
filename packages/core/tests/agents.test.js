@@ -459,6 +459,41 @@ test("the discovery built-in ships as an instruction tree", async () => {
   assert.match(a.instructions, /## Connect code repositories/);
 });
 
+test("the system-design built-in ships as a tool-aware tree with nested onboarding units", async () => {
+  const { workspaceRoot } = await workspace();
+  assert.ok(findBuiltinAgent("system-design"));
+  await materializeBuiltin(workspaceRoot, "system-design");
+
+  const units = await listInstructionUnits(workspaceRoot, "system-design");
+  const slugs = units.map((u) => u.slug);
+  for (const expected of [
+    "overview",
+    "detect-tool",
+    "onboard-tool",
+    "drive-tool",
+    "markdown-fallback",
+    "deliverables",
+    "wrapup",
+  ]) {
+    assert.ok(slugs.includes(expected), `missing system-design unit ${expected}`);
+  }
+
+  // The composed playbook carries the three-branch model + the nested
+  // per-platform onboarding units at a deeper heading level.
+  const a = await loadAgent(workspaceRoot, "system-design");
+  assert.match(a.instructions, /## Onboard a design tool/);
+  assert.match(a.instructions, /### Excalidraw/);
+  assert.match(a.instructions, /### Lucidchart/);
+  assert.match(a.instructions, /### Figma/);
+  assert.match(a.instructions, /## Markdown fallback/);
+
+  // The nested onboarding sub-units exist on disk.
+  const paths = workspacePaths(workspaceRoot);
+  await fs.access(
+    path.join(paths.agents, "system-design", "instructions", "onboard-tool", "figma", "detail.md")
+  );
+});
+
 // ============================================================
 // workspace integration
 // ============================================================

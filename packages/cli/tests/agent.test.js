@@ -106,6 +106,23 @@ test("atelier agent install of an unknown id errors cleanly", async () => {
   }
 });
 
+test("atelier agent install system-design renders the tool-aware playbook", async () => {
+  const { umbrella, workspaceRoot } = await setupWorkspace();
+  try {
+    const result = runCli(["agent", "install", "system-design"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    const sub = await fs.readFile(
+      path.join(workspaceRoot, ".claude", "agents", "atelier-system-design.md"),
+      "utf8"
+    );
+    assert.match(sub, /## Onboard a design tool/);
+    assert.match(sub, /### Figma/);
+    assert.match(sub, /## Markdown fallback/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("atelier agent instruction list shows the discovery playbook units", async () => {
   const { umbrella, workspaceRoot } = await setupWorkspace();
   try {
