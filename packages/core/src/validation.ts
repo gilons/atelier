@@ -10,6 +10,7 @@ import type {
   FeatureCodeRef,
   FeatureItemRef,
   ItemFrontMatter,
+  DocFrontMatter,
   SessionFrontMatter,
   SessionStatus,
   StakeholderFrontMatter,
@@ -526,6 +527,59 @@ export function validateItemFrontMatter(
   if (classification !== undefined) value.classification = classification as string;
   if (link !== undefined) value.link = link as string;
   if (parent !== undefined) value.parent = parent as string;
+  if (fromSession !== undefined) value.fromSession = fromSession as string;
+  return { ok: true, value, issues: [] };
+}
+
+// ============================================================
+// Documentation front-matter
+// ============================================================
+
+export function validateDocFrontMatter(
+  raw: unknown
+): ValidationResult<DocFrontMatter> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return {
+      ok: false,
+      issues: [{ path: "$", message: "expected an object at the top level" }],
+    };
+  }
+  const { source, docId, title, overview, classification, link, owner, fromSession, createdAt, updatedAt } = raw;
+
+  if (!isNonEmptyString(source)) pushIssue(issues, "$.source", "must be a non-empty string");
+  if (!isNonEmptyString(docId)) pushIssue(issues, "$.docId", "must be a non-empty string");
+  if (!isNonEmptyString(title)) pushIssue(issues, "$.title", "must be a non-empty string");
+  if (overview !== undefined && typeof overview !== "string") {
+    pushIssue(issues, "$.overview", "if present, must be a string");
+  }
+  if (classification !== undefined && typeof classification !== "string") {
+    pushIssue(issues, "$.classification", "if present, must be a string");
+  }
+  if (link !== undefined && !isNonEmptyString(link)) {
+    pushIssue(issues, "$.link", "if present, must be a non-empty string");
+  }
+  if (owner !== undefined && !isNonEmptyString(owner)) {
+    pushIssue(issues, "$.owner", "if present, must be a non-empty string");
+  }
+  if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
+    pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
+  }
+  if (!isNonEmptyString(createdAt)) pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
+  if (!isNonEmptyString(updatedAt)) pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
+
+  if (issues.length > 0) return { ok: false, issues };
+  const value: DocFrontMatter = {
+    source: source as string,
+    docId: docId as string,
+    title: title as string,
+    createdAt: createdAt as string,
+    updatedAt: updatedAt as string,
+  };
+  if (overview !== undefined) value.overview = overview as string;
+  if (classification !== undefined) value.classification = classification as string;
+  if (link !== undefined) value.link = link as string;
+  if (owner !== undefined) value.owner = owner as string;
   if (fromSession !== undefined) value.fromSession = fromSession as string;
   return { ok: true, value, issues: [] };
 }

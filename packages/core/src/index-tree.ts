@@ -12,6 +12,7 @@ import {
 
 import { listAgents, loadAgent, AgentNotFoundError } from "./agents.js";
 import { listItems } from "./items.js";
+import { listDocs } from "./documentation.js";
 import { listFeatures } from "./features.js";
 import { listSessions } from "./sessions.js";
 import { listStakeholders } from "./stakeholders.js";
@@ -108,6 +109,20 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
         title: `${item.source}:${item.docId}`,
         kind: item.classification ? `item/${item.classification}` : "item",
         description: truncate(item.overview ?? item.title),
+      }));
+    },
+  },
+  {
+    dir: "documentation",
+    name: "Documentation",
+    description: "Indexed knowledge — PRDs, RFCs, runbooks, transcripts (agent-curated summaries).",
+    async loadChildren(root) {
+      const { docs } = await listDocs(root);
+      return docs.map(({ doc }) => ({
+        path: `${doc.source}/`,
+        title: `${doc.source}:${doc.docId}`,
+        kind: doc.classification ? `doc/${doc.classification}` : "doc",
+        description: truncate(doc.overview ?? doc.title),
       }));
     },
   },

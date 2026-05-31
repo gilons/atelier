@@ -29,6 +29,7 @@ export * from "./sources.js";
 export * from "./sessions.js";
 export * from "./features.js";
 export * from "./items.js";
+export * from "./documentation.js";
 export * from "./stakeholders.js";
 export * from "./agents.js";
 export * from "./agent-builtins.js";

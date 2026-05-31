@@ -307,6 +307,55 @@ export interface Item extends ItemFrontMatter {
 }
 
 // ============================================================
+// Documentation — knowledge artifacts (PRDs, RFCs, runbooks, …)
+// ============================================================
+
+/**
+ * A piece of documentation atelier has indexed — the first of the
+ * typed surfaces that replace the generic "item". One entry per
+ * knowledge artifact (a PRD, an RFC, a runbook, a transcript). As
+ * with the old item model, atelier stores an agent-curated summary +
+ * a `link` back to the source, not the source content itself.
+ *
+ * Storage: `.atelier/documentation/<source>/<encoded-docId>/summary.md`.
+ */
+export interface DocFrontMatter {
+  /** Source id (must exist in sources.yaml; typically a `docs` source). */
+  source: string;
+  /** Stable, source-side id. Opaque to atelier. */
+  docId: string;
+  /** Display title. */
+  title: string;
+  /** One-line elevator summary (full summary lives in the body). */
+  overview?: string;
+  /**
+   * Free-form classification: "prd" | "rfc" | "runbook" | "transcript"
+   * | "policy" | "reference" | … Atelier doesn't enforce a vocabulary.
+   */
+  classification?: string;
+  /** Pointer the agent follows to re-read the full document. */
+  link?: string;
+  /**
+   * Who owns / maintains this doc — a stakeholder id or free-form name.
+   * Documentation-specific: lets the docs surface answer "who keeps
+   * this current?".
+   */
+  owner?: string;
+  /** Session id this doc was captured from, when applicable. */
+  fromSession?: string;
+  /** ISO timestamp when first indexed. */
+  createdAt: string;
+  /** ISO timestamp of the most recent structural change. */
+  updatedAt: string;
+}
+
+/** A loaded documentation entry: front-matter + the summary body. */
+export interface Documentation extends DocFrontMatter {
+  /** Markdown body — the agent-curated summary. May be empty. */
+  body: string;
+}
+
+// ============================================================
 // Sessions — the speaking-module record of a conversation
 // ============================================================
 

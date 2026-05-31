@@ -48,8 +48,10 @@ export interface WorkspacePaths {
    * one folder per session containing session.yaml + transcript.md.
    */
   sessions: string;
-  /** `.atelier/items/` — item map entries (nested by source id) */
+  /** `.atelier/items/` — item map entries (nested by source id) — legacy, being split into typed surfaces */
   items: string;
+  /** `.atelier/documentation/` — documentation entries (nested by source id) */
+  documentation: string;
   /**
    * `.atelier/stakeholders/` — one folder per person involved with
    * the workspace's product. Shared `profile.md` lives in git;
@@ -105,6 +107,7 @@ export function workspacePaths(
     sources: path.join(atelier, "sources"),
     sessions: path.join(atelier, "sessions"),
     items: path.join(atelier, "items"),
+    documentation: path.join(atelier, "documentation"),
     stakeholders: path.join(atelier, "stakeholders"),
     agents: path.join(atelier, "agents"),
     discrepanciesLog: path.join(atelier, "discrepancies.yaml"),
