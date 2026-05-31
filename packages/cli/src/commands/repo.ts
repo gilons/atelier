@@ -8,6 +8,7 @@ import {
   discoverRepos,
   discoverManyOrgs,
   discoverLocal,
+  inspectProjects,
   suggestedAddCommand,
   GhAdapter,
   RepoAlreadyRegisteredError,
@@ -401,6 +402,77 @@ const discoverCmd: Command = {
   },
 };
 
+const inspectCmd: Command = {
+  name: "inspect",
+  summary: "Detect each repo's ecosystems, packages, and service boundaries.",
+  description:
+    "Deterministic structural fingerprint of the registered repos — the\n" +
+    "projects / subsystems / microservices the workspace is made of, by\n" +
+    "manifest files (package.json, go.mod, pyproject.toml, …), monorepo\n" +
+    "packages (workspaces, apps/, services/, cmd/), and container hints.\n\n" +
+    "No analysis, no LLM — just the structural facts the system-design\n" +
+    "agent builds its workspace design on. Pass a repo name to inspect\n" +
+    "just one; --json for machine consumption.",
+  positionals: ["name?"],
+  options: {
+    json: { type: "boolean" },
+  },
+  async run({ values, positionals, cwd }) {
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
+    const result = await inspectProjects(workspaceRoot, {
+      repo: positionals[0],
+    });
+
+    if (values.json === true) {
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+      return 0;
+    }
+
+    if (result.repos.length === 0) {
+      ui.info("No repositories registered.");
+      ui.print(`  ${ui.dim("Register one with `atelier repo add ../<dir>`.")}`);
+      return 0;
+    }
+
+    for (const r of result.repos) {
+      if (!r.exists) {
+        ui.print(`${ui.bold(r.repo)}  ${ui.dim("(not cloned locally)")}`);
+        ui.blank();
+        continue;
+      }
+      const tags: string[] = [];
+      if (r.monorepo) tags.push("monorepo");
+      if (r.containerized) tags.push("containerized");
+      const eco = r.ecosystems.length > 0 ? r.ecosystems.join(", ") : ui.dim("no manifest found");
+      ui.print(
+        `${ui.bold(r.repo)}  ${ui.dim("[" + eco + "]")}${tags.length ? "  " + ui.dim(tags.join(" · ")) : ""}`
+      );
+      const members = r.packages.filter((p) => p.path !== ".");
+      if (members.length > 0) {
+        for (const p of members) {
+          ui.print(`  ${ui.green("·")} ${p.path}  ${ui.dim(p.name + " (" + p.ecosystems.join(",") + ")")}`);
+        }
+      }
+      ui.blank();
+    }
+    ui.print(
+      `  ${ui.dim("→ Feed this to the system-design agent: `atelier agent install system-design`.")}`
+    );
+    ui.blank();
+    return 0;
+  },
+};
+
 export const repoCommand: Command = {
   name: "repo",
   summary: "Manage code repositories registered with this workspace.",
@@ -408,5 +480,5 @@ export const repoCommand: Command = {
     "Repositories represent the code your product lives in. They are\n" +
     "sibling directories under the workspace root. Atelier reads from\n" +
     "them and writes specs that reference paths inside them.",
-  subcommands: [addCmd, listCmd, removeCmd, discoverCmd],
+  subcommands: [addCmd, listCmd, removeCmd, discoverCmd, inspectCmd],
 };

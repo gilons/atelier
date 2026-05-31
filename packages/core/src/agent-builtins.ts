@@ -212,8 +212,117 @@ looks empty, suggest running the **discovery agent**
 (\`/atelier:discovery\`) first so you know the repos / docs / people
 involved.
 
+**Starting fresh?** If the workspace has no system-design items yet,
+begin with "Initial workspace system design" — it pulls out the
+projects/subsystems, analyzes similarities and patterns across them,
+documents what it finds, and produces the workspace's first set of
+diagrams. On later runs you *refine* that design rather than
+regenerate it.
+
 Record durable facts with \`atelier agent learn system-design "…"\` —
-especially **which tool is selected** — so future runs don't re-ask.`;
+especially **which tool is selected** and the workspace's shape — so
+your knowledge compounds across runs instead of restarting.`;
+
+const SYSDESIGN_BOOTSTRAP = `Generate the **initial system design for the whole workspace**. This
+is the cold-start pass; run it once, then refine on later runs.
+
+A workspace is one of two shapes — handle both:
+- **One project, multiple subsystems** (a monorepo or a service with
+  several modules / microservices).
+- **Multiple projects** side by side (possibly related or overlapping).
+
+The flow (see the sub-units for detail):
+1. **Enumerate** the projects/subsystems from the registered repos.
+2. **Analyze similarities** across them — shared tech, shared code,
+   overlapping domains.
+3. **Analyze patterns** — architectural styles, integration points,
+   data stores, cross-cutting concerns.
+4. **Document** what you find — features, system-design items,
+   decisions, and durable learnings.
+5. **Diagram** the workspace — a landscape/context view plus
+   per-project container views — in the configured tool, or Markdown.
+
+Work incrementally and confirm as you go. When done, you'll have a
+first coherent picture of the whole workspace that later runs sharpen.`;
+
+const SYSDESIGN_ENUMERATE = `Pull out the projects / subsystems / microservices.
+
+- Start from the structural facts atelier already has — don't crawl
+  blind: \`atelier repo inspect --json\` lists each registered repo's
+  ecosystems, monorepo packages, service dirs, and container hints.
+  (\`atelier repo list\` if you just need names.)
+- For each repo, decide whether it's a single project or a monorepo of
+  several subsystems, and enumerate the deployable/runnable units
+  (services, apps, packages, cmds).
+- Read entry points and manifests to confirm boundaries (read the
+  package/module manifests the inspector surfaced; skim main/cmd dirs).
+- Produce a flat inventory: every project/subsystem with its name,
+  path, ecosystem, and one-line role.
+- Record it as a learning so the next run starts from the inventory.`;
+
+const SYSDESIGN_SIMILARITIES = `Analyze similarities across the projects/subsystems.
+
+Look for (and note where each appears):
+- **Shared tech** — same language/framework/runtime, same datastore,
+  same messaging/queue, same auth approach.
+- **Shared code** — common libraries, copied utilities, an internal
+  SDK, duplicated domain models.
+- **Overlapping domains** — two projects that model the same concept
+  (users, billing, catalog) — candidates for consolidation or a shared
+  service.
+- **Conventions** — naming, directory layout, config style.
+
+Call out both genuine reuse and accidental duplication. These
+similarities are what make a *workspace* design more than a pile of
+per-repo diagrams.`;
+
+const SYSDESIGN_PATTERNS = `Analyze architectural patterns.
+
+For each project/subsystem and across the workspace, identify:
+- **Architectural style** — layered, hexagonal, event-driven,
+  request/response, batch/worker, etc.
+- **Integration points** — how subsystems talk (HTTP/gRPC APIs, queues,
+  shared DB, webhooks, files). These become the edges in the workspace
+  diagram.
+- **Data stores** — what each owns; where data is shared or replicated.
+- **Cross-cutting concerns** — auth, logging, config, feature flags,
+  observability — and whether they're handled consistently.
+- **Anti-patterns / risks** — cyclic dependencies, shared mutable DBs,
+  god services. Capture these as discrepancies or open questions.`;
+
+const SYSDESIGN_DOCUMENT = `Document what you found so it lives in atelier, not just in your head.
+
+- **Features** — register the major capabilities the workspace
+  delivers: \`atelier feature add "<name>" --code <repo>:<path>\` so each
+  ties back to the code that implements it.
+- **System-design items** — for the workspace overview and each
+  significant subsystem, add an item:
+  \`atelier item add <source>:<id> --title "<name> — system design" --classification system-design\`
+  with a body summarizing structure, responsibilities, and
+  dependencies (link to the live diagram when a tool is configured).
+- **Decisions & risks** — record key trade-offs; log anti-patterns as
+  discrepancies (\`atelier discrepancy add\`).
+- **Learnings** — \`atelier agent learn system-design "…"\` for the
+  durable shape (the inventory, the shared pieces, the integration map)
+  so future runs refine instead of rediscover.`;
+
+const SYSDESIGN_WORKSPACE_DIAGRAMS = `Produce the workspace's diagrams — driven by the configured tool, or
+Markdown (Mermaid) when there's none (see "Drive the configured tool"
+and "Markdown fallback").
+
+Aim for a small, layered set:
+1. **Workspace landscape / context** — every project/subsystem as a
+   box, with the integration edges between them and the external
+   actors/systems they touch. This is the "whole workspace" view the
+   team has probably never seen in one place.
+2. **Per-project container views** — for each non-trivial project, its
+   containers/services and how they communicate.
+3. **Cross-cutting views as needed** — a shared-data view, an auth
+   flow, a key end-to-end sequence.
+
+Keep diagrams consistent (same notation, same naming as the
+inventory). Mirror each into atelier as a system-design item with a
+link so they're discoverable via \`atelier map\`.`;
 
 const SYSDESIGN_DETECT = `Find the configured system-design tool before doing anything else.
 
@@ -350,6 +459,44 @@ const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
     title: "Detect the configured tool",
     description: "Find the selected design source (+ remembered choice) before acting.",
     detail: SYSDESIGN_DETECT,
+  },
+  {
+    slug: "workspace-design",
+    title: "Initial workspace system design",
+    description: "Cold-start: pull out projects, analyze similarities/patterns, document, diagram.",
+    detail: SYSDESIGN_BOOTSTRAP,
+    children: [
+      {
+        slug: "enumerate-projects",
+        title: "Enumerate projects & subsystems",
+        description: "Use `atelier repo inspect` to pull out the projects/services/packages.",
+        detail: SYSDESIGN_ENUMERATE,
+      },
+      {
+        slug: "analyze-similarities",
+        title: "Analyze similarities",
+        description: "Shared tech, shared code, overlapping domains, conventions.",
+        detail: SYSDESIGN_SIMILARITIES,
+      },
+      {
+        slug: "analyze-patterns",
+        title: "Analyze patterns",
+        description: "Architectural styles, integration points, data stores, anti-patterns.",
+        detail: SYSDESIGN_PATTERNS,
+      },
+      {
+        slug: "document",
+        title: "Document the findings",
+        description: "Features, system-design items, decisions, discrepancies, learnings.",
+        detail: SYSDESIGN_DOCUMENT,
+      },
+      {
+        slug: "workspace-diagrams",
+        title: "Diagram the workspace",
+        description: "Landscape/context + per-project container views, via tool or Mermaid.",
+        detail: SYSDESIGN_WORKSPACE_DIAGRAMS,
+      },
+    ],
   },
   {
     slug: "onboard-tool",

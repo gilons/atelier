@@ -494,6 +494,35 @@ test("the system-design built-in ships as a tool-aware tree with nested onboardi
   );
 });
 
+test("system-design carries the initial-workspace-design bootstrap sub-tree", async () => {
+  const { workspaceRoot } = await workspace();
+  await materializeBuiltin(workspaceRoot, "system-design");
+  const units = await listInstructionUnits(workspaceRoot, "system-design");
+  assert.ok(units.some((u) => u.slug === "workspace-design"));
+
+  // The bootstrap unit's sub-units (enumerate → analyze → document →
+  // diagram) compose at a deeper heading level + reference repo inspect.
+  const a = await loadAgent(workspaceRoot, "system-design");
+  assert.match(a.instructions, /## Initial workspace system design/);
+  assert.match(a.instructions, /### Enumerate projects & subsystems/);
+  assert.match(a.instructions, /### Analyze similarities/);
+  assert.match(a.instructions, /### Analyze patterns/);
+  assert.match(a.instructions, /### Diagram the workspace/);
+  assert.match(a.instructions, /atelier repo inspect/);
+
+  const paths = workspacePaths(workspaceRoot);
+  await fs.access(
+    path.join(
+      paths.agents,
+      "system-design",
+      "instructions",
+      "workspace-design",
+      "enumerate-projects",
+      "detail.md"
+    )
+  );
+});
+
 // ============================================================
 // workspace integration
 // ============================================================
