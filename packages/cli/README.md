@@ -15,6 +15,30 @@ atelier --version
 
 A single, self-contained package — no peer packages, zero runtime dependencies. Requires Node.js ≥ 20. (Optional macOS system-audio capture uses a bundled Swift helper; everything else is cross-platform.)
 
+## Use it with your coding agent
+
+Atelier is **agent-agnostic**: the deterministic CLI is the interface, so any coding agent that can run a shell command can drive it. Atelier *authors* its own agents (discovery, system-design, ui-design) as version-controlled markdown, and renders them into the formats your tool discovers.
+
+**Claude Code** — first-class, auto-installed:
+
+```bash
+atelier agent install discovery        # writes .claude/commands/atelier/discovery.md
+                                        #    +  .claude/agents/atelier-discovery.md
+atelier agent install system-design
+atelier agent install ui-design
+```
+
+You then get **slash commands** (`/atelier:discovery`, `/atelier:system-design`, …) and **subagents** Claude can delegate to — no extra config. Re-run any time; the `.claude/` files are regenerated from the canonical definitions in `.atelier/agents/`.
+
+**Codex, Cursor, Copilot, and others** — point your agent at the workspace. The same agent instructions live as plain markdown at `.atelier/agents/<id>/instructions.md`, and every command is plain, scriptable CLI:
+
+```bash
+atelier map                       # the navigable index your agent reads first
+atelier agent show system-design  # the full playbook for that agent, as markdown
+```
+
+Drop those instructions into your tool's rules/prompt (e.g. `AGENTS.md`, a Cursor rule, a Codex prompt) and it can run the same atelier-driven workflow. The agents also **improve over time** — `atelier agent learn <id> "…"` records durable learnings that fold back into the rendered instructions.
+
 ## Quick start
 
 ```bash
