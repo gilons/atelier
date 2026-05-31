@@ -232,6 +232,10 @@ the user watches via \`atelier session watch <id>\`), classify whether
 each idea is new or a change to the existing system, and surface
 follow-up questions to ask in the moment.
 
+**Coming back to a design that already exists?** Don't rebuild it —
+**refresh** it: diff today's code/docs/design against the recorded
+design and update only the delta. See "Refresh an existing design".
+
 Record durable facts with \`atelier agent learn system-design "…"\` —
 especially **which tool is selected** and the workspace's shape — so
 your knowledge compounds across runs instead of restarting.`;
@@ -487,7 +491,9 @@ const SYSDESIGN_LIVE_SETUP = `Pre-flight before you go live.
    \`active\` one; else have the user run \`atelier session record
    --chunk 45\`). For live, transcribe with a **fast STT model**
    (tiny/base) for responsiveness — you'll re-transcribe accurately at
-   finalize.
+   finalize. Check \`atelier design live show\` for the configured live
+   model + **stability gate** (how many stable chunks before the slow
+   track renders); honor them, or use the defaults it prints.
 4. **Set up the view:**
    - **Design tool connected** (\`atelier design-tool show\` / a \`design\`
      source) → open/create the live diagram and **share its link** with
@@ -522,9 +528,10 @@ cases, ownership/dependencies, and conflicts with the existing design.`;
 const SYSDESIGN_LIVE_SLOW = `The **slow track** renders the visualization — gate it so it never
 thrashes.
 
-**When to fire:** a topic has been stable across ~2 chunks (~60–90s),
-or the user explicitly asks ("show me"). On volatile calls, hold off —
-the fast track is still keeping the anchor + questions live.
+**When to fire:** a topic has been stable across the configured
+**stability gate** (\`atelier design live show\` — default ~2 chunks /
+~60–90s), or the user explicitly asks ("show me"). On volatile calls,
+hold off — the fast track is still keeping the anchor + questions live.
 
 **How to render — derive, don't generate:**
 - Start from the **base** (the existing design, derived from the
@@ -715,6 +722,62 @@ const SYSDESIGN_WRAPUP = `Wrap up:
 4. Suggest next steps (e.g. turn a key decision into a spec with
    \`atelier spec new\`).`;
 
+const SYSDESIGN_REFRESH = `**Refresh** an existing design instead of rebuilding it. Once the
+workspace has system-design items, later runs should *diff and
+update*, not regenerate — faster, and it preserves the history and
+decisions already captured.
+
+This is the same "derive, don't generate" discipline applied over
+time: the existing design is the base; you compute what changed since
+it was written and apply only the delta.
+
+The flow (sub-units): detect what changed → apply the delta to the
+affected designs → record the divergences. Run this periodically, or
+after a chunk of work lands, or at the start of a live session to make
+sure the base you're working from is current.`;
+
+const SYSDESIGN_REFRESH_DETECT = `Detect what changed since the design was last written.
+
+- Read the current design: the system-design items
+  (\`atelier map\`, \`atelier item list\`) — this is your baseline.
+- Compare against today's reality:
+  - **Code:** \`atelier repo inspect --json\` for structural changes
+    (new/removed services, new ecosystems); use git in the repos
+    (\`git log\`, \`git diff\`) since the item's \`updatedAt\` to see what
+    actually changed.
+  - **Docs / planning:** new or updated items in the \`docs\` / \`pm\`
+    sources.
+  - **Design tool:** diagrams edited since last sync.
+- Produce a short **change list**: for each affected design item, what
+  drifted (added / removed / changed), with the evidence (code path,
+  doc, commit).`;
+
+const SYSDESIGN_REFRESH_APPLY = `Apply the delta — update, don't rewrite.
+
+For each item on the change list:
+- **Update the affected system-design item** in place
+  (\`atelier item update <source>:<docId> …\`) — adjust only the parts
+  that drifted; keep the rest, including prior decisions and history.
+- **Update the diagram** the same way: in the connected tool, edit the
+  affected nodes/edges; in Markdown, edit just those sections of the
+  item body (Mermaid).
+- Reference existing palette \`ref\`s; add genuinely-new pieces as new
+  entries rather than reshaping the whole picture.
+- Bump nothing you didn't actually change — a clean, reviewable diff is
+  the point.`;
+
+const SYSDESIGN_REFRESH_RECORD = `Record the divergences + learnings.
+
+- Where the design *was* right and the code/docs drifted, log a
+  **discrepancy** (\`atelier discrepancy add\`) so the gap is tracked,
+  not silently overwritten.
+- Where the design was simply stale, the in-place update is enough.
+- Record a learning capturing what changed
+  (\`atelier agent learn system-design "…"\`), and
+  \`atelier map --rebuild\` so the index reflects the refreshed design.
+- Summarise for the user: what you updated, what diverged, what you
+  flagged.`;
+
 const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
   {
     slug: "overview",
@@ -801,6 +864,32 @@ const SYSTEM_DESIGN_UNITS: InstructionUnit[] = [
         title: "Produce the detailed map",
         description: "Navigable tree of capabilities → code/docs/design/planning/owner.",
         detail: SYSDESIGN_DETAILED_MAP,
+      },
+    ],
+  },
+  {
+    slug: "refresh-design",
+    title: "Refresh an existing design (diff, don't rebuild)",
+    description: "On later runs, diff code/docs/design vs the recorded design and update only the delta.",
+    detail: SYSDESIGN_REFRESH,
+    children: [
+      {
+        slug: "detect-changes",
+        title: "Detect what changed",
+        description: "Diff current code/docs/design against the existing system-design items (the baseline).",
+        detail: SYSDESIGN_REFRESH_DETECT,
+      },
+      {
+        slug: "apply-delta",
+        title: "Apply the delta",
+        description: "Update affected items + diagrams in place; reference existing refs; clean diff.",
+        detail: SYSDESIGN_REFRESH_APPLY,
+      },
+      {
+        slug: "record",
+        title: "Record divergences",
+        description: "Log discrepancies where code drifted from design; learnings; map --rebuild.",
+        detail: SYSDESIGN_REFRESH_RECORD,
       },
     ],
   },

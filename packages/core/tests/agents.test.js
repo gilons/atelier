@@ -552,6 +552,33 @@ test("system-design carries the synthesize-map (design ⇄ code ⇄ docs ⇄ pla
   );
 });
 
+test("system-design carries the refresh (diff-don't-rebuild) sub-tree", async () => {
+  const { workspaceRoot } = await workspace();
+  await materializeBuiltin(workspaceRoot, "system-design");
+  const units = await listInstructionUnits(workspaceRoot, "system-design");
+  assert.ok(units.some((u) => u.slug === "refresh-design"));
+
+  const a = await loadAgent(workspaceRoot, "system-design");
+  assert.match(a.instructions, /## Refresh an existing design/);
+  assert.match(a.instructions, /### Detect what changed/);
+  assert.match(a.instructions, /### Apply the delta/);
+  // Diffs against the baseline + updates in place + logs discrepancies.
+  assert.match(a.instructions, /atelier item update/);
+  assert.match(a.instructions, /atelier discrepancy add/);
+
+  const paths = workspacePaths(workspaceRoot);
+  await fs.access(
+    path.join(
+      paths.agents,
+      "system-design",
+      "instructions",
+      "refresh-design",
+      "detect-changes",
+      "detail.md"
+    )
+  );
+});
+
 test("system-design live-companion uses the two-track (derive-fast) design", async () => {
   const { workspaceRoot } = await workspace();
   await materializeBuiltin(workspaceRoot, "system-design");

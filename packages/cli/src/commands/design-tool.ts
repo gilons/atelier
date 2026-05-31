@@ -39,13 +39,16 @@ const showCmd: Command = {
     if (typeof root === "number") return root;
 
     const cfg = await loadDesignConfig(root);
-    if (!cfg) {
+    if (!cfg || !cfg.tool) {
       const hint = mode === "repl" ? "/design-tool set <tool>" : "atelier design-tool set <tool>";
       ui.info("No system-design tool set.");
       ui.print(
         `  ${ui.dim(`The system-design agent will infer from \`design\` sources, else use Markdown.`)}`
       );
       ui.print(`  ${ui.dim(`Declare one explicitly with \`${hint}\`.`)}`);
+      if (cfg?.live) {
+        ui.print(`  ${ui.dim(`(Live tuning is set — see \`atelier design live show\`.)`)}`);
+      }
       return 0;
     }
     ui.print(ui.bold(cfg.tool));
@@ -98,7 +101,7 @@ const setCmd: Command = {
         sourceId,
         notes: values.note as string | undefined,
       });
-      ui.success(`System-design tool set to ${ui.bold(cfg.tool)}.`);
+      ui.success(`System-design tool set to ${ui.bold(cfg.tool ?? tool)}.`);
       if (cfg.sourceId) ui.print(`  ${ui.dim("backed by source:")} ${cfg.sourceId}`);
       ui.print(
         `  ${ui.dim("The system-design agent will drive this tool (run `atelier agent install system-design`).")}`

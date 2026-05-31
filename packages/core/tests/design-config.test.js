@@ -7,6 +7,7 @@ import {
   initWorkspace,
   loadDesignConfig,
   setDesignTool,
+  setLiveConfig,
   clearDesignTool,
   DesignConfigError,
   workspacePaths,
@@ -64,6 +65,45 @@ test("clearDesignTool removes the setting", async () => {
   assert.equal(await loadDesignConfig(workspaceRoot), null);
   // Clearing again is a no-op (false).
   assert.equal(await clearDesignTool(workspaceRoot), false);
+});
+
+test("setLiveConfig tunes the stability gate + model, standalone (no tool)", async () => {
+  const { workspaceRoot } = await workspace();
+  const cfg = await setLiveConfig(workspaceRoot, { stabilityChunks: 3, model: "base" });
+  assert.equal(cfg.tool, undefined);
+  assert.equal(cfg.live.stabilityChunks, 3);
+  assert.equal(cfg.live.model, "base");
+  const loaded = await loadDesignConfig(workspaceRoot);
+  assert.equal(loaded.live.stabilityChunks, 3);
+  assert.equal(loaded.live.model, "base");
+});
+
+test("setLiveConfig and setDesignTool preserve each other", async () => {
+  const { workspaceRoot } = await workspace();
+  await setLiveConfig(workspaceRoot, { stabilityChunks: 4 });
+  await setDesignTool(workspaceRoot, { tool: "figma" });
+  let loaded = await loadDesignConfig(workspaceRoot);
+  assert.equal(loaded.tool, "figma");
+  assert.equal(loaded.live.stabilityChunks, 4, "tool change wiped live tuning");
+
+  await setLiveConfig(workspaceRoot, { model: "tiny" });
+  loaded = await loadDesignConfig(workspaceRoot);
+  assert.equal(loaded.tool, "figma", "live change wiped the tool");
+  assert.equal(loaded.live.stabilityChunks, 4);
+  assert.equal(loaded.live.model, "tiny");
+});
+
+test("setLiveConfig rejects a non-positive stability gate", async () => {
+  const { workspaceRoot } = await workspace();
+  await assert.rejects(() => setLiveConfig(workspaceRoot, { stabilityChunks: 0 }), DesignConfigError);
+});
+
+test("setLiveConfig can clear a field with null", async () => {
+  const { workspaceRoot } = await workspace();
+  await setLiveConfig(workspaceRoot, { stabilityChunks: 3, model: "base" });
+  const cfg = await setLiveConfig(workspaceRoot, { model: null });
+  assert.equal(cfg.live.stabilityChunks, 3);
+  assert.equal(cfg.live.model, undefined);
 });
 
 test("loadDesignConfig throws on a malformed file", async () => {

@@ -62,3 +62,44 @@ test("atelier design palette --json is parseable", async () => {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
+
+test("atelier design live show reports the default gate before tuning", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const result = runCli(["design", "live", "show"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    assert.match(result.stdout, /stability gate:\s*2 chunk/);
+    assert.match(result.stdout, /default/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("atelier design live set tunes the gate + model and persists", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const set = runCli(
+      ["design", "live", "set", "--stability-chunks", "3", "--model", "base"],
+      workspaceRoot
+    );
+    assert.equal(set.status, 0, `stderr: ${set.stderr}\nstdout: ${set.stdout}`);
+    const show = runCli(["design", "live", "show"], workspaceRoot);
+    assert.match(show.stdout, /stability gate:\s*3 chunk/);
+    assert.match(show.stdout, /live STT model:\s*base/);
+    const cfg = await fs.readFile(path.join(workspaceRoot, ".atelier", "design.yaml"), "utf8");
+    assert.match(cfg, /stabilityChunks: 3/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("atelier design live set rejects a bad gate", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    const result = runCli(["design", "live", "set", "--stability-chunks", "0"], workspaceRoot);
+    assert.equal(result.status, 2);
+    assert.match(result.stdout + result.stderr, /positive integer/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
