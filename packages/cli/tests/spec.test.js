@@ -69,6 +69,39 @@ test("atelier spec list --feature shows only that feature's specs (the breakdown
   }
 });
 
+test("atelier spec deps + list --feature shows the build order", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    runCli(["feature", "add", "Billing"], workspaceRoot);
+    // Three slices (ids must match YYYY-MM-DD-<slug>); "invoices" depends on
+    // "metering", "reports" on "invoices".
+    const M = "2099-01-01-metering", I = "2099-01-01-invoices", R = "2099-01-01-reports";
+    assert.equal(runCli(["spec", "new", "Metering", "--type", "new-feature", "--feature", "billing", "--id", M], workspaceRoot).status, 0);
+    assert.equal(runCli(["spec", "new", "Invoices", "--type", "new-feature", "--feature", "billing", "--id", I], workspaceRoot).status, 0);
+    assert.equal(runCli(["spec", "new", "Reports", "--type", "new-feature", "--feature", "billing", "--id", R], workspaceRoot).status, 0);
+
+    assert.equal(runCli(["spec", "deps", I, "--on", M], workspaceRoot).status, 0);
+    assert.equal(runCli(["spec", "deps", R, "--on", I], workspaceRoot).status, 0);
+
+    const list = runCli(["spec", "list", "--feature", "billing"], workspaceRoot);
+    assert.equal(list.status, 0, list.stderr);
+    assert.match(list.stdout, /Build order/);
+    // Dependencies come before dependents in the printed order.
+    const out = list.stdout;
+    assert.ok(out.indexOf(M) < out.indexOf(I), "metering before invoices");
+    assert.ok(out.indexOf(I) < out.indexOf(R), "invoices before reports");
+    assert.match(out, new RegExp(`needs ${M}`));
+
+    // plan.md was scaffolded.
+    const dirs = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
+    assert.ok(dirs.includes(M));
+    const plan = await fs.readFile(path.join(workspaceRoot, ".atelier", "issues", M, "plan.md"), "utf8");
+    assert.match(plan, /## Approach/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("atelier spec new --from-ticket records the originating ticket in context", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {

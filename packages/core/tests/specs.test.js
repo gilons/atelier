@@ -17,6 +17,7 @@ import {
   removeSpec,
   deriveSpecId,
   specTemplate,
+  sortSpecsByBuildOrder,
   validateSpecManifest,
   SPEC_CHANGE_TYPES,
   SpecAlreadyExistsError,
@@ -62,6 +63,61 @@ test("specTemplate has a section for each change type", () => {
     assert.match(text, /^# Title\n/);
     assert.ok(text.length > 50, `expected non-trivial template for ${t}`);
   }
+});
+
+test("createSpec scaffolds plan.md (the HOW) alongside spec.md", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    const { paths } = await createSpec(workspaceRoot, { title: "Add export", type: "new-feature" });
+    const plan = await fs.readFile(paths.plan, "utf8");
+    assert.match(plan, /^# Plan — Add export/m);
+    assert.match(plan, /## Approach/);
+    assert.match(plan, /## Steps/);
+    assert.match(plan, /## Test strategy/);
+    // README points at plan.md too.
+    const readme = await fs.readFile(paths.readme, "utf8");
+    assert.match(readme, /plan\.md/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("createSpec records dependsOn and it survives a round-trip", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    const { manifest, paths } = await createSpec(workspaceRoot, {
+      title: "Invoices",
+      type: "new-feature",
+      dependsOn: ["2026-01-01-metering"],
+    });
+    assert.deepEqual(manifest.dependsOn, ["2026-01-01-metering"]);
+    const readme = await fs.readFile(paths.readme, "utf8");
+    assert.match(readme, /dependsOn:/);
+    const loaded = await loadSpec(workspaceRoot, manifest.id);
+    assert.deepEqual(loaded.dependsOn, ["2026-01-01-metering"]);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("sortSpecsByBuildOrder puts dependencies before dependents", () => {
+  // c depends on b, b depends on a → order a, b, c regardless of input order.
+  const { ordered, cycle } = sortSpecsByBuildOrder([
+    { id: "c", dependsOn: ["b"] },
+    { id: "a" },
+    { id: "b", dependsOn: ["a"] },
+  ]);
+  assert.deepEqual(ordered.map((s) => s.id), ["a", "b", "c"]);
+  assert.equal(cycle.length, 0);
+});
+
+test("sortSpecsByBuildOrder reports a cycle without dropping specs", () => {
+  const { ordered, cycle } = sortSpecsByBuildOrder([
+    { id: "x", dependsOn: ["y"] },
+    { id: "y", dependsOn: ["x"] },
+  ]);
+  assert.equal(ordered.length, 2); // nothing dropped
+  assert.ok(cycle.includes("x") || cycle.includes("y"));
 });
 
 test("every spec template carries an Open questions section", () => {

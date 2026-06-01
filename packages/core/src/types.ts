@@ -766,6 +766,13 @@ export interface SpecManifest {
    * specs). Provenance back to the planning tool.
    */
   fromTicket?: string;
+  /**
+   * Other spec ids this spec depends on (must be built first). The
+   * planning agent sets these so a feature's specs form a build order;
+   * `spec list --feature` renders them in dependency (topological)
+   * order.
+   */
+  dependsOn?: string[];
   /** ISO timestamp when first created. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */

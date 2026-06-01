@@ -1167,6 +1167,7 @@ export function validateSpecManifest(
     docRefs,
     fromSession,
     fromTicket,
+    dependsOn,
     createdAt,
     updatedAt,
   } = raw;
@@ -1176,6 +1177,20 @@ export function validateSpecManifest(
   }
   if (fromTicket !== undefined && !isNonEmptyString(fromTicket)) {
     pushIssue(issues, "$.fromTicket", "if present, must be a non-empty string (<source>:<ticketId>)");
+  }
+  const dependsOnArr: string[] = [];
+  if (dependsOn === undefined) {
+    /* treat as empty */
+  } else if (!Array.isArray(dependsOn)) {
+    pushIssue(issues, "$.dependsOn", "if present, must be an array of spec ids");
+  } else {
+    dependsOn.forEach((d, idx) => {
+      if (!isNonEmptyString(d)) {
+        pushIssue(issues, `$.dependsOn[${idx}]`, "must be a non-empty spec id string");
+      } else {
+        dependsOnArr.push(d);
+      }
+    });
   }
 
   if (!isNonEmptyString(id)) {
@@ -1300,6 +1315,7 @@ export function validateSpecManifest(
   };
   if (fromSession !== undefined) value.fromSession = fromSession as string;
   if (fromTicket !== undefined) value.fromTicket = fromTicket as string;
+  if (dependsOnArr.length > 0) value.dependsOn = dependsOnArr;
   return { ok: true, value, issues: [] };
 }
 

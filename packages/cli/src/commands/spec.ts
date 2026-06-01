@@ -6,6 +6,7 @@ import {
   loadSpec,
   updateSpec,
   removeSpec,
+  sortSpecsByBuildOrder,
   SPEC_CHANGE_TYPES,
   SPEC_STATUSES,
   SpecAlreadyExistsError,
@@ -87,6 +88,7 @@ const newCmd: Command = {
     doc: { type: "string", multiple: true },
     "from-session": { type: "string" },
     "from-ticket": { type: "string" },
+    "depends-on": { type: "string", multiple: true },
     "no-validate-refs": { type: "boolean" },
   },
   positionals: ["title?"],
@@ -161,6 +163,7 @@ const newCmd: Command = {
         docRefs,
         fromSession: values["from-session"] as string | undefined,
         fromTicket: values["from-ticket"] as string | undefined,
+        dependsOn: values["depends-on"] as string[] | undefined,
         skipReferenceValidation: values["no-validate-refs"] === true,
       });
       ui.success(`Scaffolded spec ${ui.bold(manifest.id)}`);
@@ -241,22 +244,41 @@ const listCmd: Command = {
     }
 
     if (filtered.length > 0) {
-      const idWidth = Math.max("ID".length, ...filtered.map((s) => s.manifest.id.length));
+      // Scoped to a feature → present the breakdown in build order
+      // (dependencies before dependents) so it reads as a plan.
+      let rows = filtered;
+      let cycle: string[] = [];
+      if (feature) {
+        const sorted = sortSpecsByBuildOrder(filtered.map((s) => s.manifest));
+        cycle = sorted.cycle;
+        const byId = new Map(filtered.map((s) => [s.manifest.id, s]));
+        rows = sorted.ordered.map((m) => byId.get(m.id)!);
+        ui.print(ui.dim(`  Build order for feature "${feature}" (dependencies first):`));
+      }
+      const idWidth = Math.max("ID".length, ...rows.map((s) => s.manifest.id.length));
       const typeWidth = Math.max(
         "TYPE".length,
-        ...filtered.map((s) => s.manifest.type.length)
+        ...rows.map((s) => s.manifest.type.length)
       );
       const statusWidth = Math.max(
         "STATUS".length,
-        ...filtered.map((s) => s.manifest.status.length)
+        ...rows.map((s) => s.manifest.status.length)
       );
       ui.print(
         `    ${ui.dim("ID".padEnd(idWidth))}  ${ui.dim("TYPE".padEnd(typeWidth))}  ${ui.dim("STATUS".padEnd(statusWidth))}  ${ui.dim("TITLE")}`
       );
-      for (const { manifest } of filtered) {
+      rows.forEach(({ manifest }, i) => {
+        const order = feature ? ui.dim(`${String(i + 1).padStart(2)}. `) : "";
+        const deps =
+          manifest.dependsOn && manifest.dependsOn.length > 0
+            ? ui.dim(`  ← needs ${manifest.dependsOn.join(", ")}`)
+            : "";
         ui.print(
-          `  ${ui.green("·")} ${manifest.id.padEnd(idWidth)}  ${manifest.type.padEnd(typeWidth)}  ${manifest.status.padEnd(statusWidth)}  ${manifest.title}`
+          `  ${ui.green("·")} ${order}${manifest.id.padEnd(idWidth)}  ${manifest.type.padEnd(typeWidth)}  ${manifest.status.padEnd(statusWidth)}  ${manifest.title}${deps}`
         );
+      });
+      if (cycle.length > 0) {
+        ui.warn(`Dependency cycle among: ${cycle.join(", ")} — order is approximate; break the cycle.`);
       }
       ui.blank();
     }
@@ -313,6 +335,9 @@ const showCmd: Command = {
           ui.print(`    ${ui.dim("·")} ${r.source}:${r.docId}`);
         }
       }
+      if (m.dependsOn && m.dependsOn.length > 0) {
+        ui.print(`  ${ui.dim("depends on:")} ${m.dependsOn.join(", ")}`);
+      }
       ui.print(`  ${ui.dim("created:")}   ${m.createdAt}`);
       ui.print(`  ${ui.dim("updated:")}   ${m.updatedAt}`);
       ui.blank();
@@ -365,6 +390,62 @@ const setStatusCmd: Command = {
   },
 };
 
+const depsCmd: Command = {
+  name: "deps",
+  summary: "Set a spec's build dependencies (other specs that must land first).",
+  description:
+    "Records cross-spec dependencies so `spec list --feature` can show the\n" +
+    "build order. The planning agent uses this. Replaces the existing set;\n" +
+    "pass --clear to remove all.\n\n" +
+    "  atelier spec deps <id> --on <other-id> [--on <other-id> …]\n" +
+    "  atelier spec deps <id> --clear",
+  positionals: ["id"],
+  options: {
+    on: { type: "string", multiple: true },
+    clear: { type: "boolean" },
+  },
+  async run({ positionals, values, cwd }) {
+    const [id] = positionals;
+    if (!id) {
+      ui.error("Usage: atelier spec deps <id> --on <other-id> [--on …] | --clear");
+      return 2;
+    }
+    const on = (values.on as string[] | undefined) ?? [];
+    const clear = values.clear === true;
+    if (!clear && on.length === 0) {
+      ui.error("Pass --on <spec-id> (repeatable) or --clear.");
+      return 2;
+    }
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+    try {
+      // De-dupe, drop self-references.
+      const dependsOn = clear ? [] : [...new Set(on)].filter((d) => d !== id);
+      const m = await updateSpec(workspaceRoot, id, { dependsOn });
+      if (dependsOn.length > 0) {
+        ui.success(`${ui.bold(m.id)} now depends on: ${dependsOn.join(", ")}`);
+      } else {
+        ui.success(`Cleared dependencies on ${ui.bold(m.id)}`);
+      }
+      return 0;
+    } catch (err) {
+      if (err instanceof SpecNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
 const removeCmd: Command = {
   name: "remove",
   summary: "Delete a spec folder.",
@@ -406,5 +487,5 @@ export const specCommand: Command = {
     "A spec is a folder under .planning/issues/<id>/ that bundles a\n" +
     "templated plan, curated context (related features, doc refs, code\n" +
     "refs), and a handoff prompt ready to feed to a coding agent.",
-  subcommands: [newCmd, listCmd, showCmd, setStatusCmd, removeCmd],
+  subcommands: [newCmd, listCmd, showCmd, setStatusCmd, depsCmd, removeCmd],
 };

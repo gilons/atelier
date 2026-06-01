@@ -115,6 +115,7 @@ function specFiles(workspaceRoot: string, id: string) {
     root,
     readme: path.join(root, "README.md"),
     spec: path.join(root, "spec.md"),
+    plan: path.join(root, "plan.md"),
     context: path.join(root, "context.md"),
     prompt: path.join(root, "prompt.md"),
   };
@@ -218,6 +219,7 @@ function renderReadme(manifest: SpecManifest): string {
   if (manifest.docRefs.length > 0) fm.docRefs = manifest.docRefs;
   if (manifest.fromSession !== undefined) fm.fromSession = manifest.fromSession;
   if (manifest.fromTicket !== undefined) fm.fromTicket = manifest.fromTicket;
+  if (manifest.dependsOn && manifest.dependsOn.length > 0) fm.dependsOn = manifest.dependsOn;
   fm.createdAt = manifest.createdAt;
   fm.updatedAt = manifest.updatedAt;
 
@@ -225,10 +227,27 @@ function renderReadme(manifest: SpecManifest): string {
     `# ${manifest.title}\n\n` +
     `**Type:** ${manifest.type}  ·  **Status:** ${manifest.status}\n\n` +
     `Files in this folder:\n` +
-    `- \`spec.md\` — the detailed plan\n` +
+    `- \`spec.md\` — the scope: what we're building, what's out, how we know it's done\n` +
+    `- \`plan.md\` — the plan: how we build it (approach, steps, tests, rollout)\n` +
     `- \`context.md\` — curated docs, code refs, related features\n` +
     `- \`prompt.md\` — handoff prompt to feed your coding agent\n`;
   return buildFrontMatterFile(fm, body);
+}
+
+/**
+ * The plan.md template — the HOW, filled by the planning agent.
+ * Kept separate from spec.md (the WHAT) so scope and plan don't blur.
+ */
+function renderPlan(title: string): string {
+  return (
+    `# Plan — ${title}\n\n` +
+    "## Approach\n\nThe shape of the solution. Why this way over the alternatives.\n\n" +
+    "## Steps\n\nOrdered, reviewable steps. Keep the system green at each one.\n\n" +
+    "1. …\n2. …\n\n" +
+    "## Test strategy\n\nHow we prove it works (unit / integration / manual checks).\n\n" +
+    "## Rollout\n\nMigration, flags, sequencing, and how to back out if needed.\n\n" +
+    "## Dependencies\n\nOther specs that must land first (recorded in `dependsOn`); external blockers.\n"
+  );
 }
 
 interface RenderContextInput {
@@ -332,14 +351,15 @@ function renderPrompt(manifest: SpecManifest, contextPath: string): string {
     `Type: **${manifest.type}**`,
     "",
     `Please read this folder before starting:`,
-    `- \`spec.md\` — the detailed plan`,
+    `- \`spec.md\` — the scope (what + the boundary)`,
+    `- \`plan.md\` — the plan (how: approach, steps, tests, rollout)`,
     `- \`${path.basename(contextPath)}\` — curated context (related features, docs, code refs)`,
     "",
     `Then:`,
-    `1. Confirm you've read the spec and context.`,
-    `2. Outline your plan and flag any open questions.`,
+    `1. Confirm you've read the spec, plan, and context.`,
+    `2. Follow the steps in plan.md; flag any open questions before diverging.`,
     `3. Implement the change against the referenced code refs.`,
-    `4. Update \`spec.md\` with anything that turned out to be different from the plan.`,
+    `4. Update spec.md / plan.md with anything that turned out different.`,
     "",
   ].join("\n");
 }
@@ -366,6 +386,9 @@ export interface CreateSpecOptions {
   /** Optional originating ticket (`<source>:<ticketId>`): the spec agent
    *  seeds a spec from a tracker epic. Resolved into context.md when found. */
   fromTicket?: string;
+  /** Spec ids this one depends on (must build first). Usually set by the
+   *  planning agent after the specs exist, but can be seeded here. */
+  dependsOn?: string[];
   /**
    * Skip cross-reference validation (used by tests and bulk imports).
    * Doc refs are always tolerant — missing docs are reported in
@@ -450,6 +473,7 @@ export async function createSpec(
   };
   if (opts.fromSession) manifest.fromSession = opts.fromSession;
   if (opts.fromTicket) manifest.fromTicket = opts.fromTicket;
+  if (opts.dependsOn && opts.dependsOn.length > 0) manifest.dependsOn = opts.dependsOn;
 
   // Sanity-check the manifest once more.
   const check = validateSpecManifest(manifest);
@@ -548,6 +572,7 @@ export async function createSpec(
 
   await fs.writeFile(paths.readme, renderReadme(manifest), "utf8");
   await fs.writeFile(paths.spec, specTemplate(opts.type, opts.title), "utf8");
+  await fs.writeFile(paths.plan, renderPlan(opts.title), "utf8");
   await fs.writeFile(
     paths.context,
     renderContext({ manifest, features: loadedFeatures, originatingTicket, resolvedCodeRefs, resolvedDocs }),
@@ -631,6 +656,46 @@ export async function listSpecs(workspaceRoot: string): Promise<{
 export interface UpdateSpecOptions {
   status?: SpecStatus;
   title?: string;
+  /** Replace the spec's dependencies (other spec ids that must build first). */
+  dependsOn?: string[];
+}
+
+/**
+ * Order specs into a build sequence by their `dependsOn` edges
+ * (topological sort: dependencies before dependents). Stable by spec id
+ * within a tier. Returns the ordered list plus any ids involved in a
+ * dependency cycle (left in id order, never dropped).
+ */
+export function sortSpecsByBuildOrder<T extends { id: string; dependsOn?: string[] }>(
+  specs: T[]
+): { ordered: T[]; cycle: string[] } {
+  const byId = new Map(specs.map((s) => [s.id, s]));
+  const present = new Set(byId.keys());
+  const visited = new Set<string>();
+  const onStack = new Set<string>();
+  const ordered: T[] = [];
+  const cycle = new Set<string>();
+
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    if (onStack.has(id)) {
+      cycle.add(id);
+      return;
+    }
+    onStack.add(id);
+    const s = byId.get(id);
+    // Only follow deps that exist in this set; external/missing deps are
+    // ignored for ordering (the agent/validation can flag them).
+    for (const dep of (s?.dependsOn ?? []).filter((d) => present.has(d)).sort()) {
+      visit(dep);
+    }
+    onStack.delete(id);
+    visited.add(id);
+    if (s) ordered.push(s);
+  };
+
+  for (const s of [...specs].sort((a, b) => a.id.localeCompare(b.id))) visit(s.id);
+  return { ordered, cycle: [...cycle].sort() };
 }
 
 export async function updateSpec(
