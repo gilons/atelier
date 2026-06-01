@@ -9,6 +9,7 @@ import {
   installAllBuiltinAgents,
   uninstallAgent,
   appendLearning,
+  promoteLearnings,
   slugifyAgentId,
   findBuiltinAgent,
   listInstructionUnits,
@@ -152,9 +153,17 @@ const showCmd: Command = {
       process.stdout.write(a.instructions.trimEnd() + "\n");
       if (a.learnings.trim().length > 0) {
         ui.blank();
-        ui.print(ui.dim("─── learnings.md ───"));
+        ui.print(ui.dim("─── learnings.md (team, shared) ───"));
         ui.blank();
         process.stdout.write(a.learnings.trimEnd() + "\n");
+      }
+      if (a.personalLearnings.trim().length > 0) {
+        ui.blank();
+        ui.print(ui.dim("─── learnings.local.md (personal, gitignored) ───"));
+        ui.blank();
+        process.stdout.write(a.personalLearnings.trimEnd() + "\n");
+        ui.blank();
+        ui.print(`  ${ui.dim(`Promote with \`atelier agent promote ${id}\` to share with the team.`)}`);
       }
       return 0;
     } catch (err) {
@@ -274,13 +283,17 @@ const learnCmd: Command = {
   name: "learn",
   summary: "Teach an agent a durable fact about this workspace (self-improve).",
   description:
-    "Appends a timestamped note to the agent's learnings.md and re-renders\n" +
-    "the .claude/ files (if the agent is installed) so the learning is\n" +
-    "carried into future runs. This is how atelier's agents accumulate\n" +
-    "context about the workspace over time.",
+    "Appends a timestamped note to the agent's learnings and re-renders\n" +
+    "the .claude/ files (if installed) so it's carried into future runs.\n\n" +
+    "By default it records to your PERSONAL layer (learnings.local.md,\n" +
+    "gitignored) — your own context, not imposed on teammates. Pass\n" +
+    "--team to record straight to the shared layer (learnings.md,\n" +
+    "committed), or use `atelier agent promote` to move personal learnings\n" +
+    "into the team layer for a PR.",
   positionals: ["id", "note?"],
   options: {
     header: { type: "string", short: "H" },
+    team: { type: "boolean" },
     "no-reinstall": { type: "boolean" },
   },
   async run({ values, positionals, cwd }) {
@@ -288,33 +301,65 @@ const learnCmd: Command = {
     if (!id || !note) {
       ui.error("Missing arguments.");
       ui.print(
-        `  ${ui.dim('Usage: atelier agent learn <id> "durable fact" [--header "..."]')}`
+        `  ${ui.dim('Usage: atelier agent learn <id> "durable fact" [--team] [--header "..."]')}`
       );
       return 2;
     }
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
 
+    const scope = values.team === true ? "team" : "personal";
     try {
       const agent = await appendLearning(root, id, note, {
         header: values.header as string | undefined,
+        scope,
+        rerender: values["no-reinstall"] !== true,
       });
-      ui.success(`Recorded a learning for ${ui.bold(agent.id)}.`);
-
-      // Re-render if the agent is currently installed, so .claude/
-      // reflects the new learning without a manual re-install.
-      if (values["no-reinstall"] !== true) {
-        const { agents } = await listAgents(root);
-        const installed = agents.find((a) => a.agent.id === id)?.installed;
-        if (installed) {
-          await installAgent(root, id);
-          ui.print(`  ${ui.dim("Re-rendered .claude/ files with the new learning.")}`);
-        } else {
-          ui.print(
-            `  ${ui.dim(`Install with \`atelier agent install ${id}\` to surface it to Claude.`)}`
-          );
-        }
+      const layer = scope === "team" ? "team (shared)" : "personal (gitignored)";
+      ui.success(`Recorded a ${layer} learning for ${ui.bold(agent.id)}.`);
+      if (scope === "personal") {
+        ui.print(
+          `  ${ui.dim(`Promote to the team with \`atelier agent promote ${id}\` when it should be a shared standard.`)}`
+        );
       }
+      return 0;
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
+const promoteCmd: Command = {
+  name: "promote",
+  summary: "Promote your personal agent learnings into the shared team layer.",
+  description:
+    "Moves everything from the agent's personal layer (learnings.local.md,\n" +
+    "gitignored) into the shared, committed learnings.md, then clears the\n" +
+    "personal file. Commit the result (ideally via PR) so the team reviews\n" +
+    "it before it becomes a standard everyone inherits.",
+  positionals: ["id"],
+  async run({ positionals, cwd }) {
+    const [id] = positionals;
+    if (!id) {
+      ui.error("Usage: atelier agent promote <id>");
+      return 2;
+    }
+    const root = await resolveRoot(cwd);
+    if (typeof root === "number") return root;
+    try {
+      const { promoted } = await promoteLearnings(root, id);
+      if (!promoted) {
+        ui.info(`No personal learnings to promote for ${ui.bold(id)}.`);
+        return 0;
+      }
+      ui.success(`Promoted ${ui.bold(id)}'s personal learnings into the team layer.`);
+      ui.print(
+        `  ${ui.dim("Review + commit `.atelier/agents/" + id + "/learnings.md` (a PR lets the team weigh in).")}`
+      );
       return 0;
     } catch (err) {
       if (err instanceof AgentNotFoundError) {
@@ -610,6 +655,7 @@ export const agentCommand: Command = {
     installCmd,
     uninstallCmd,
     learnCmd,
+    promoteCmd,
     instructionCmd,
     newCmd,
     removeCmd,

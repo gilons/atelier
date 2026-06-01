@@ -150,7 +150,11 @@ export async function initWorkspace(
     "\n" +
     "# Private stakeholder notes — anywhere a stakeholder folder lives,\n" +
     "# `private.md` is the user's personal layer. Never commit.\n" +
-    "stakeholders/**/private.md\n";
+    "stakeholders/**/private.md\n" +
+    "\n" +
+    "# Personal agent learnings — each developer's own layer. Promote to\n" +
+    "# the shared learnings.md (committed) with `atelier agent promote`.\n" +
+    "agents/**/learnings.local.md\n";
   await fs.writeFile(path.join(paths.atelier, ".gitignore"), gitignore, "utf8");
   created.push(path.join(paths.atelier, ".gitignore"));
 

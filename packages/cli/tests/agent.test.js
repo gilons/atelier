@@ -190,15 +190,24 @@ test("atelier agent learn appends + re-renders into .claude/", async () => {
       workspaceRoot
     );
     assert.equal(learn.status, 0, `stderr: ${learn.stderr}`);
-    assert.match(learn.stdout, /Recorded a learning/);
-    assert.match(learn.stdout, /Re-rendered/);
+    assert.match(learn.stdout, /Recorded a personal .* learning/);
 
+    // Default is the personal layer (gitignored), and the installed
+    // agent auto-re-renders so the learning is live in .claude/.
     const sub = await fs.readFile(
       path.join(workspaceRoot, ".claude", "agents", "atelier-discovery.md"),
       "utf8"
     );
     assert.match(sub, /What I've learned about this workspace/);
     assert.match(sub, /Planning lives in Linear/);
+    assert.match(sub, /personal/i);
+
+    // It went to learnings.local.md, not the committed learnings.md.
+    const local = await fs.readFile(
+      path.join(workspaceRoot, ".atelier", "agents", "discovery", "learnings.local.md"),
+      "utf8"
+    );
+    assert.match(local, /Planning lives in Linear/);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }

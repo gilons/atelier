@@ -618,8 +618,17 @@ export interface AgentFrontMatter {
 export interface Agent extends AgentFrontMatter {
   /** Body of instructions.md (the self-improving playbook). */
   instructions: string;
-  /** Body of learnings.md (append-only workspace facts). May be empty. */
+  /**
+   * Body of learnings.md — the *team* layer: durable workspace facts the
+   * team shares. Committed to git; propagates to every developer.
+   */
   learnings: string;
+  /**
+   * Body of learnings.local.md — the *personal* layer: this developer's
+   * own accumulated learnings. Gitignored; never imposed on the team.
+   * Promote into the team layer with `atelier agent promote <id>`.
+   */
+  personalLearnings: string;
 }
 
 

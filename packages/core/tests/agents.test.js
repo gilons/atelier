@@ -11,6 +11,7 @@ import {
   updateAgent,
   updateInstructions,
   appendLearning,
+  promoteLearnings,
   removeAgent,
   installAgent,
   uninstallAgent,
@@ -163,15 +164,30 @@ test("updateInstructions replaces the playbook body", async () => {
 // learnings (self-improvement)
 // ============================================================
 
-test("appendLearning accumulates timestamped entries", async () => {
+test("appendLearning accumulates timestamped entries (personal layer by default)", async () => {
   const { workspaceRoot } = await workspace();
   await addAgent(workspaceRoot, { name: "L", purpose: "p" });
   await appendLearning(workspaceRoot, "l", "Planning lives in Linear.");
   const a = await appendLearning(workspaceRoot, "l", "Design is Figma file X.");
-  assert.match(a.learnings, /Planning lives in Linear/);
-  assert.match(a.learnings, /Design is Figma file X/);
-  // two headed sections
-  assert.equal((a.learnings.match(/^## /gm) || []).length, 2);
+  // Default scope is personal: lands in the gitignored personal layer,
+  // not the shared team layer.
+  assert.match(a.personalLearnings, /Planning lives in Linear/);
+  assert.match(a.personalLearnings, /Design is Figma file X/);
+  assert.equal(a.learnings.trim(), "");
+  assert.equal((a.personalLearnings.match(/^## /gm) || []).length, 2);
+});
+
+test("appendLearning --team records to the shared layer; promote moves personal up", async () => {
+  const { workspaceRoot } = await workspace();
+  await addAgent(workspaceRoot, { name: "L", purpose: "p" });
+  const t = await appendLearning(workspaceRoot, "l", "Definition of done: tests + docs.", { scope: "team" });
+  assert.match(t.learnings, /Definition of done/);
+  assert.equal(t.personalLearnings.trim(), "");
+  await appendLearning(workspaceRoot, "l", "I like small PRs.");
+  const { agent, promoted } = await promoteLearnings(workspaceRoot, "l");
+  assert.equal(promoted, true);
+  assert.match(agent.learnings, /I like small PRs/);
+  assert.equal(agent.personalLearnings.trim(), "");
 });
 
 test("appendLearning rejects empty notes + unknown agents", async () => {

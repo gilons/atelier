@@ -104,6 +104,11 @@ function learningsPath(workspaceRoot: string, id: string): string {
   return path.join(agentFolderPath(workspaceRoot, id), "learnings.md");
 }
 
+/** `.atelier/agents/<id>/learnings.local.md` — the personal (gitignored) layer. */
+function personalLearningsPath(workspaceRoot: string, id: string): string {
+  return path.join(agentFolderPath(workspaceRoot, id), "learnings.local.md");
+}
+
 /** `.claude/commands/atelier/<id>.md` — the rendered slash command. */
 function renderedCommandPath(workspaceRoot: string, id: string): string {
   return path.join(
@@ -253,6 +258,7 @@ export async function addAgent(
     updatedAt: now,
     instructions: opts.instructions ?? "",
     learnings: opts.learnings ?? "",
+    personalLearnings: "",
   };
 
   await ensureFolder(workspaceRoot, id);
@@ -297,7 +303,13 @@ export async function loadAgent(workspaceRoot: string, id: string): Promise<Agen
     instructions = (await readMaybe(instructionsPath(workspaceRoot, id))) ?? "";
   }
   const learnings = await readMaybe(learningsPath(workspaceRoot, id));
-  return { ...check.value, instructions, learnings: learnings ?? "" };
+  const personalLearnings = await readMaybe(personalLearningsPath(workspaceRoot, id));
+  return {
+    ...check.value,
+    instructions,
+    learnings: learnings ?? "",
+    personalLearnings: personalLearnings ?? "",
+  };
 }
 
 async function readMaybe(p: string): Promise<string | null> {
@@ -642,26 +654,75 @@ export async function appendLearning(
   workspaceRoot: string,
   id: string,
   note: string,
-  opts: { header?: string } = {}
+  opts: { header?: string; scope?: "personal" | "team"; rerender?: boolean } = {}
 ): Promise<Agent> {
   if (!note.trim()) throw new Error("learning note cannot be empty");
+  const scope = opts.scope ?? "personal";
   const existing = await loadAgent(workspaceRoot, id);
   await ensureFolder(workspaceRoot, id);
   const now = new Date().toISOString();
-  const heading = opts.header ? `## ${opts.header} — ${now}` : `## ${now}`;
-  const separator =
-    existing.learnings.length > 0 && !existing.learnings.endsWith("\n\n") ? "\n\n" : "";
-  const nextLearnings =
-    existing.learnings + separator + `${heading}\n\n${note.trim()}\n`;
-  await fs.writeFile(learningsPath(workspaceRoot, id), nextLearnings, "utf8");
+  const heading = opts.header ? `## ${opts.header} (${now})` : `## ${now}`;
+
+  const append = (body: string): string => {
+    const sep = body.length > 0 && !body.endsWith("\n\n") ? "\n\n" : "";
+    return body + sep + `${heading}\n\n${note.trim()}\n`;
+  };
+
+  const next: Agent = { ...existing, updatedAt: now };
+  if (scope === "team") {
+    next.learnings = append(existing.learnings);
+    await fs.writeFile(learningsPath(workspaceRoot, id), next.learnings, "utf8");
+  } else {
+    next.personalLearnings = append(existing.personalLearnings);
+    await fs.writeFile(personalLearningsPath(workspaceRoot, id), next.personalLearnings, "utf8");
+  }
+  await writeAgentYaml(workspaceRoot, toFrontMatter(next));
+  // Keep the rendered .claude/ copy fresh so the improvement is live
+  // immediately — but only if the agent is already installed (don't
+  // create .claude/ files unasked).
+  if (opts.rerender !== false) await rerenderIfInstalled(workspaceRoot, id);
+  return next;
+}
+
+/**
+ * Promote this developer's personal learnings into the shared team
+ * layer (appends them to learnings.md and clears learnings.local.md),
+ * so a commit / PR can put them in front of the team. Returns the
+ * reloaded agent. No-op when there are no personal learnings.
+ */
+export async function promoteLearnings(workspaceRoot: string, id: string): Promise<{
+  agent: Agent;
+  promoted: boolean;
+}> {
+  const existing = await loadAgent(workspaceRoot, id);
+  const personal = existing.personalLearnings.trim();
+  if (!personal) return { agent: existing, promoted: false };
+
+  const sep = existing.learnings.length > 0 && !existing.learnings.endsWith("\n\n") ? "\n\n" : "";
+  const learnings = existing.learnings + sep + personal + "\n";
+  await fs.writeFile(learningsPath(workspaceRoot, id), learnings, "utf8");
+  // Clear the personal layer (its contents now live in the team layer).
+  await fs.rm(personalLearningsPath(workspaceRoot, id), { force: true });
 
   const next: Agent = {
     ...existing,
-    learnings: nextLearnings,
-    updatedAt: now,
+    learnings,
+    personalLearnings: "",
+    updatedAt: new Date().toISOString(),
   };
   await writeAgentYaml(workspaceRoot, toFrontMatter(next));
-  return next;
+  await rerenderIfInstalled(workspaceRoot, id);
+  return { agent: next, promoted: true };
+}
+
+/** Re-render the .claude/ artifacts only when the agent is already installed. */
+async function rerenderIfInstalled(workspaceRoot: string, id: string): Promise<void> {
+  try {
+    await fs.access(renderedCommandPath(workspaceRoot, id));
+  } catch {
+    return; // not installed — nothing to refresh
+  }
+  await installAgent(workspaceRoot, id);
 }
 
 export async function removeAgent(workspaceRoot: string, id: string): Promise<Agent> {
@@ -711,14 +772,24 @@ export async function materializeBuiltin(
  * context. Returns "" when there are no learnings.
  */
 function renderLearningsSection(agent: Agent): string {
-  if (!agent.learnings.trim()) return "";
-  return (
-    "\n\n---\n\n" +
-    "## What I've learned about this workspace\n\n" +
-    "_Accumulated by atelier across discovery runs. Treat as durable context._\n\n" +
-    agent.learnings.trim() +
-    "\n"
-  );
+  const team = (agent.learnings ?? "").trim();
+  const personal = (agent.personalLearnings ?? "").trim();
+  if (!team && !personal) return "";
+  let out = "\n\n---\n\n## What I've learned about this workspace\n\n";
+  out += "_Durable context. Treat as standing instructions._\n";
+  if (team) {
+    out += "\n### Team learnings (shared)\n\n" + team + "\n";
+  }
+  if (personal) {
+    out +=
+      "\n### Your learnings (personal, not yet shared)\n\n" +
+      "_Promote with `atelier agent promote " +
+      agent.id +
+      "` to make these team standards._\n\n" +
+      personal +
+      "\n";
+  }
+  return out;
 }
 
 function frontMatterBlock(fields: Array<[string, string | undefined]>): string {
@@ -821,6 +892,7 @@ export async function installAgent(
   await fs.mkdir(path.dirname(subagentPath), { recursive: true });
   await fs.writeFile(commandPath, renderClaudeCommand(agent), "utf8");
   await fs.writeFile(subagentPath, renderClaudeSubagent(agent), "utf8");
+  await ensureClaudeGitignore(workspaceRoot);
 
   return {
     agent,
@@ -828,6 +900,34 @@ export async function installAgent(
     subagentPath,
     invocation: `/atelier:${id}`,
   };
+}
+
+const CLAUDE_GITIGNORE_MARKER = "# atelier-generated (rendered from .atelier/agents/)";
+
+/**
+ * Ensure `.claude/.gitignore` ignores atelier's *generated* agent files,
+ * so they're regenerated per developer rather than committed and merged.
+ * Scoped to atelier's own files — never the user's whole `.claude/`. A
+ * no-op if our block is already present; appends otherwise.
+ */
+async function ensureClaudeGitignore(workspaceRoot: string): Promise<void> {
+  const dir = workspacePaths(workspaceRoot).claudeDir;
+  const file = path.join(dir, ".gitignore");
+  const block =
+    `${CLAUDE_GITIGNORE_MARKER}\n` +
+    "# Regenerate with `atelier agent install`. The source of truth is .atelier/agents/.\n" +
+    "commands/atelier/\n" +
+    "agents/atelier-*.md\n";
+  let existing = "";
+  try {
+    existing = await fs.readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (existing.includes(CLAUDE_GITIGNORE_MARKER)) return;
+  const sep = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(file, existing + sep + (existing ? "\n" : "") + block, "utf8");
 }
 
 /**
