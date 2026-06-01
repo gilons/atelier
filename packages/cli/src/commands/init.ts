@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import {
   initWorkspace,
+  installAllBuiltinAgents,
   WorkspaceAlreadyInitializedError,
   ATELIER_DIR,
 } from "@atelier/core";
@@ -10,17 +11,20 @@ import { ui } from "../ui.js";
 
 export const initCommand: Command = {
   name: "init",
-  summary: "Initialize a new planning workspace in the current directory.",
+  summary: "Initialize a workspace and install the atelier agents in one step.",
   description:
-    "Creates a .planning/ directory with starter configuration files\n" +
-    "(workspace.yaml, sources.yaml, repos.yaml), the canonical folder\n" +
-    "structure (features/, ui/, issues/, cache/), and a README explaining\n" +
-    "the layout.\n\n" +
-    "Refuses to overwrite an existing workspace unless --force is given.",
+    "Creates a .atelier/ workspace (workspace.yaml, sources.yaml,\n" +
+    "repos.yaml + the canonical folders) AND installs the built-in\n" +
+    "agents (discovery, system-design, ui-design) into .claude/ so they\n" +
+    "work in Claude Code immediately. That's the whole setup in one\n" +
+    "command.\n\n" +
+    "Pass --no-agents to skip the agent install (workspace only). Refuses\n" +
+    "to overwrite an existing workspace unless --force is given.",
   options: {
     name: { type: "string", short: "n" },
     description: { type: "string", short: "d" },
     force: { type: "boolean", short: "f" },
+    "no-agents": { type: "boolean" },
   },
   /**
    * REPL wizard prompts. When the user types `/init` in the REPL,
@@ -41,6 +45,7 @@ export const initCommand: Command = {
     const name = (values.name as string | undefined) ?? path.basename(cwd);
     const description = values.description as string | undefined;
     const force = (values.force as boolean | undefined) ?? false;
+    const skipAgents = (values["no-agents"] as boolean | undefined) ?? false;
 
     try {
       const result = await initWorkspace(cwd, { name, description, force });
@@ -52,22 +57,32 @@ export const initCommand: Command = {
       }
       ui.print(`  ${ui.dim("Location:")} ${result.paths.atelier}`);
       ui.blank();
-      ui.print("  Created:");
-      for (const f of result.createdFiles) {
-        ui.print(`    ${ui.gray("·")} ${path.relative(cwd, f)}`);
+
+      // Install all built-in agents into .claude/ so the workspace is
+      // immediately drivable from Claude Code — one command, full setup.
+      if (!skipAgents) {
+        const installed = await installAllBuiltinAgents(cwd);
+        ui.print(`  ${ui.dim("Agents installed")} ${ui.dim("(.claude/):")}`);
+        for (const r of installed) {
+          ui.print(`    ${ui.green("·")} ${ui.cyan(r.invocation)} ${ui.dim("→ " + r.agent.name)}`);
+        }
+        ui.blank();
+        ui.print("  Next:");
+        ui.print(
+          `    ${ui.gray("→")} In Claude Code, run ${ui.cyan("/atelier:discovery")} to map your workspace.`
+        );
+        ui.print(
+          `    ${ui.gray("→")} Or register repos first: ${ui.cyan(hint(ctx, "repo"))}`
+        );
+      } else {
+        ui.print("  Next:");
+        ui.print(
+          `    ${ui.gray("→")} install the agents: ${ui.cyan(hint(ctx, "agent install --all"))}`
+        );
+        ui.print(
+          `    ${ui.gray("→")} register repos:     ${ui.cyan(hint(ctx, "repo"))}`
+        );
       }
-      ui.blank();
-      ui.print("  Next:");
-      // In REPL mode show slash commands; in shell mode show full
-      // `atelier ...` invocations. The wizard makes the bare verb
-      // sufficient — `/repo` opens the interactive registration
-      // flow, `/source onboard` walks through source setup.
-      ui.print(
-        `    ${ui.gray("→")} register repos:     ${ui.cyan(hint(ctx, "repo"))}`
-      );
-      ui.print(
-        `    ${ui.gray("→")} onboard a source:   ${ui.cyan(hint(ctx, "source onboard"))}`
-      );
       ui.blank();
       return 0;
     } catch (err) {

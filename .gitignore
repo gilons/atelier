@@ -23,6 +23,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+.npmrc
 
 # Claude Code local settings (per-developer)
 .claude/settings.local.json

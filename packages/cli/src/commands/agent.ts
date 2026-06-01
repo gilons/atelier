@@ -6,6 +6,7 @@ import {
   listAgents,
   removeAgent,
   installAgent,
+  installAllBuiltinAgents,
   uninstallAgent,
   appendLearning,
   slugifyAgentId,
@@ -177,24 +178,42 @@ const showCmd: Command = {
 
 const installCmd: Command = {
   name: "install",
-  summary: "Render an agent into .claude/ so Claude Code can discover it.",
+  summary: "Render agents into .claude/ so Claude Code can discover them.",
   description:
-    "Writes .claude/commands/atelier/<id>.md (slash command) and\n" +
+    "With no <id> (or --all), installs every built-in agent (discovery,\n" +
+    "system-design, ui-design) in one go. With an <id>, installs just\n" +
+    "that one. Writes .claude/commands/atelier/<id>.md (slash command) and\n" +
     ".claude/agents/atelier-<id>.md (subagent). Materializes a built-in\n" +
     "template into .atelier/agents/ first if it isn't there yet. Safe to\n" +
     "re-run — the .claude/ files are generated artifacts, always rewritten\n" +
     "from the canonical def.",
   positionals: ["id"],
-  async run({ positionals, cwd, mode }) {
+  options: {
+    all: { type: "boolean" },
+  },
+  async run({ positionals, values, cwd, mode }) {
     const [id] = positionals;
-    if (!id) {
-      ui.error("Missing <id> argument.");
-      ui.print(`  ${ui.dim("Usage: atelier agent install <id>")}`);
-      ui.print(`  ${ui.dim("Run `atelier agent list` to see what's available.")}`);
-      return 2;
-    }
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+
+    // No id, or --all → install the whole built-in suite.
+    if (!id || values.all === true) {
+      const installed = await installAllBuiltinAgents(root);
+      ui.success(`Installed ${installed.length} agents into .claude/`);
+      ui.blank();
+      for (const r of installed) {
+        ui.print(`  ${ui.green("·")} ${ui.cyan(r.invocation)} ${ui.dim("→ " + r.agent.name)}`);
+      }
+      ui.blank();
+      ui.print(
+        `  ${ui.dim("In Claude Code, run")} ${ui.cyan("/atelier:discovery")} ${ui.dim("to start, or let Claude delegate to any")} ${ui.cyan("atelier-*")} ${ui.dim("subagent.")}`
+      );
+      ui.print(
+        `  ${ui.dim("(New files may need a Claude Code session reload to appear.)")}`
+      );
+      ui.blank();
+      return 0;
+    }
 
     try {
       const result = await installAgent(root, id);

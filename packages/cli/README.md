@@ -16,20 +16,16 @@ Single self-contained package, zero runtime dependencies. Node.js 20 or newer.
 
 ## Set it up with your coding agent
 
+One command scaffolds the workspace and installs every agent:
+
 ```bash
-cd ~/your-project        # a repo, or an org folder with several repos inside
-atelier init             # scaffold the workspace (version-controlled)
+cd ~/your-project                  # a repo, or an org folder with several repos inside
+atelier init --name "My Product"   # workspace + all agents, version-controlled
 ```
 
 ### Claude Code
 
-```bash
-atelier agent install discovery
-atelier agent install system-design
-atelier agent install ui-design
-```
-
-That's it. In Claude Code you now have slash commands (`/atelier:discovery`, `/atelier:system-design`, `/atelier:ui-design`) plus subagents Claude can delegate to. Start with `/atelier:discovery`; it maps your workspace and connects your docs, design, and tickets.
+`atelier init` already rendered the agents into `.claude/`, so there's nothing else to run. You now have slash commands (`/atelier:discovery`, `/atelier:system-design`, `/atelier:ui-design`) plus subagents Claude can delegate to. Start with `/atelier:discovery`; it maps your workspace and connects your docs, design, and tickets. (Re-render any time with `atelier agent install --all`.)
 
 ### Codex, Cursor, Copilot, or any agent
 

@@ -830,6 +830,23 @@ export async function installAgent(
   };
 }
 
+/**
+ * Install every built-in agent (discovery, system-design, ui-design, …)
+ * into `.claude/` in one pass. This is what `atelier init` and
+ * `atelier agent install --all` use, so setting up a workspace renders
+ * the whole agent suite in a single step instead of one command each.
+ * Results come back in registry order.
+ */
+export async function installAllBuiltinAgents(
+  workspaceRoot: string
+): Promise<InstallResult[]> {
+  const results: InstallResult[] = [];
+  for (const builtin of BUILTIN_AGENTS) {
+    results.push(await installAgent(workspaceRoot, builtin.meta.id));
+  }
+  return results;
+}
+
 /** Remove an agent's rendered `.claude/` artifacts (best-effort). */
 export async function uninstallAgent(
   workspaceRoot: string,

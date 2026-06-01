@@ -22,7 +22,10 @@ async function setupWorkspace() {
   const umbrella = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-agent-cli-"));
   const workspaceRoot = path.join(umbrella, "planning");
   await fs.mkdir(workspaceRoot);
-  const init = runCli(["init", "--name", "Test"], workspaceRoot);
+  // --no-agents: these tests exercise installing agents explicitly, so
+  // start from a workspace where none are installed yet. (Plain `init`
+  // now installs the whole suite by default — covered by its own test.)
+  const init = runCli(["init", "--name", "Test", "--no-agents"], workspaceRoot);
   assert.equal(init.status, 0, `init failed: ${init.stderr}`);
   return { umbrella, workspaceRoot };
 }
@@ -43,6 +46,49 @@ test("atelier agent list shows the discovery built-in before install", async () 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     assert.match(result.stdout, /Available built-ins/);
     assert.match(result.stdout, /discovery/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("atelier init installs the whole agent suite by default (single-command setup)", async () => {
+  const umbrella = await fs.mkdtemp(path.join(os.tmpdir(), "atelier-init-agents-"));
+  const workspaceRoot = path.join(umbrella, "planning");
+  await fs.mkdir(workspaceRoot);
+  try {
+    const init = runCli(["init", "--name", "Test"], workspaceRoot);
+    assert.equal(init.status, 0, `stderr: ${init.stderr}`);
+    // Reports the installed agents + their invocations.
+    assert.match(init.stdout, /Agents installed/);
+    assert.match(init.stdout, /\/atelier:discovery/);
+    // All three built-ins are rendered into .claude/ — no extra commands.
+    for (const id of ["discovery", "system-design", "ui-design"]) {
+      const cmd = path.join(workspaceRoot, ".claude", "commands", "atelier", `${id}.md`);
+      const sub = path.join(workspaceRoot, ".claude", "agents", `atelier-${id}.md`);
+      assert.ok((await fs.stat(cmd)).isFile(), `${id} slash command missing`);
+      assert.ok((await fs.stat(sub)).isFile(), `${id} subagent missing`);
+    }
+    // And `agent list` shows them installed.
+    const list = runCli(["agent", "list"], workspaceRoot);
+    assert.match(list.stdout, /discovery\s+yes/);
+    assert.match(list.stdout, /ui-design\s+yes/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("atelier agent install --all installs every built-in", async () => {
+  const { umbrella, workspaceRoot } = await setupWorkspace();
+  try {
+    // setupWorkspace used --no-agents, so none are installed yet.
+    const result = runCli(["agent", "install", "--all"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /Installed 3 agents/);
+    assert.match(result.stdout, /\/atelier:system-design/);
+    for (const id of ["discovery", "system-design", "ui-design"]) {
+      const cmd = path.join(workspaceRoot, ".claude", "commands", "atelier", `${id}.md`);
+      assert.ok((await fs.stat(cmd)).isFile(), `${id} not installed`);
+    }
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }
