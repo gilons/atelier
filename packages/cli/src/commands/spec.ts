@@ -76,7 +76,7 @@ const newCmd: Command = {
     "\n\n--feature pulls in code/doc refs from a registered feature.\n" +
     "--code and --doc add ad-hoc references on top.\n" +
     "--from-ticket <source:ticketId> records the originating tracker item\n" +
-    "(the scoping agent uses this when breaking an epic into specs).",
+    "(the spec agent uses this when breaking an epic into specs).",
   options: {
     title: { type: "string", short: "t" },
     type: { type: "string" },
@@ -195,7 +195,7 @@ const listCmd: Command = {
   summary: "List specs / issue folders.",
   description:
     "Filter with --status, --type, or --feature <id> (the specs that make\n" +
-    "up an epic — the scoping agent's breakdown of a feature).",
+    "up an epic; the spec agent's breakdown of a feature).",
   options: {
     status: { type: "string", short: "s" },
     type: { type: "string" },

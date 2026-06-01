@@ -762,8 +762,8 @@ export interface SpecManifest {
   fromSession?: string;
   /**
    * Optional originating ticket (`<source>:<ticketId>`) this spec was
-   * scoped from — e.g. the scoping agent broke a tracker epic into
-   * specs. Provenance back to the planning tool.
+   * written from (e.g. the spec agent broke a tracker epic into
+   * specs). Provenance back to the planning tool.
    */
   fromTicket?: string;
   /** ISO timestamp when first created. */

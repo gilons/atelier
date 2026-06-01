@@ -132,12 +132,12 @@ function specFiles(workspaceRoot: string, id: string) {
  * definition; it's intentional rather than configurable.
  */
 export function specTemplate(type: SpecChangeType, title: string): string {
-  // Every spec carries an Open questions section — the decisions the
-  // scoping agent surfaces and a human must resolve before/while
-  // building. Appended uniformly so every change type has it.
+  // Every spec carries an Open questions section: the decisions the
+  // spec agent surfaces and a human must resolve before/while building.
+  // Appended uniformly so every change type has it.
   return (
     specBody(type, title) +
-    "\n## Open questions\n\nDecisions to resolve before building. The scoping agent fills these; clear them as they're answered.\n\n- [ ] …\n"
+    "\n## Open questions\n\nDecisions to resolve before building. The spec agent fills these; clear them as they're answered.\n\n- [ ] …\n"
   );
 }
 
@@ -363,8 +363,8 @@ export interface CreateSpecOptions {
   docRefs?: FeatureDocRef[];
   /** Optional session id this spec was born from (provenance). */
   fromSession?: string;
-  /** Optional originating ticket (`<source>:<ticketId>`) — scoping seeds
-   *  a spec from a tracker epic. Resolved into context.md when found. */
+  /** Optional originating ticket (`<source>:<ticketId>`): the spec agent
+   *  seeds a spec from a tracker epic. Resolved into context.md when found. */
   fromTicket?: string;
   /**
    * Skip cross-reference validation (used by tests and bulk imports).

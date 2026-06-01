@@ -29,7 +29,7 @@ atelier init --name "My Product"   # workspace + all agents, version-controlled
 
 - `/atelier:discovery` maps your workspace and connects your docs, design, and tickets.
 - `/atelier:system-design` and `/atelier:ui-design` document the architecture and the UI.
-- `/atelier:scoping` turns a feature or epic into a grounded breakdown of specs (what's in, what's out, how you know it's done).
+- `/atelier:spec` writes grounded, right-sized specs for a feature or change (what's in, what's out, how you know it's done).
 
 Start with `/atelier:discovery`. (Re-render any time with `atelier agent install --all`.)
 
