@@ -30,6 +30,7 @@ atelier init --name "My Product"   # workspace + all agents, version-controlled
 - `/atelier:discovery` maps your workspace and connects your docs, design, and tickets.
 - `/atelier:system-design` and `/atelier:ui-design` document the architecture and the UI.
 - `/atelier:spec` writes grounded, right-sized specs for a feature or change (what's in, what's out, how you know it's done).
+- `/atelier:planning` plans how to build each spec and the order to build them (approach, steps, tests, rollout, dependencies).
 
 Run `/atelier:discovery` first. Re-render any time with `atelier agent install --all`; the `.claude/` files are regenerated from the canonical definitions.
 
