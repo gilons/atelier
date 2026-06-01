@@ -61,8 +61,6 @@ cd atelier && npm install && npm run build
 cd packages/cli && npm link   # exposes `atelier` globally
 ```
 
-Contributions welcome. Open an issue or PR. [HANDOFF.md](HANDOFF.md) is the deep architectural tour.
-
 ## Status
 
 Alpha, and moving fast. License: [MIT](LICENSE).
