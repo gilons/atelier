@@ -121,6 +121,23 @@ test("atelier agent install planning renders the build-order playbook", async ()
   }
 });
 
+test("every built-in agent ships a confirm-first self-improvement unit", async () => {
+  const { umbrella, workspaceRoot } = await setupWorkspace();
+  try {
+    runCli(["agent", "install", "--all"], workspaceRoot);
+    for (const id of ["discovery", "system-design", "ui-design", "spec", "planning"]) {
+      const cmd = path.join(workspaceRoot, ".claude", "commands", "atelier", `${id}.md`);
+      const text = await fs.readFile(cmd, "utf8");
+      // It records via the agent's own learn command…
+      assert.match(text, new RegExp(`agent learn ${id}`), `${id} missing self-improve learn`);
+      // …but only after asking the user (never silently).
+      assert.match(text, /Ask before recording|never silently|on their yes/i, `${id} not confirm-first`);
+    }
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("atelier agent install --all installs every built-in", async () => {
   const { umbrella, workspaceRoot } = await setupWorkspace();
   try {

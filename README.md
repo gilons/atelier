@@ -50,7 +50,7 @@ The agent playbooks are plain markdown (`atelier agent show <id>`), so they drop
 
 - **A living product map.** Features, docs, tickets, designs, and recorded conversations, cross-linked and committed in git next to your code.
 - **Specs your agent can build from.** `atelier spec new "Add SSO"` scaffolds a planned change with context and a clean handoff prompt.
-- **Agents that learn your codebase.** Atelier authors them, renders them into your tool, and they sharpen over time as they record what they learn.
+- **Agents that learn your codebase.** Atelier authors them, renders them into your tool, and they sharpen over time: each one proposes the patterns and standards it notices, and records them only with your sign-off, so you teach a convention once instead of every session.
 - **No lock-in, no black box.** Every fact is readable markdown and YAML you can diff and review. Atelier holds no credentials and fetches nothing; your agent does the I/O.
 
 ## Develop from source

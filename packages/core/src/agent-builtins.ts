@@ -1110,12 +1110,6 @@ const SPEC_HANDOFF = `Close the loop.
   each spec's \`prompt.md\`.
 - \`atelier map --rebuild\` so the feature + its breakdown show up.`;
 
-const SPEC_IMPROVE = `Make the next spec sharper. Record durable judgement with
-\`atelier agent learn spec "…"\`: the team's definition of done, how
-small a slice should be, recurring non-goals, who decides what. If a
-better spec-writing move emerged, add an instruction unit:
-\`atelier agent instruction add spec <slug> …\`.`;
-
 const SPEC_UNITS: InstructionUnit[] = [
   {
     slug: "overview",
@@ -1159,12 +1153,8 @@ const SPEC_UNITS: InstructionUnit[] = [
     description: "Surface open questions for decisions; sanity-check the breakdown; hand to planning.",
     detail: SPEC_HANDOFF,
   },
-  {
-    slug: "improve",
-    title: "Improve the engine",
-    description: "Record learnings; refine the playbook.",
-    detail: SPEC_IMPROVE,
-  },
+  // The self-improvement unit is appended to every agent at registry
+  // build time (see withSelfImprovement), so it isn't listed here.
 ];
 
 // ============================================================
@@ -1246,12 +1236,6 @@ const PLANNING_FINALIZE = `Close the loop and hand off.
   points at spec.md + plan.md + context.md).
 - \`atelier map --rebuild\` so statuses and order show up.`;
 
-const PLANNING_IMPROVE = `Make the next plan sharper. Record durable judgement with
-\`atelier agent learn planning "…"\`: how granular steps should be, the
-team's test + rollout norms, common sequencing traps. If a better
-planning move emerged, add an instruction unit:
-\`atelier agent instruction add planning <slug> …\`.`;
-
 const PLANNING_UNITS: InstructionUnit[] = [
   {
     slug: "overview",
@@ -1289,19 +1273,77 @@ const PLANNING_UNITS: InstructionUnit[] = [
     description: "Move planned specs to ready; confirm the sequence; hand to the coding agent.",
     detail: PLANNING_FINALIZE,
   },
-  {
-    slug: "improve",
-    title: "Improve the engine",
-    description: "Record learnings; refine the playbook.",
-    detail: PLANNING_IMPROVE,
-  },
+  // Self-improvement unit appended at registry build time (see below).
 ];
+
+// ============================================================
+// Self-improvement (uniform across every agent, confirm-first)
+// ============================================================
+
+/**
+ * Agent-specific examples of the durable patterns worth capturing.
+ * Falls back to a generic phrasing for any future agent.
+ */
+const SELF_IMPROVE_EXAMPLES: Record<string, string> = {
+  discovery:
+    "where work really lives, which sources matter, who owns what, the org's naming and conventions",
+  "system-design":
+    'architecture conventions, the team\'s diagram style, recurring decisions and trade-offs, what "good" looks like here',
+  "ui-design":
+    "the design system's conventions, component and token naming, the board-per-app layout, recurring screen patterns",
+  spec: "the team's definition of done, how small a slice should be, recurring non-goals, who decides what",
+  planning: "how granular steps should be, the team's test and rollout norms, common sequencing traps",
+};
+
+const SELF_IMPROVE_GENERIC =
+  "recurring standards, conventions, approaches, naming, and preferences: the way this team does things";
+
+/**
+ * The self-improvement unit every agent carries. The defining rule:
+ * the agent PROPOSES a pattern and the USER approves it before anything
+ * is recorded. Agents never silently rewrite themselves.
+ */
+function selfImproveUnit(agentId: string): InstructionUnit {
+  const examples = SELF_IMPROVE_EXAMPLES[agentId] ?? SELF_IMPROVE_GENERIC;
+  return {
+    slug: "self-improve",
+    title: "Self-improve (with the user's sign-off)",
+    description: "Spot durable patterns; propose them; record only once the user confirms.",
+    detail: `Get sharper every session, but never silently. As you work, watch for
+durable patterns in how this team operates: ${examples}.
+
+When you notice one worth keeping:
+1. **Name it to the user.** State the pattern you observed and the exact
+   wording you would record, in a line or two.
+2. **Ask before recording.** The user decides whether it becomes part of
+   you. Never self-modify on your own read alone.
+3. **Only on their yes, record it:**
+   - a durable fact, standard, or convention →
+     \`atelier agent learn ${agentId} "…"\`;
+   - a reusable play worth its own step →
+     \`atelier agent instruction add ${agentId} <slug> …\`.
+4. Re-render so it takes effect next time:
+   \`atelier agent install ${agentId}\`.
+
+This is the loop that lets the user teach you a standard once instead of
+re-explaining it every session.`,
+  };
+}
+
+/** Append the self-improvement unit to every agent that has a unit tree. */
+function withSelfImprovement(agents: BuiltinAgent[]): BuiltinAgent[] {
+  return agents.map((b) =>
+    b.instructionUnits
+      ? { ...b, instructionUnits: [...b.instructionUnits, selfImproveUnit(b.meta.id)] }
+      : b
+  );
+}
 
 // ============================================================
 // Registry
 // ============================================================
 
-export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
+export const BUILTIN_AGENTS: readonly BuiltinAgent[] = withSelfImprovement([
   {
     meta: {
       id: "discovery",
@@ -1392,7 +1434,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
     },
     instructionUnits: PLANNING_UNITS,
   },
-];
+]);
 
 /** Look up a built-in template by id. */
 export function findBuiltinAgent(id: string): BuiltinAgent | undefined {
