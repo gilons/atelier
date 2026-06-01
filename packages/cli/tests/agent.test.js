@@ -62,7 +62,7 @@ test("atelier init installs the whole agent suite by default (single-command set
     assert.match(init.stdout, /Agents installed/);
     assert.match(init.stdout, /\/atelier:discovery/);
     // The built-in suite is rendered into .claude/ — no extra commands.
-    for (const id of ["discovery", "system-design", "ui-design", "spec"]) {
+    for (const id of ["discovery", "system-design", "ui-design", "spec", "planning"]) {
       const cmd = path.join(workspaceRoot, ".claude", "commands", "atelier", `${id}.md`);
       const sub = path.join(workspaceRoot, ".claude", "agents", `atelier-${id}.md`);
       assert.ok((await fs.stat(cmd)).isFile(), `${id} slash command missing`);
@@ -99,16 +99,39 @@ test("atelier agent install spec renders the spec-authoring playbook", async () 
   }
 });
 
+test("atelier agent install planning renders the build-order playbook", async () => {
+  const { umbrella, workspaceRoot } = await setupWorkspace();
+  try {
+    const result = runCli(["agent", "install", "planning"], workspaceRoot);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
+    assert.match(result.stdout, /Installed agent planning/);
+    assert.match(result.stdout, /\/atelier:planning/);
+
+    const cmd = path.join(workspaceRoot, ".claude", "commands", "atelier", "planning.md");
+    const sub = path.join(workspaceRoot, ".claude", "agents", "atelier-planning.md");
+    const cmdText = await fs.readFile(cmd, "utf8");
+    const subText = await fs.readFile(sub, "utf8");
+    assert.match(subText, /^name: atelier-planning$/m);
+    // The playbook is HOW + build-order oriented.
+    assert.match(cmdText, /plan\.md/);
+    assert.match(cmdText, /spec deps/);
+    assert.match(cmdText, /set-status .*ready|ready/i);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("atelier agent install --all installs every built-in", async () => {
   const { umbrella, workspaceRoot } = await setupWorkspace();
   try {
     // setupWorkspace used --no-agents, so none are installed yet.
     const result = runCli(["agent", "install", "--all"], workspaceRoot);
     assert.equal(result.status, 0, `stderr: ${result.stderr}\nstdout: ${result.stdout}`);
-    assert.match(result.stdout, /Installed 4 agents/);
+    assert.match(result.stdout, /Installed 5 agents/);
     assert.match(result.stdout, /\/atelier:system-design/);
     assert.match(result.stdout, /\/atelier:spec/);
-    for (const id of ["discovery", "system-design", "ui-design", "spec"]) {
+    assert.match(result.stdout, /\/atelier:planning/);
+    for (const id of ["discovery", "system-design", "ui-design", "spec", "planning"]) {
       const cmd = path.join(workspaceRoot, ".claude", "commands", "atelier", `${id}.md`);
       assert.ok((await fs.stat(cmd)).isFile(), `${id} not installed`);
     }
