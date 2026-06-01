@@ -1166,12 +1166,16 @@ export function validateSpecManifest(
     codeRefs,
     docRefs,
     fromSession,
+    fromTicket,
     createdAt,
     updatedAt,
   } = raw;
 
   if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
     pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
+  }
+  if (fromTicket !== undefined && !isNonEmptyString(fromTicket)) {
+    pushIssue(issues, "$.fromTicket", "if present, must be a non-empty string (<source>:<ticketId>)");
   }
 
   if (!isNonEmptyString(id)) {
@@ -1295,6 +1299,7 @@ export function validateSpecManifest(
     updatedAt: updatedAt as string,
   };
   if (fromSession !== undefined) value.fromSession = fromSession as string;
+  if (fromTicket !== undefined) value.fromTicket = fromTicket as string;
   return { ok: true, value, issues: [] };
 }
 

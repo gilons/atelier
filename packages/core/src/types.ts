@@ -760,6 +760,12 @@ export interface SpecManifest {
    * stakeholder `fromSession` convention.
    */
   fromSession?: string;
+  /**
+   * Optional originating ticket (`<source>:<ticketId>`) this spec was
+   * scoped from — e.g. the scoping agent broke a tracker epic into
+   * specs. Provenance back to the planning tool.
+   */
+  fromTicket?: string;
   /** ISO timestamp when first created. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */

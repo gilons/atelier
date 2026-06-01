@@ -74,7 +74,9 @@ const newCmd: Command = {
     "and prompt.md. The change --type controls which spec template is used:\n" +
     SPEC_CHANGE_TYPES.map((t) => `  · ${t}`).join("\n") +
     "\n\n--feature pulls in code/doc refs from a registered feature.\n" +
-    "--code and --doc add ad-hoc references on top.",
+    "--code and --doc add ad-hoc references on top.\n" +
+    "--from-ticket <source:ticketId> records the originating tracker item\n" +
+    "(the scoping agent uses this when breaking an epic into specs).",
   options: {
     title: { type: "string", short: "t" },
     type: { type: "string" },
@@ -84,6 +86,7 @@ const newCmd: Command = {
     code: { type: "string", multiple: true },
     doc: { type: "string", multiple: true },
     "from-session": { type: "string" },
+    "from-ticket": { type: "string" },
     "no-validate-refs": { type: "boolean" },
   },
   positionals: ["title?"],
@@ -157,6 +160,7 @@ const newCmd: Command = {
         codeRefs,
         docRefs,
         fromSession: values["from-session"] as string | undefined,
+        fromTicket: values["from-ticket"] as string | undefined,
         skipReferenceValidation: values["no-validate-refs"] === true,
       });
       ui.success(`Scaffolded spec ${ui.bold(manifest.id)}`);
@@ -189,9 +193,13 @@ const newCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List specs / issue folders.",
+  description:
+    "Filter with --status, --type, or --feature <id> (the specs that make\n" +
+    "up an epic — the scoping agent's breakdown of a feature).",
   options: {
     status: { type: "string", short: "s" },
     type: { type: "string" },
+    feature: { type: "string", short: "f" },
   },
   async run({ values, cwd, mode }) {
     const status = values.status as string | undefined;
@@ -204,6 +212,7 @@ const listCmd: Command = {
       ui.error(`Invalid --type "${type}".`);
       return 2;
     }
+    const feature = values.feature as string | undefined;
 
     let workspaceRoot: string;
     try {
@@ -219,7 +228,8 @@ const listCmd: Command = {
     const { specs, errors } = await listSpecs(workspaceRoot);
     const filtered = specs
       .filter((s) => !status || s.manifest.status === status)
-      .filter((s) => !type || s.manifest.type === type);
+      .filter((s) => !type || s.manifest.type === type)
+      .filter((s) => !feature || s.manifest.features.includes(feature));
 
     if (filtered.length === 0 && errors.length === 0) {
       ui.info(specs.length === 0 ? "No specs yet." : "No specs match the filter.");

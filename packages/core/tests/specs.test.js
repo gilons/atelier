@@ -9,6 +9,7 @@ import {
   registerSource,
   addFeature,
   addDoc,
+  addTicket,
   createSpec,
   listSpecs,
   loadSpec,
@@ -60,6 +61,60 @@ test("specTemplate has a section for each change type", () => {
     const text = specTemplate(t, "Title");
     assert.match(text, /^# Title\n/);
     assert.ok(text.length > 50, `expected non-trivial template for ${t}`);
+  }
+});
+
+test("every spec template carries an Open questions section", () => {
+  for (const t of SPEC_CHANGE_TYPES) {
+    assert.match(specTemplate(t, "Title"), /## Open questions/, `${t} missing Open questions`);
+  }
+});
+
+test("createSpec records fromTicket provenance + resolves the ticket into context", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    await registerSource(workspaceRoot, { id: "linear", name: "Linear" });
+    await addTicket(workspaceRoot, {
+      source: "linear",
+      ticketId: "ENG-42",
+      title: "Billing epic",
+      overview: "Add metered billing across the product",
+      status: "in-progress",
+    });
+    const { manifest, paths } = await createSpec(workspaceRoot, {
+      title: "Billing — usage metering",
+      type: "new-feature",
+      fromTicket: "linear:ENG-42",
+    });
+    assert.equal(manifest.fromTicket, "linear:ENG-42");
+    // Survives a round-trip through the README front-matter.
+    const readme = await fs.readFile(paths.readme, "utf8");
+    assert.match(readme, /fromTicket: linear:ENG-42/);
+    // context.md surfaces the originating ticket + its summary.
+    const context = await fs.readFile(paths.context, "utf8");
+    assert.match(context, /Originating ticket/);
+    assert.match(context, /linear:ENG-42/);
+    assert.match(context, /Billing epic/);
+    assert.match(context, /metered billing/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("createSpec tolerates a fromTicket that isn't indexed", async () => {
+  const { umbrella, workspaceRoot } = await workspace();
+  try {
+    const { manifest, paths } = await createSpec(workspaceRoot, {
+      title: "Orphan ticket spec",
+      type: "modification",
+      fromTicket: "jira:UNKNOWN-1",
+    });
+    assert.equal(manifest.fromTicket, "jira:UNKNOWN-1");
+    const context = await fs.readFile(paths.context, "utf8");
+    assert.match(context, /jira:UNKNOWN-1/);
+    assert.match(context, /not indexed/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
   }
 });
 

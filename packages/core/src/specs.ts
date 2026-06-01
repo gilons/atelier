@@ -4,6 +4,7 @@ import { workspacePaths } from "./paths.js";
 import { validateSpecManifest, formatIssues } from "./validation.js";
 import { loadFeature, FeatureNotFoundError } from "./features.js";
 import { loadDoc, DocNotFoundError } from "./documentation.js";
+import { loadTicket, TicketNotFoundError } from "./tickets.js";
 import { loadReposConfig } from "./repos.js";
 import {
   splitFrontMatter,
@@ -131,6 +132,16 @@ function specFiles(workspaceRoot: string, id: string) {
  * definition; it's intentional rather than configurable.
  */
 export function specTemplate(type: SpecChangeType, title: string): string {
+  // Every spec carries an Open questions section — the decisions the
+  // scoping agent surfaces and a human must resolve before/while
+  // building. Appended uniformly so every change type has it.
+  return (
+    specBody(type, title) +
+    "\n## Open questions\n\nDecisions to resolve before building. The scoping agent fills these; clear them as they're answered.\n\n- [ ] …\n"
+  );
+}
+
+function specBody(type: SpecChangeType, title: string): string {
   const header = `# ${title}\n\n`;
   switch (type) {
     case "new-feature":
@@ -206,6 +217,7 @@ function renderReadme(manifest: SpecManifest): string {
   if (manifest.codeRefs.length > 0) fm.codeRefs = manifest.codeRefs;
   if (manifest.docRefs.length > 0) fm.docRefs = manifest.docRefs;
   if (manifest.fromSession !== undefined) fm.fromSession = manifest.fromSession;
+  if (manifest.fromTicket !== undefined) fm.fromTicket = manifest.fromTicket;
   fm.createdAt = manifest.createdAt;
   fm.updatedAt = manifest.updatedAt;
 
@@ -222,6 +234,14 @@ function renderReadme(manifest: SpecManifest): string {
 interface RenderContextInput {
   manifest: SpecManifest;
   features: Feature[];
+  /** The originating ticket (when the spec was scoped via --from-ticket). */
+  originatingTicket?: {
+    ref: string;
+    title?: string;
+    summary?: string;
+    status?: string;
+    found: boolean;
+  };
   /** Resolved local paths for each codeRef. */
   resolvedCodeRefs: Array<{ repo: string; path?: string; absPath: string }>;
   /**
@@ -241,6 +261,17 @@ function renderContext(input: RenderContextInput): string {
   const lines: string[] = [];
   lines.push(`# Context for ${input.manifest.id}`);
   lines.push("");
+  if (input.originatingTicket) {
+    const t = input.originatingTicket;
+    lines.push("## Originating ticket");
+    lines.push("");
+    const st = t.status ? ` [${t.status}]` : "";
+    const ttl = t.title ? ` — ${t.title}` : "";
+    const note = t.found ? "" : " — *not indexed in atelier*";
+    lines.push(`- \`${t.ref}\`${st}${ttl}${note}`);
+    if (t.summary) lines.push(`  - ${t.summary}`);
+    lines.push("");
+  }
   if (input.features.length > 0) {
     lines.push("## Related features");
     for (const f of input.features) {
@@ -332,6 +363,9 @@ export interface CreateSpecOptions {
   docRefs?: FeatureDocRef[];
   /** Optional session id this spec was born from (provenance). */
   fromSession?: string;
+  /** Optional originating ticket (`<source>:<ticketId>`) — scoping seeds
+   *  a spec from a tracker epic. Resolved into context.md when found. */
+  fromTicket?: string;
   /**
    * Skip cross-reference validation (used by tests and bulk imports).
    * Doc refs are always tolerant — missing docs are reported in
@@ -415,6 +449,7 @@ export async function createSpec(
     updatedAt: now,
   };
   if (opts.fromSession) manifest.fromSession = opts.fromSession;
+  if (opts.fromTicket) manifest.fromTicket = opts.fromTicket;
 
   // Sanity-check the manifest once more.
   const check = validateSpecManifest(manifest);
@@ -485,11 +520,37 @@ export async function createSpec(
     }
   }
 
+  // Resolve the originating ticket (when scoped via --from-ticket).
+  let originatingTicket: RenderContextInput["originatingTicket"];
+  if (manifest.fromTicket) {
+    const [source, ticketId] = splitOnce(manifest.fromTicket, ":");
+    if (source && ticketId) {
+      try {
+        const ticket = await loadTicket(workspaceRoot, source, ticketId);
+        originatingTicket = {
+          ref: manifest.fromTicket,
+          title: ticket.title,
+          summary: ticket.overview,
+          status: ticket.status,
+          found: true,
+        };
+      } catch (err) {
+        if (err instanceof TicketNotFoundError) {
+          originatingTicket = { ref: manifest.fromTicket, found: false };
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      originatingTicket = { ref: manifest.fromTicket, found: false };
+    }
+  }
+
   await fs.writeFile(paths.readme, renderReadme(manifest), "utf8");
   await fs.writeFile(paths.spec, specTemplate(opts.type, opts.title), "utf8");
   await fs.writeFile(
     paths.context,
-    renderContext({ manifest, features: loadedFeatures, resolvedCodeRefs, resolvedDocs }),
+    renderContext({ manifest, features: loadedFeatures, originatingTicket, resolvedCodeRefs, resolvedDocs }),
     "utf8"
   );
   await fs.writeFile(paths.prompt, renderPrompt(manifest, paths.context), "utf8");

@@ -46,6 +46,52 @@ test("atelier spec --help shows subcommands", () => {
   }
 });
 
+test("atelier spec list --feature shows only that feature's specs (the breakdown)", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    runCli(["feature", "add", "Billing"], workspaceRoot);
+    runCli(["feature", "add", "Search"], workspaceRoot);
+    runCli(["spec", "new", "Metering", "--type", "new-feature", "--feature", "billing"], workspaceRoot);
+    runCli(["spec", "new", "Invoices", "--type", "new-feature", "--feature", "billing"], workspaceRoot);
+    runCli(["spec", "new", "Indexing", "--type", "new-feature", "--feature", "search"], workspaceRoot);
+
+    const all = runCli(["spec", "list"], workspaceRoot);
+    assert.match(all.stdout, /metering/i);
+    assert.match(all.stdout, /indexing/i);
+
+    const billing = runCli(["spec", "list", "--feature", "billing"], workspaceRoot);
+    assert.equal(billing.status, 0, billing.stderr);
+    assert.match(billing.stdout, /metering/i);
+    assert.match(billing.stdout, /invoices/i);
+    assert.doesNotMatch(billing.stdout, /indexing/i);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("atelier spec new --from-ticket records the originating ticket in context", async () => {
+  const { umbrella, workspaceRoot } = await setup();
+  try {
+    runCli(["source", "register", "linear", "--name", "Linear"], workspaceRoot);
+    runCli(["ticket", "add", "linear:ENG-7", "--title", "Billing epic"], workspaceRoot);
+    const res = runCli(
+      ["spec", "new", "Metering", "--type", "new-feature", "--from-ticket", "linear:ENG-7"],
+      workspaceRoot
+    );
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    const dirs = await fs.readdir(path.join(workspaceRoot, ".atelier", "issues"));
+    const context = await fs.readFile(
+      path.join(workspaceRoot, ".atelier", "issues", dirs[0], "context.md"),
+      "utf8"
+    );
+    assert.match(context, /Originating ticket/);
+    assert.match(context, /linear:ENG-7/);
+    assert.match(context, /Billing epic/);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
 test("atelier spec new requires --type", async () => {
   const { umbrella, workspaceRoot } = await setup();
   try {
