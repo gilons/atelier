@@ -25,7 +25,13 @@ atelier init --name "My Product"   # workspace + all agents, version-controlled
 
 ### Claude Code
 
-`atelier init` already rendered the agents into `.claude/`, so there's nothing else to run. You now have slash commands (`/atelier:discovery`, `/atelier:system-design`, `/atelier:ui-design`) plus subagents Claude can delegate to. Run `/atelier:discovery` first; it maps your workspace and connects your docs, design, and tickets. Re-render any time with `atelier agent install --all`; the `.claude/` files are regenerated from the canonical definitions.
+`atelier init` already rendered the agents into `.claude/`, so there's nothing else to run. You now have slash commands plus subagents Claude can delegate to, following the delivery pipeline:
+
+- `/atelier:discovery` maps your workspace and connects your docs, design, and tickets.
+- `/atelier:system-design` and `/atelier:ui-design` document the architecture and the UI.
+- `/atelier:scoping` turns a feature or epic into a grounded breakdown of specs (what's in, what's out, how you know it's done).
+
+Run `/atelier:discovery` first. Re-render any time with `atelier agent install --all`; the `.claude/` files are regenerated from the canonical definitions.
 
 ### Codex, Cursor, Copilot, or any agent
 
