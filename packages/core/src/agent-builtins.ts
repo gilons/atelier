@@ -1317,15 +1317,23 @@ When you notice one worth keeping:
    wording you would record, in a line or two.
 2. **Ask before recording.** The user decides whether it becomes part of
    you. Never self-modify on your own read alone.
-3. **Only on their yes, record it:**
-   - a durable fact, standard, or convention →
-     \`atelier agent learn ${agentId} "…"\`;
-   - a reusable play worth its own step →
+3. **Only on their yes, record it to the right layer:**
+   - **Personal by default** (this developer's own context, gitignored):
+     \`atelier agent learn ${agentId} "…"\`.
+   - **A team standard** the whole workspace should follow: confirm it's
+     really team-wide, then \`atelier agent learn ${agentId} "…" --team\`
+     (or \`atelier agent promote ${agentId}\` to move accumulated personal
+     learnings up). The team layer is committed, so it lands on every
+     developer; treat it as a shared decision, ideally via a PR.
+   - A reusable *play* worth its own step →
      \`atelier agent instruction add ${agentId} <slug> …\`.
-4. Re-render so it takes effect next time:
-   \`atelier agent install ${agentId}\`.
+   Recording auto-refreshes your \`.claude/\` files when you're installed.
 
-This is the loop that lets the user teach you a standard once instead of
+**This is a shared resource.** After a \`git pull\` that brings in
+teammates' promoted (team) learnings, re-render to pick them up:
+\`atelier agent install ${agentId}\` (or \`--all\`).
+
+This loop lets the user teach you a standard once instead of
 re-explaining it every session.`,
   };
 }
