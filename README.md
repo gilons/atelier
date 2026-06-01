@@ -2,6 +2,8 @@
 
 > Plan your product where your coding agent can act on it.
 
+**[See how it works (the story, visualized) →](https://gilons.github.io/atelier/)**
+
 Your coding agent is great at writing code and bad at remembering what your product actually is: how the pieces fit, what's been decided, what the last meeting changed. **Atelier is the memory and the map.**
 
 It keeps a living, version-controlled picture of your product across **code, docs, design, and conversations**, and hands your agent production-grade **specs** and a navigable **map** to work from. It never calls an LLM itself: your agent does the thinking, while atelier keeps the facts straight in plain git-tracked markdown. It works with the tools you already use (Notion, Jira, Figma, GitHub). Your agent reaches them; atelier just remembers the summary and the link.
