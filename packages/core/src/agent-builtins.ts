@@ -76,9 +76,9 @@ Otherwise walk all surfaces.
 
 1. **Check state before asking.** Start by reading what's already
    connected so you never re-ask or duplicate:
-   \`atelier map\`, \`atelier repo list\`, \`atelier source list\`,
-   \`atelier stakeholder list\`. Re-read your own learnings
-   (\`atelier agent show discovery\`) so you resume, not restart.
+   \`atelier map\`, \`atelier project list\`, \`atelier repo list\`,
+   \`atelier source list\`, \`atelier stakeholder list\`. Re-read your own
+   learnings (\`atelier agent show discovery\`) so you resume, not restart.
 2. **One surface at a time.** Confirm what the team uses, connect it,
    verify, then record a durable learning.
 3. **Confirm before writing.** Surface what you're about to register
@@ -89,7 +89,52 @@ Otherwise walk all surfaces.
    These accumulate into your instructions on the next install — this
    is how you self-improve.`;
 
-const DISCOVERY_REPOS = `Connect the team's code repositories.
+const DISCOVERY_PROJECTS = `Figure out the **shape of the workspace** before connecting surfaces:
+is this one product, or several?
+
+Most teams that adopt atelier already live in a multi-project world: an
+agency with several clients, a studio with multiple apps, a company with
+separate product lines. You don't make them set that up by hand. You
+**detect** the realities from what's already in front of you and
+**propose** them, then register everything under the right project as you
+go. The user just confirms; they should never have to think in
+\`atelier project add\` commands.
+
+**Detect first (no interrogation).** Read the signals you already have:
+- Sibling directories under the workspace root, and the repos you can
+  discover (\`atelier repo discover\`) and their names. A cluster like
+  \`acme-web\` + \`acme-api\` vs \`beta-app\` reads as two clients (\`acme\`,
+  \`beta\`); a single \`acme-*\` family reads as one.
+- The GitHub org(s) the repos belong to.
+- How the user described the workspace at \`atelier init\`, and anything
+  they tell you in passing.
+- Whether docs / design / planning accounts differ per client.
+
+**Propose in one breath, then act on a yes.** Summarize what you see:
+"Looks like this workspace covers two clients, Acme and Beta, plus some
+shared tooling. Want me to set them up as projects?" On confirmation,
+you run the commands (not the user):
+- \`atelier project add "Acme Corp"\` for each detected project.
+- \`atelier project use <id>\` to pin the one you'll start with.
+- In the next steps (repos, docs, planning, design), pass
+  \`--project <id>\` so each surface lands in the right project. Keep
+  genuinely shared things (a common component library, internal people,
+  company-wide standards) **global** (no \`--project\`).
+
+**One product? Stay flat.** If it's a single product with no separate
+clients or lines, skip projects entirely: everything is global, and that
+is the correct default. Never invent projects that aren't there.
+
+**Already set up?** If \`atelier project list\` already shows projects,
+don't recreate them: confirm they still match reality, and \`atelier
+project use <id>\` the one this session is about.
+
+Record which project a repo or source belongs to as you learn it, so the
+spec, planning, and design agents inherit the scope.`;
+
+const DISCOVERY_REPOS = `Connect the team's code repositories. If you set up projects in the
+previous step, register each repo under its project with
+\`--project <id>\` (shared repos stay global).
 
 - Run \`atelier repo discover\` (uses the user's \`gh\` auth) to list
   org repos vs what's already registered.
@@ -103,7 +148,9 @@ const DISCOVERY_DOCS = `Connect documentation — knowledge: PRDs, RFCs, runbook
   docs/ folder in a repo, …).
 - Register it (a source is just a connector — what it feeds is decided
   per entry when you index, via \`atelier doc add\`):
-  \`atelier source register <slug> --name "<Name>"\`
+  \`atelier source register <slug> --name "<Name>"\` (add
+  \`--project <id>\` when this source belongs to one project; its docs and
+  tickets inherit that project. Shared knowledge stays global.)
 - Write a connection runbook so future agents can bring it online —
   what MCP server / browser tool / token is needed, how to fetch a doc
   by id. Pass it via \`--setup-file <path>\` or
@@ -152,6 +199,12 @@ const DISCOVERY_UNITS: InstructionUnit[] = [
     title: "Overview & operating principles",
     description: "Who you are, how to navigate by the map, and the four working principles.",
     detail: DISCOVERY_OVERVIEW,
+  },
+  {
+    slug: "projects",
+    title: "Map the projects (one product or several?)",
+    description: "Detect the workspace's clients / product lines and set them up; stay flat if it's one product.",
+    detail: DISCOVERY_PROJECTS,
   },
   {
     slug: "repos",
@@ -1357,12 +1410,12 @@ function withSelfImprovement(agents: BuiltinAgent[]): BuiltinAgent[] {
  */
 const PROJECT_SCOPE_NOTES: Record<string, string> = {
   discovery:
-    "You set scoping up. If this workspace serves several clients or product " +
-    "lines, create a project per reality (`atelier project add \"<Name>\"`) and " +
-    "register each repo and source under it (`--project <id>`). Keep agency-wide " +
-    "or shared connectors (a shared component library, internal people, company " +
-    "standards) global. If you can't tell which project a repo or source belongs " +
-    "to, ask.",
+    "You set scoping up, but by detecting it, not by asking the user to. See " +
+    "the \"Map the projects\" step: infer the clients / product lines from the " +
+    "repos, org, and how they described the workspace, propose them, and create " +
+    "them on a yes (`atelier project add`). Register each repo and source under " +
+    "its project (`--project <id>`); keep shared connectors global. One product? " +
+    "Stay flat. Never make the user hand-run project commands.",
   spec:
     "Anchor specs on the active project. A spec inherits the project of the " +
     "feature or ticket it comes from; when you create one, pass `--project <id>` " +
