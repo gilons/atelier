@@ -11,11 +11,13 @@ import {
   deriveSourceId,
   SourceAlreadyRegisteredError,
   SourceNotFoundError,
+  ProjectNotFoundError,
   NotInsideWorkspaceError,
   type Source,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /**
  * `atelier source` — register and manage the workspace's documentation
@@ -86,6 +88,7 @@ const registerCmd: Command = {
     "setup-file": { type: "string" },
     "setup-text": { type: "string" },
     disabled: { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ positionals, values, cwd }) {
     const explicitId = positionals[0] as string | undefined;
@@ -151,6 +154,18 @@ const registerCmd: Command = {
       throw err;
     }
 
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const source = await registerSource(workspaceRoot, {
         id,
@@ -158,8 +173,12 @@ const registerCmd: Command = {
         config,
         setupInstructions,
         enabled: values.disabled === true ? false : true,
+        project,
       });
       ui.success(`Registered ${ui.bold(source.id)} (${source.name}).`);
+      if (source.project) {
+        ui.print(`  ${ui.dim("Project:")} ${source.project}`);
+      }
       if (source.setupFile) {
         ui.print(
           `  ${ui.dim(`Setup runbook saved at .atelier/${source.setupFile}`)}`
@@ -187,7 +206,11 @@ const registerCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List registered documentation sources.",
-  async run({ cwd }) {
+  description:
+    "Scoped to the active project plus global sources. Pass `--project\n" +
+    "<id>` to view another project, or `--project all` for everything.",
+  options: { ...PROJECT_OPTION },
+  async run({ cwd, values }) {
     let workspaceRoot: string;
     try {
       workspaceRoot = await requireWorkspaceRoot(cwd);
@@ -198,12 +221,24 @@ const listCmd: Command = {
       }
       throw err;
     }
-    const sources = await listSources(workspaceRoot);
-    if (sources.length === 0) {
+    const scope = await readScope(workspaceRoot, values);
+    const all = await listSources(workspaceRoot);
+    const sources = all.filter((s) => inProjectScope(s.project, scope));
+    if (all.length === 0) {
       ui.info("No sources registered yet.");
       ui.print(
         `  ${ui.dim('Register one with `atelier source register <id> --name "..."` (config + setup runbook optional).')}`
       );
+      return 0;
+    }
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
+    if (sources.length === 0) {
+      ui.info("No sources in this project scope.");
+      ui.print(`  ${ui.dim("Try `atelier source list --project all`.")}`);
       return 0;
     }
     const idWidth = Math.max(
@@ -221,7 +256,7 @@ const listCmd: Command = {
       const state = s.enabled ? "enabled " : "disabled";
       const setup = s.setupFile ? "✓ runbook" : "no runbook";
       ui.print(
-        `  ${ui.green("·")} ${s.id.padEnd(idWidth)}  ${s.name.padEnd(nameWidth)}  ${state}  ${setup}`
+        `  ${ui.green("·")} ${s.id.padEnd(idWidth)}  ${s.name.padEnd(nameWidth)}  ${state}  ${setup}${projectTag(s.project)}`
       );
     }
     return 0;

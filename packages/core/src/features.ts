@@ -110,6 +110,7 @@ export function serializeFeatureFile(feature: Feature): string {
     fm.description = feature.description;
   }
   fm.status = feature.status;
+  if (feature.project !== undefined) fm.project = feature.project;
   if (feature.codeRefs.length > 0) fm.codeRefs = feature.codeRefs;
   if (feature.docRefs.length > 0) fm.docRefs = feature.docRefs;
   fm.createdAt = feature.createdAt;
@@ -159,6 +160,11 @@ export interface AddFeatureOptions {
   status?: FeatureStatus;
   /** One-line summary stored in front-matter. */
   description?: string;
+  /**
+   * Project this feature belongs to (an id from `projects.yaml`).
+   * Omitted = global (shared across projects).
+   */
+  project?: string;
   /** Code references — repos must exist in repos.yaml. */
   codeRefs?: FeatureCodeRef[];
   /** Doc references — sources must exist in sources.yaml. */
@@ -274,6 +280,7 @@ export async function addFeature(
     updatedAt: now,
     body: opts.body ?? `# ${opts.name}\n\nDescribe the feature here.\n`,
   };
+  if (opts.project !== undefined) feature.project = opts.project;
 
   // Validate the whole front-matter once more to catch malformed
   // caller input early (e.g. an unrecognized status).
@@ -287,7 +294,7 @@ export async function addFeature(
 }
 
 function toFrontMatter(feature: Feature): FeatureFrontMatter {
-  return {
+  const fm: FeatureFrontMatter = {
     id: feature.id,
     name: feature.name,
     description: feature.description,
@@ -297,6 +304,8 @@ function toFrontMatter(feature: Feature): FeatureFrontMatter {
     createdAt: feature.createdAt,
     updatedAt: feature.updatedAt,
   };
+  if (feature.project !== undefined) fm.project = feature.project;
+  return fm;
 }
 
 /** Load a single feature by id. Throws if missing. */

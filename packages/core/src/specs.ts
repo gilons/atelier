@@ -220,6 +220,7 @@ function renderReadme(manifest: SpecManifest): string {
   if (manifest.fromSession !== undefined) fm.fromSession = manifest.fromSession;
   if (manifest.fromTicket !== undefined) fm.fromTicket = manifest.fromTicket;
   if (manifest.dependsOn && manifest.dependsOn.length > 0) fm.dependsOn = manifest.dependsOn;
+  if (manifest.project !== undefined) fm.project = manifest.project;
   fm.createdAt = manifest.createdAt;
   fm.updatedAt = manifest.updatedAt;
 
@@ -390,6 +391,12 @@ export interface CreateSpecOptions {
    *  planning agent after the specs exist, but can be seeded here. */
   dependsOn?: string[];
   /**
+   * Project this spec belongs to (an id from `projects.yaml`). Omitted =
+   * global. Usually inherited from the feature or ticket the spec was
+   * created from; the CLI fills this from the active project when unset.
+   */
+  project?: string;
+  /**
    * Skip cross-reference validation (used by tests and bulk imports).
    * Doc refs are always tolerant — missing docs are reported in
    * context.md as "not yet indexed" rather than failing the create.
@@ -474,6 +481,7 @@ export async function createSpec(
   if (opts.fromSession) manifest.fromSession = opts.fromSession;
   if (opts.fromTicket) manifest.fromTicket = opts.fromTicket;
   if (opts.dependsOn && opts.dependsOn.length > 0) manifest.dependsOn = opts.dependsOn;
+  if (opts.project) manifest.project = opts.project;
 
   // Sanity-check the manifest once more.
   const check = validateSpecManifest(manifest);
@@ -658,6 +666,8 @@ export interface UpdateSpecOptions {
   title?: string;
   /** Replace the spec's dependencies (other spec ids that must build first). */
   dependsOn?: string[];
+  /** Retag the spec's project (an id from `projects.yaml`). */
+  project?: string;
 }
 
 /**

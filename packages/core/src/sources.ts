@@ -84,6 +84,12 @@ export interface RegisterSourceOptions {
   setupInstructions?: string;
   /** Whether the source is active. Defaults to true. */
   enabled?: boolean;
+  /**
+   * Project this source belongs to (an id from `projects.yaml`).
+   * Omitted = global (shared across projects). Docs and tickets
+   * indexed under this source inherit it.
+   */
+  project?: string;
 }
 
 /**
@@ -127,6 +133,7 @@ export async function registerSource(
     enabled: opts.enabled ?? true,
   };
   if (opts.config !== undefined) source.config = opts.config;
+  if (opts.project !== undefined) source.project = opts.project;
 
   // Write the setup runbook first so an interrupted register call
   // doesn't leave a source pointing at a file that doesn't exist.

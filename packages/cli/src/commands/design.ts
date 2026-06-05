@@ -32,12 +32,14 @@ import {
   DesignConfigError,
   AgentAlreadyExistsError,
   NotInsideWorkspaceError,
+  ProjectNotFoundError,
   type DesignPalette,
   type DisciplineSpec,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
 import { toolCommand } from "./design-tool.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /** The agent's built-in default when no stability gate is configured. */
 const DEFAULT_STABILITY_CHUNKS = 2;
@@ -666,6 +668,7 @@ const artifactAddCmd: Command = {
     "from-session": { type: "string" },
     "body-text": { type: "string" },
     "body-file": { type: "string" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const ref = parseDesignRef(positionals[0] ?? "");
@@ -693,6 +696,18 @@ const artifactAddCmd: Command = {
       }
     }
 
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const d = await addDesign(root, {
         discipline: ref.discipline,
@@ -703,12 +718,14 @@ const artifactAddCmd: Command = {
         link: values.link as string | undefined,
         app: values.app as string | undefined,
         fromSession: values["from-session"] as string | undefined,
+        project,
         body,
       });
       ui.success(`Recorded design ${ui.bold(`${d.discipline}:${d.id}`)}`);
       ui.print(`  ${ui.dim("title:")} ${d.title}`);
       if (d.kind) ui.print(`  ${ui.dim("kind:")}  ${d.kind}`);
       if (d.link) ui.print(`  ${ui.dim("link:")}  ${d.link}`);
+      if (d.project) ui.print(`  ${ui.dim("project:")} ${d.project}`);
       return 0;
     } catch (err) {
       if (err instanceof DesignAlreadyExistsError) {
@@ -727,20 +744,32 @@ const artifactAddCmd: Command = {
 const artifactListCmd: Command = {
   name: "list",
   summary: "List design artifacts (optionally by discipline).",
-  options: { discipline: DISCIPLINE_OPT },
+  options: { discipline: DISCIPLINE_OPT, ...PROJECT_OPTION },
   async run({ values, cwd }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
     const disciplineFilter = values.discipline as string | undefined;
-    const { designs, errors } = await listDesigns(root, disciplineFilter);
-    if (designs.length === 0 && errors.length === 0) {
+    const scope = await readScope(root, values);
+    const { designs: allDesigns, errors } = await listDesigns(root, disciplineFilter);
+    const designs = allDesigns.filter((d) => inProjectScope(d.design.project, scope));
+    if (allDesigns.length === 0 && errors.length === 0) {
       ui.info("No design artifacts yet.");
       ui.print(`  ${ui.dim("The design agents record these; or `atelier design artifact add <discipline>:<id> --title \"...\"`.")}`);
       return 0;
     }
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
+    if (designs.length === 0) {
+      ui.info("No design artifacts in this project scope.");
+      ui.print(`  ${ui.dim("Try `atelier design artifact list --project all`.")}`);
+      return 0;
+    }
     for (const { design } of designs) {
       const k = design.kind ? ` ${ui.dim("[" + design.kind + "]")}` : "";
-      ui.print(`  ${ui.green("·")} ${design.discipline}:${design.id}${k}  ${design.title}`);
+      ui.print(`  ${ui.green("·")} ${design.discipline}:${design.id}${k}  ${design.title}${projectTag(design.project)}`);
     }
     ui.blank();
     if (errors.length > 0) {
@@ -770,6 +799,7 @@ const artifactShowCmd: Command = {
       if (d.kind) ui.print(`  ${ui.dim("kind:")}    ${d.kind}`);
       if (d.app) ui.print(`  ${ui.dim("app:")}     ${d.app}`);
       if (d.link) ui.print(`  ${ui.dim("link:")}    ${d.link}`);
+      if (d.project) ui.print(`  ${ui.dim("project:")} ${d.project}`);
       if (d.fromSession) ui.print(`  ${ui.dim("session:")} ${d.fromSession}`);
       ui.print(`  ${ui.dim("updated:")} ${d.updatedAt}`);
       ui.blank();

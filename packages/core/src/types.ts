@@ -65,6 +65,13 @@ export interface Source {
    * up in default `/item list` filters or agent-bootstrap output.
    */
   enabled: boolean;
+  /**
+   * Project this source belongs to (an id from `projects.yaml`).
+   * Omitted means global: shared across every project. Docs and
+   * tickets indexed under this source inherit its project. See
+   * `atelier project`.
+   */
+  project?: string;
 }
 
 /** Top-level shape of `.atelier/sources.yaml`. */
@@ -91,6 +98,12 @@ export interface RegisteredRepo {
   description?: string;
   /** Whether this repo is currently included in syncs. */
   enabled: boolean;
+  /**
+   * Project this repo belongs to (an id from `projects.yaml`).
+   * Omitted means global: shared across every project. See
+   * `atelier project`.
+   */
+  project?: string;
 }
 
 /** Top-level shape of `.planning/repos.yaml`. */
@@ -217,6 +230,12 @@ export interface FeatureFrontMatter {
   description?: string;
   /** Lifecycle stage. */
   status: FeatureStatus;
+  /**
+   * Project this feature belongs to (an id from `projects.yaml`).
+   * Omitted means global: shared across every project. See
+   * `atelier project`.
+   */
+  project?: string;
   /** Code locations implementing this feature. */
   codeRefs: FeatureCodeRef[];
   /** Documentation describing this feature. */
@@ -376,6 +395,12 @@ export interface DesignArtifactFrontMatter {
   app?: string;
   /** Session id this design came out of, when applicable. */
   fromSession?: string;
+  /**
+   * Project this design belongs to (an id from `projects.yaml`).
+   * Omitted means global: shared across every project. See
+   * `atelier project`.
+   */
+  project?: string;
   /** ISO timestamp when first created. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */
@@ -817,6 +842,13 @@ export interface SpecManifest {
    * order.
    */
   dependsOn?: string[];
+  /**
+   * Project this spec belongs to (an id from `projects.yaml`).
+   * Omitted means global: shared across every project. Usually
+   * inherited from the feature/ticket the spec was created from. See
+   * `atelier project`.
+   */
+  project?: string;
   /** ISO timestamp when first created. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */

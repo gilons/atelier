@@ -7,6 +7,7 @@ import {
   removeDoc,
   renameDoc,
   updateDoc,
+  listSources,
   DocAlreadyExistsError,
   DocNotFoundError,
   DocFileError,
@@ -15,6 +16,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /**
  * `atelier doc` — the documentation surface.
@@ -123,23 +125,45 @@ const addCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List indexed documentation.",
-  options: { source: { type: "string", short: "s" }, class: { type: "string", short: "c" } },
+  description:
+    "Docs inherit their project from their source. Scoped to the active\n" +
+    "project plus global sources; pass `--project <id>` or `--project all`.",
+  options: {
+    source: { type: "string", short: "s" },
+    class: { type: "string", short: "c" },
+    ...PROJECT_OPTION,
+  },
   async run({ values, cwd, mode }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    const scope = await readScope(root, values);
+    // Docs inherit project from their source.
+    const sourceProject = new Map((await listSources(root)).map((s) => [s.id, s.project]));
     const { docs, errors } = await listDocs(root, values.source as string | undefined);
     const classFilter = values.class as string | undefined;
-    const shown = classFilter ? docs.filter((d) => d.doc.classification === classFilter) : docs;
+    const shown = docs
+      .filter((d) => inProjectScope(sourceProject.get(d.doc.source), scope))
+      .filter((d) => !classFilter || d.doc.classification === classFilter);
 
-    if (shown.length === 0 && errors.length === 0) {
+    if (docs.length === 0 && errors.length === 0) {
       const hint = mode === "repl" ? "/doc add" : "atelier doc add";
       ui.info("No documentation indexed.");
       ui.print(`  ${ui.dim(`Use \`${hint} <source>:<id> --title "..."\`.`)}`);
       return 0;
     }
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
+    if (shown.length === 0) {
+      ui.info("No documentation in this project scope.");
+      ui.print(`  ${ui.dim("Try `atelier doc list --project all`.")}`);
+      return 0;
+    }
     for (const { doc } of shown) {
       const cls = doc.classification ? ` ${ui.dim("[" + doc.classification + "]")}` : "";
-      ui.print(`  ${ui.green("·")} ${doc.source}:${doc.docId}${cls}  ${doc.title}`);
+      ui.print(`  ${ui.green("·")} ${doc.source}:${doc.docId}${cls}  ${doc.title}${projectTag(sourceProject.get(doc.source))}`);
     }
     ui.blank();
     if (errors.length > 0) {

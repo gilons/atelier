@@ -19,6 +19,7 @@ import { listSessions } from "./sessions.js";
 import { listStakeholders } from "./stakeholders.js";
 import { listSources } from "./sources.js";
 import { listRepos } from "./repos.js";
+import { inProjectScope, type ProjectScope } from "./projects.js";
 
 /**
  * Recursive workspace index — atelier's progressive-discovery layer.
@@ -73,6 +74,17 @@ function truncate(s: string | undefined, max = 120): string | undefined {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
+/**
+ * Context passed to each section's child-loader so it can scope to a
+ * project. `scope` is the active project view; `sourceProject` maps a
+ * source id to its project so docs/tickets (which inherit project from
+ * their source) can be filtered without reloading sources per entry.
+ */
+interface SectionCtx {
+  scope: ProjectScope;
+  sourceProject: Map<string, string | undefined>;
+}
+
 interface SectionDef {
   /** Directory name under `.atelier/`. */
   dir: string;
@@ -80,8 +92,8 @@ interface SectionDef {
   name: string;
   /** One-line description of the section. */
   description: string;
-  /** Derive the section's children from current content. */
-  loadChildren: (workspaceRoot: string) => Promise<IndexChild[]>;
+  /** Derive the section's children from current content, scoped to `ctx`. */
+  loadChildren: (workspaceRoot: string, ctx: SectionCtx) => Promise<IndexChild[]>;
 }
 
 export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
@@ -90,6 +102,7 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     name: "Agents",
     description: "Agents atelier authors for AI tools to discover and run.",
     async loadChildren(root) {
+      // Agents are workspace-global tooling, not project-scoped.
       const { agents } = await listAgents(root);
       return agents.map(({ agent }) => ({
         path: `${agent.id}/`,
@@ -103,56 +116,64 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     dir: "documentation",
     name: "Documentation",
     description: "Indexed knowledge — PRDs, RFCs, runbooks, transcripts (agent-curated summaries).",
-    async loadChildren(root) {
+    async loadChildren(root, ctx) {
       const { docs } = await listDocs(root);
-      return docs.map(({ doc }) => ({
-        path: `${doc.source}/`,
-        title: `${doc.source}:${doc.docId}`,
-        kind: doc.classification ? `doc/${doc.classification}` : "doc",
-        description: truncate(doc.overview ?? doc.title),
-      }));
+      return docs
+        .filter(({ doc }) => inProjectScope(ctx.sourceProject.get(doc.source), ctx.scope))
+        .map(({ doc }) => ({
+          path: `${doc.source}/`,
+          title: `${doc.source}:${doc.docId}`,
+          kind: doc.classification ? `doc/${doc.classification}` : "doc",
+          description: truncate(doc.overview ?? doc.title),
+        }));
     },
   },
   {
     dir: "tickets",
     name: "Tickets",
     description: "Issues / epics / initiatives indexed from the planning tool.",
-    async loadChildren(root) {
+    async loadChildren(root, ctx) {
       const { tickets } = await listTickets(root);
-      return tickets.map(({ ticket }) => ({
-        path: `${ticket.source}/`,
-        title: `${ticket.source}:${ticket.ticketId}`,
-        kind: ticket.status ? `ticket/${ticket.status}` : "ticket",
-        description: truncate(ticket.overview ?? ticket.title),
-      }));
+      return tickets
+        .filter(({ ticket }) => inProjectScope(ctx.sourceProject.get(ticket.source), ctx.scope))
+        .map(({ ticket }) => ({
+          path: `${ticket.source}/`,
+          title: `${ticket.source}:${ticket.ticketId}`,
+          kind: ticket.status ? `ticket/${ticket.status}` : "ticket",
+          description: truncate(ticket.overview ?? ticket.title),
+        }));
     },
   },
   {
     dir: "designs",
     name: "Designs",
     description: "Design artifacts produced by the design engine, per discipline.",
-    async loadChildren(root) {
+    async loadChildren(root, ctx) {
       const { designs } = await listDesigns(root);
-      return designs.map(({ design }) => ({
-        path: `${design.discipline}/`,
-        title: `${design.discipline}:${design.id}`,
-        kind: design.kind ? `design/${design.kind}` : `design/${design.discipline}`,
-        description: truncate(design.overview ?? design.title),
-      }));
+      return designs
+        .filter(({ design }) => inProjectScope(design.project, ctx.scope))
+        .map(({ design }) => ({
+          path: `${design.discipline}/`,
+          title: `${design.discipline}:${design.id}`,
+          kind: design.kind ? `design/${design.kind}` : `design/${design.discipline}`,
+          description: truncate(design.overview ?? design.title),
+        }));
     },
   },
   {
     dir: "features",
     name: "Features",
     description: "The feature map — what the product does, conceptually.",
-    async loadChildren(root) {
+    async loadChildren(root, ctx) {
       const { features } = await listFeatures(root);
-      return features.map(({ feature }) => ({
-        path: `${feature.id}.md`,
-        title: feature.name,
-        kind: `feature/${feature.status}`,
-        description: truncate(feature.description),
-      }));
+      return features
+        .filter(({ feature }) => inProjectScope(feature.project, ctx.scope))
+        .map(({ feature }) => ({
+          path: `${feature.id}.md`,
+          title: feature.name,
+          kind: `feature/${feature.status}`,
+          description: truncate(feature.description),
+        }));
     },
   },
   {
@@ -160,6 +181,7 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     name: "Sessions",
     description: "Recorded conversations (the speaking module).",
     async loadChildren(root) {
+      // Sessions are workspace-global (a conversation can touch any project).
       const { sessions } = await listSessions(root);
       return sessions.map(({ session }) => ({
         path: `${session.id}/`,
@@ -174,6 +196,7 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     name: "Stakeholders",
     description: "People involved in the product (PMs, engineers, customers, …).",
     async loadChildren(root) {
+      // Stakeholders are workspace-global.
       const { stakeholders } = await listStakeholders(root);
       return stakeholders.map(({ stakeholder }) => ({
         path: `${stakeholder.id}/`,
@@ -190,27 +213,40 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
 ];
 
 /** Sections that are config-backed (not folders under .atelier/). */
-async function configBackedChildren(workspaceRoot: string): Promise<{
+async function configBackedChildren(workspaceRoot: string, ctx: SectionCtx): Promise<{
   sources: IndexChild[];
   repos: IndexChild[];
 }> {
   const sources = await listSources(workspaceRoot).then((ss) =>
-    ss.map((s) => ({
-      path: `sources/${s.id}/`,
-      title: s.name,
-      kind: "source",
-      description: truncate(`${s.enabled === false ? "disabled" : "enabled"} source`),
-    }))
+    ss
+      .filter((s) => inProjectScope(s.project, ctx.scope))
+      .map((s) => ({
+        path: `sources/${s.id}/`,
+        title: s.name,
+        kind: "source",
+        description: truncate(`${s.enabled === false ? "disabled" : "enabled"} source`),
+      }))
   );
   const repos = await listRepos(workspaceRoot).then(({ repos: rs }) =>
-    rs.map((r) => ({
-      path: r.repo.localPath ?? r.repo.name,
-      title: r.repo.name,
-      kind: "repo",
-      description: truncate(r.repo.remote),
-    }))
+    rs
+      .filter((r) => inProjectScope(r.repo.project, ctx.scope))
+      .map((r) => ({
+        path: r.repo.localPath ?? r.repo.name,
+        title: r.repo.name,
+        kind: "repo",
+        description: truncate(r.repo.remote),
+      }))
   );
   return { sources, repos };
+}
+
+/** Build the section context (active scope + source→project map). */
+async function buildSectionCtx(workspaceRoot: string, scope: ProjectScope): Promise<SectionCtx> {
+  const sources = await listSources(workspaceRoot).catch(() => []);
+  return {
+    scope,
+    sourceProject: new Map(sources.map((s) => [s.id, s.project])),
+  };
 }
 
 // ============================================================
@@ -231,13 +267,17 @@ async function workspaceName(workspaceRoot: string): Promise<string> {
  */
 async function deriveIndex(
   workspaceRoot: string,
-  relPath: string
+  relPath: string,
+  scope: ProjectScope
 ): Promise<FolderIndex | null> {
+  const ctx = await buildSectionCtx(workspaceRoot, scope);
+  const scopeNote =
+    scope.kind === "project" ? ` (scoped to project "${scope.id}" plus global)` : "";
   // Root of the workspace.
   if (relPath === "") {
     const children: IndexChild[] = [];
     for (const sec of WORKSPACE_SECTIONS) {
-      const kids = await sec.loadChildren(workspaceRoot).catch(() => []);
+      const kids = await sec.loadChildren(workspaceRoot, ctx).catch(() => []);
       children.push({
         path: `${sec.dir}/`,
         title: sec.name,
@@ -245,7 +285,7 @@ async function deriveIndex(
         description: `${sec.description} (${kids.length})`,
       });
     }
-    const { sources, repos } = await configBackedChildren(workspaceRoot);
+    const { sources, repos } = await configBackedChildren(workspaceRoot, ctx);
     children.push({
       path: "sources/",
       title: "Sources",
@@ -261,7 +301,7 @@ async function deriveIndex(
     return {
       name: await workspaceName(workspaceRoot),
       kind: "workspace",
-      description: "Atelier workspace — navigate by section.",
+      description: `Atelier workspace: navigate by section${scopeNote}.`,
       children,
     };
   }
@@ -273,11 +313,11 @@ async function deriveIndex(
       name: section.name,
       kind: "section",
       description: section.description,
-      children: await section.loadChildren(workspaceRoot).catch(() => []),
+      children: await section.loadChildren(workspaceRoot, ctx).catch(() => []),
     };
   }
   if (relPath === "sources") {
-    const { sources } = await configBackedChildren(workspaceRoot);
+    const { sources } = await configBackedChildren(workspaceRoot, ctx);
     return {
       name: "Sources",
       kind: "section",
@@ -317,6 +357,12 @@ export interface BuildMapOptions {
   path?: string;
   /** How many levels of children to expand (default 2). */
   depth?: number;
+  /**
+   * Project scope for the map. When a `project` scope is passed, the
+   * sections show only that project's entries plus global (untagged)
+   * ones. Defaults to `{ kind: "all" }` (the whole workspace).
+   */
+  scope?: ProjectScope;
 }
 
 /**
@@ -331,7 +377,8 @@ export async function buildWorkspaceMap(
 ): Promise<MapNode> {
   const startRel = normalizeRel(opts.path ?? "");
   const depth = opts.depth ?? 2;
-  return buildNode(workspaceRoot, startRel, depth);
+  const scope: ProjectScope = opts.scope ?? { kind: "all" };
+  return buildNode(workspaceRoot, startRel, depth, scope);
 }
 
 function normalizeRel(rel: string): string {
@@ -341,7 +388,8 @@ function normalizeRel(rel: string): string {
 async function buildNode(
   workspaceRoot: string,
   relPath: string,
-  depth: number
+  depth: number,
+  scope: ProjectScope
 ): Promise<MapNode> {
   const atelier = workspacePaths(workspaceRoot).atelier;
   const absDir = relPath === "" ? atelier : path.join(atelier, relPath);
@@ -354,7 +402,7 @@ async function buildNode(
   // — instruction-tree units and arbitrary folders, whose index.yaml
   // IS the source of truth. `--rebuild` still materializes the
   // derivable sidecars for a committed, self-describing snapshot.
-  const derived = await deriveIndex(workspaceRoot, relPath);
+  const derived = await deriveIndex(workspaceRoot, relPath, scope);
   let idx: FolderIndex | null;
   let hasIndex: boolean;
   if (derived) {
@@ -376,7 +424,7 @@ async function buildNode(
       hasIndex: false,
     };
     if (depth > 0) {
-      node.children = await bareDirChildren(workspaceRoot, absDir, relPath, depth);
+      node.children = await bareDirChildren(workspaceRoot, absDir, relPath, depth, scope);
     }
     return node;
   }
@@ -396,7 +444,7 @@ async function buildNode(
       const isDir = child.path.endsWith("/") || (await isDirectory(path.join(atelier, childRel)));
       if (isDir && depth > 1) {
         // Recurse so the child's own index/derivation fills it in.
-        node.children.push(await buildNode(workspaceRoot, childRel, depth - 1));
+        node.children.push(await buildNode(workspaceRoot, childRel, depth - 1, scope));
       } else {
         node.children.push({
           name: child.title,
@@ -428,7 +476,8 @@ async function bareDirChildren(
   workspaceRoot: string,
   absDir: string,
   relPath: string,
-  depth: number
+  depth: number,
+  scope: ProjectScope
 ): Promise<MapNode[]> {
   let entries: import("node:fs").Dirent[];
   try {
@@ -441,7 +490,7 @@ async function bareDirChildren(
     if (e.name === INDEX_FILE || e.name.startsWith(".")) continue;
     const childRel = joinRel(relPath, e.name);
     if (e.isDirectory()) {
-      out.push(await buildNode(workspaceRoot, childRel, depth - 1));
+      out.push(await buildNode(workspaceRoot, childRel, depth - 1, scope));
     } else {
       out.push({ name: e.name, kind: "file", relPath: childRel, hasIndex: false });
     }
@@ -474,8 +523,12 @@ export async function refreshWorkspaceIndex(workspaceRoot: string): Promise<Refr
   const atelier = workspacePaths(workspaceRoot).atelier;
   const written: string[] = [];
 
+  // The materialized sidecars are a full, committed snapshot — never
+  // project-filtered. (Live `atelier map --project` does the scoping.)
+  const allScope: ProjectScope = { kind: "all" };
+
   // Root index.
-  const root = await deriveIndex(workspaceRoot, "");
+  const root = await deriveIndex(workspaceRoot, "", allScope);
   if (root) {
     await writeFolderIndex(atelier, root);
     written.push(path.join(atelier, INDEX_FILE));
@@ -485,7 +538,7 @@ export async function refreshWorkspaceIndex(workspaceRoot: string): Promise<Refr
   for (const sec of WORKSPACE_SECTIONS) {
     const dir = path.join(atelier, sec.dir);
     if (!(await isDirectory(dir))) continue;
-    const idx = await deriveIndex(workspaceRoot, sec.dir);
+    const idx = await deriveIndex(workspaceRoot, sec.dir, allScope);
     if (idx) {
       await writeFolderIndex(dir, idx);
       written.push(path.join(dir, INDEX_FILE));

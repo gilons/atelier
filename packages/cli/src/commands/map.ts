@@ -7,6 +7,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, readScope } from "../project-scope.js";
 
 /**
  * `atelier map` — progressive discovery over the workspace.
@@ -55,12 +56,15 @@ export const mapCommand: Command = {
     "workspace and drill into a branch without loading everything.\n\n" +
     "Reads .atelier/**/index.yaml where present, derives from content\n" +
     "where not. `--rebuild` materializes the index.yaml sidecars from\n" +
-    "current content first.",
+    "current content first.\n\n" +
+    "Scoped to the active project plus global entries. Pass `--project\n" +
+    "<id>` to view another project, or `--project all` for everything.",
   positionals: ["path?"],
   options: {
     depth: { type: "string", short: "d" },
     json: { type: "boolean" },
     rebuild: { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     let workspaceRoot: string;
@@ -93,7 +97,8 @@ export const mapCommand: Command = {
     }
 
     const startPath = positionals[0];
-    const node = await buildWorkspaceMap(workspaceRoot, { path: startPath, depth });
+    const scope = await readScope(workspaceRoot, values);
+    const node = await buildWorkspaceMap(workspaceRoot, { path: startPath, depth, scope });
 
     if (values.json === true) {
       process.stdout.write(JSON.stringify(node, null, 2) + "\n");

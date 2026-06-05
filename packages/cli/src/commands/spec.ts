@@ -14,6 +14,7 @@ import {
   SpecReferenceValidationError,
   SpecFileError,
   NotInsideWorkspaceError,
+  ProjectNotFoundError,
   type FeatureCodeRef,
   type FeatureDocRef,
   type SpecChangeType,
@@ -21,6 +22,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /**
  * `atelier spec` — create the scaffolded issue folder for a change,
@@ -90,6 +92,7 @@ const newCmd: Command = {
     "from-ticket": { type: "string" },
     "depends-on": { type: "string", multiple: true },
     "no-validate-refs": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   positionals: ["title?"],
   prompts: [
@@ -152,6 +155,18 @@ const newCmd: Command = {
 
     const features = (values.feature as string[] | undefined) ?? [];
 
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const { manifest, paths } = await createSpec(workspaceRoot, {
         title,
@@ -164,12 +179,14 @@ const newCmd: Command = {
         fromSession: values["from-session"] as string | undefined,
         fromTicket: values["from-ticket"] as string | undefined,
         dependsOn: values["depends-on"] as string[] | undefined,
+        project,
         skipReferenceValidation: values["no-validate-refs"] === true,
       });
       ui.success(`Scaffolded spec ${ui.bold(manifest.id)}`);
       ui.blank();
       ui.print(`  ${ui.dim("Type:")}     ${manifest.type}`);
       ui.print(`  ${ui.dim("Status:")}   ${manifest.status}`);
+      if (manifest.project) ui.print(`  ${ui.dim("Project:")}  ${manifest.project}`);
       ui.print(
         `  ${ui.dim("Folder:")}   ${path.relative(workspaceRoot, paths.root)}/`
       );
@@ -198,11 +215,14 @@ const listCmd: Command = {
   summary: "List specs / issue folders.",
   description:
     "Filter with --status, --type, or --feature <id> (the specs that make\n" +
-    "up an epic; the spec agent's breakdown of a feature).",
+    "up an epic; the spec agent's breakdown of a feature).\n\n" +
+    "Scoped to the active project plus global specs. Pass `--project <id>`\n" +
+    "to view another project, or `--project all` for everything.",
   options: {
     status: { type: "string", short: "s" },
     type: { type: "string" },
     feature: { type: "string", short: "f" },
+    ...PROJECT_OPTION,
   },
   async run({ values, cwd, mode }) {
     const status = values.status as string | undefined;
@@ -228,8 +248,10 @@ const listCmd: Command = {
       throw err;
     }
 
+    const scope = await readScope(workspaceRoot, values);
     const { specs, errors } = await listSpecs(workspaceRoot);
     const filtered = specs
+      .filter((s) => inProjectScope(s.manifest.project, scope))
       .filter((s) => !status || s.manifest.status === status)
       .filter((s) => !type || s.manifest.type === type)
       .filter((s) => !feature || s.manifest.features.includes(feature));
@@ -241,6 +263,12 @@ const listCmd: Command = {
         ui.print(`  ${ui.dim(`Use \`${newHint}\` to scaffold the first one.`)}`);
       }
       return 0;
+    }
+
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
     }
 
     if (filtered.length > 0) {
@@ -273,8 +301,11 @@ const listCmd: Command = {
           manifest.dependsOn && manifest.dependsOn.length > 0
             ? ui.dim(`  ← needs ${manifest.dependsOn.join(", ")}`)
             : "";
+        // Only tag the project when viewing everything; a single-project
+        // or feature-scoped view would just repeat the same tag per row.
+        const tag = scope.kind === "all" ? projectTag(manifest.project) : "";
         ui.print(
-          `  ${ui.green("·")} ${order}${manifest.id.padEnd(idWidth)}  ${manifest.type.padEnd(typeWidth)}  ${manifest.status.padEnd(statusWidth)}  ${manifest.title}${deps}`
+          `  ${ui.green("·")} ${order}${manifest.id.padEnd(idWidth)}  ${manifest.type.padEnd(typeWidth)}  ${manifest.status.padEnd(statusWidth)}  ${manifest.title}${deps}${tag}`
         );
       });
       if (cycle.length > 0) {
@@ -319,6 +350,7 @@ const showCmd: Command = {
       ui.print(`  ${ui.dim("id:")}        ${m.id}`);
       ui.print(`  ${ui.dim("type:")}      ${m.type}`);
       ui.print(`  ${ui.dim("status:")}    ${m.status}`);
+      ui.print(`  ${ui.dim("project:")}   ${m.project ?? "global"}`);
       if (m.features.length > 0) {
         ui.print(`  ${ui.dim("features:")}  ${m.features.join(", ")}`);
       }

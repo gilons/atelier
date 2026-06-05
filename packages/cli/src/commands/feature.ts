@@ -10,12 +10,14 @@ import {
   FeatureFileError,
   FeatureReferenceValidationError,
   NotInsideWorkspaceError,
+  ProjectNotFoundError,
   type FeatureCodeRef,
   type FeatureDocRef,
   type FeatureStatus,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /**
  * `--code` flag: `repo[:path]` — referenced repo, optionally a path
@@ -74,6 +76,7 @@ const addCmd: Command = {
     code: { type: "string", multiple: true },
     doc: { type: "string", multiple: true },
     "no-validate-refs": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   positionals: ["name?"],
   prompts: [
@@ -125,12 +128,25 @@ const addCmd: Command = {
       throw err;
     }
 
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const feature = await addFeature(workspaceRoot, {
         name,
         id: values.id as string | undefined,
         status,
         description: values.description as string | undefined,
+        project,
         codeRefs,
         docRefs,
         skipReferenceValidation: values["no-validate-refs"] === true,
@@ -139,6 +155,9 @@ const addCmd: Command = {
       ui.blank();
       ui.print(`  ${ui.dim("Name:")}        ${feature.name}`);
       ui.print(`  ${ui.dim("Status:")}      ${feature.status}`);
+      if (feature.project) {
+        ui.print(`  ${ui.dim("Project:")}     ${feature.project}`);
+      }
       if (feature.description) {
         ui.print(`  ${ui.dim("Description:")} ${feature.description}`);
       }
@@ -178,8 +197,12 @@ const addCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List all features in the workspace.",
+  description:
+    "Scoped to the active project plus global features. Pass `--project\n" +
+    "<id>` to view another project, or `--project all` for everything.",
   options: {
     status: { type: "string", short: "s" },
+    ...PROJECT_OPTION,
   },
   async run({ values, cwd, mode }) {
     const filter = values.status as FeatureStatus | undefined;
@@ -199,17 +222,25 @@ const listCmd: Command = {
       throw err;
     }
 
-    const { features, errors } = await listFeatures(workspaceRoot);
-    if (features.length === 0 && errors.length === 0) {
+    const scope = await readScope(workspaceRoot, values);
+    const { features: allFeatures, errors } = await listFeatures(workspaceRoot);
+    const features = allFeatures.filter((f) => inProjectScope(f.feature.project, scope));
+    if (allFeatures.length === 0 && errors.length === 0) {
       const addHint = mode === "repl" ? "/feature add" : "atelier feature add";
       ui.info("No features yet.");
       ui.print(`  ${ui.dim(`Use \`${addHint}\` to create one.`)}`);
       return 0;
     }
 
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
+
     const shown = filter ? features.filter((f) => f.feature.status === filter) : features;
     if (shown.length === 0) {
-      ui.info(`No features with status "${filter}".`);
+      ui.info(filter ? `No features with status "${filter}" in this scope.` : "No features in this project scope.");
     } else {
       const idWidth = Math.max("ID".length, ...shown.map((f) => f.feature.id.length));
       const statusWidth = Math.max(
@@ -221,7 +252,7 @@ const listCmd: Command = {
       );
       for (const { feature } of shown) {
         ui.print(
-          `  ${ui.green("·")} ${feature.id.padEnd(idWidth)}  ${feature.status.padEnd(statusWidth)}  ${feature.name}`
+          `  ${ui.green("·")} ${feature.id.padEnd(idWidth)}  ${feature.status.padEnd(statusWidth)}  ${feature.name}${projectTag(feature.project)}`
         );
       }
       ui.blank();
@@ -267,6 +298,7 @@ const showCmd: Command = {
       ui.print(ui.bold(feature.name));
       ui.print(`  ${ui.dim("id:")}        ${feature.id}`);
       ui.print(`  ${ui.dim("status:")}    ${feature.status}`);
+      ui.print(`  ${ui.dim("project:")}   ${feature.project ?? "global"}`);
       if (feature.description) {
         ui.print(`  ${ui.dim("summary:")}   ${feature.description}`);
       }

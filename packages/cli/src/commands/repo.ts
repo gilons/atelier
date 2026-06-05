@@ -16,10 +16,12 @@ import {
   NotAGitRepoError,
   MissingRemoteError,
   NotInsideWorkspaceError,
+  ProjectNotFoundError,
   type GitHostAdapter,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 const addCmd: Command = {
   name: "add",
@@ -33,6 +35,7 @@ const addCmd: Command = {
   options: {
     name: { type: "string", short: "n" },
     description: { type: "string", short: "d" },
+    ...PROJECT_OPTION,
   },
   positionals: ["path"],
   prompts: [
@@ -61,12 +64,25 @@ const addCmd: Command = {
       }
       throw err;
     }
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const result = await addRepo(workspaceRoot, {
         pathInput: target,
         cwd,
         name: values.name as string | undefined,
         description: values.description as string | undefined,
+        project,
       });
       ui.success(`Registered ${ui.bold(result.repo.name)}`);
       ui.blank();
@@ -74,6 +90,9 @@ const addCmd: Command = {
       ui.print(`  ${ui.dim("Path:")}     ${result.repo.localPath}`);
       if (result.repo.description) {
         ui.print(`  ${ui.dim("Desc:")}     ${result.repo.description}`);
+      }
+      if (result.repo.project) {
+        ui.print(`  ${ui.dim("Project:")}  ${result.repo.project}`);
       }
       if (result.organizationSet) {
         ui.blank();
@@ -110,9 +129,12 @@ const listCmd: Command = {
   summary: "List repositories registered with this workspace.",
   description:
     "Shows every entry in .planning/repos.yaml. Repos whose local\n" +
-    "directories don't currently exist are flagged — useful after\n" +
-    "cloning the planning repo onto a new machine.",
-  async run({ cwd, mode }) {
+    "directories don't currently exist are flagged, useful after\n" +
+    "cloning the planning repo onto a new machine.\n\n" +
+    "Scoped to the active project plus global repos. Pass `--project\n" +
+    "<id>` to view another project, or `--project all` for everything.",
+  options: { ...PROJECT_OPTION },
+  async run({ cwd, mode, values }) {
     let workspaceRoot: string;
     try {
       workspaceRoot = await requireWorkspaceRoot(cwd);
@@ -123,9 +145,11 @@ const listCmd: Command = {
       }
       throw err;
     }
-    const { organization, repos } = await listRepos(workspaceRoot);
+    const scope = await readScope(workspaceRoot, values);
+    const { organization, repos: allRepos } = await listRepos(workspaceRoot);
+    const repos = allRepos.filter((r) => inProjectScope(r.repo.project, scope));
 
-    if (repos.length === 0) {
+    if (allRepos.length === 0) {
       ui.info("No repositories registered yet.");
       ui.print(`  ${ui.dim(`Use \`${mode === "repl" ? "/" : "atelier "}repo add <path>\` to register one.`)}`);
       return 0;
@@ -134,6 +158,16 @@ const listCmd: Command = {
     if (organization) {
       ui.print(`  ${ui.dim("Organization:")} ${ui.bold(organization)}`);
       ui.blank();
+    }
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
+    if (repos.length === 0) {
+      ui.info("No repositories in this project scope.");
+      ui.print(`  ${ui.dim("Try `atelier repo list --project all`.")}`);
+      return 0;
     }
 
     const nameWidth = Math.max(
@@ -155,7 +189,7 @@ const listCmd: Command = {
       const marker = exists ? ui.green("✓") : ui.yellow("·");
       const status = exists ? "" : ui.yellow(" (not cloned locally)");
       ui.print(
-        `  ${marker} ${repo.name.padEnd(nameWidth)}  ${(repo.localPath ?? "").padEnd(pathWidth)}  ${repo.remote}${status}`
+        `  ${marker} ${repo.name.padEnd(nameWidth)}  ${(repo.localPath ?? "").padEnd(pathWidth)}  ${repo.remote}${status}${projectTag(repo.project)}`
       );
     }
     ui.blank();

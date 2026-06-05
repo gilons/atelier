@@ -69,6 +69,7 @@ export function serializeDesignFile(d: DesignArtifact): string {
   if (d.link !== undefined) fm.link = d.link;
   if (d.app !== undefined) fm.app = d.app;
   if (d.fromSession !== undefined) fm.fromSession = d.fromSession;
+  if (d.project !== undefined) fm.project = d.project;
   fm.createdAt = d.createdAt;
   fm.updatedAt = d.updatedAt;
   return buildFrontMatterFile(fm, d.body);
@@ -84,6 +85,7 @@ function toFrontMatter(d: DesignArtifact): DesignArtifactFrontMatter {
     link: d.link,
     app: d.app,
     fromSession: d.fromSession,
+    project: d.project,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
@@ -98,6 +100,11 @@ export interface AddDesignOptions {
   link?: string;
   app?: string;
   fromSession?: string;
+  /**
+   * Project this design belongs to (an id from `projects.yaml`).
+   * Omitted = global (shared across projects).
+   */
+  project?: string;
   body?: string;
 }
 
@@ -124,6 +131,7 @@ export async function addDesign(workspaceRoot: string, opts: AddDesignOptions): 
     link: opts.link,
     app: opts.app,
     fromSession: opts.fromSession,
+    project: opts.project,
     createdAt: now,
     updatedAt: now,
     body: opts.body ?? "",

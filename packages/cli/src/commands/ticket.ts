@@ -6,6 +6,7 @@ import {
   loadTicket,
   removeTicket,
   updateTicket,
+  listSources,
   TicketAlreadyExistsError,
   TicketNotFoundError,
   TicketFileError,
@@ -14,6 +15,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /**
  * `atelier ticket` — the planning surface.
@@ -124,24 +126,46 @@ const addCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List indexed tickets.",
-  options: { source: { type: "string", short: "s" }, status: { type: "string" } },
+  description:
+    "Tickets inherit their project from their source. Scoped to the active\n" +
+    "project plus global sources; pass `--project <id>` or `--project all`.",
+  options: {
+    source: { type: "string", short: "s" },
+    status: { type: "string" },
+    ...PROJECT_OPTION,
+  },
   async run({ values, cwd, mode }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    const scope = await readScope(root, values);
+    // Tickets inherit project from their source.
+    const sourceProject = new Map((await listSources(root)).map((s) => [s.id, s.project]));
     const { tickets, errors } = await listTickets(root, values.source as string | undefined);
     const statusFilter = values.status as string | undefined;
-    const shown = statusFilter ? tickets.filter((t) => t.ticket.status === statusFilter) : tickets;
+    const shown = tickets
+      .filter((t) => inProjectScope(sourceProject.get(t.ticket.source), scope))
+      .filter((t) => !statusFilter || t.ticket.status === statusFilter);
 
-    if (shown.length === 0 && errors.length === 0) {
+    if (tickets.length === 0 && errors.length === 0) {
       const hint = mode === "repl" ? "/ticket add" : "atelier ticket add";
       ui.info("No tickets indexed.");
       ui.print(`  ${ui.dim(`Use \`${hint} <source>:<id> --title "..."\`.`)}`);
       return 0;
     }
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
+    if (shown.length === 0) {
+      ui.info("No tickets in this project scope.");
+      ui.print(`  ${ui.dim("Try `atelier ticket list --project all`.")}`);
+      return 0;
+    }
     for (const { ticket } of shown) {
       const st = ticket.status ? ` ${ui.dim("[" + ticket.status + "]")}` : "";
       const who = ticket.assignee ? `  ${ui.dim("@" + ticket.assignee)}` : "";
-      ui.print(`  ${ui.green("·")} ${ticket.source}:${ticket.ticketId}${st}  ${ticket.title}${who}`);
+      ui.print(`  ${ui.green("·")} ${ticket.source}:${ticket.ticketId}${st}  ${ticket.title}${who}${projectTag(sourceProject.get(ticket.source))}`);
     }
     ui.blank();
     if (errors.length > 0) {

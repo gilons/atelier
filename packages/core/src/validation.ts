@@ -59,6 +59,27 @@ function pushIssue(issues: ValidationIssue[], path: string, message: string): vo
   issues.push({ path, message });
 }
 
+/**
+ * Validate the optional `project` facet shared by every scopable anchor
+ * (sources, repos, features, designs, specs). When present it must be a
+ * non-empty string (a project id from `projects.yaml`); when omitted the
+ * entry is global. Existence in the registry is NOT enforced here so old
+ * files and cross-project references still load; the CLI checks the
+ * registry at write time. Returns true if valid (or absent).
+ */
+function validateOptionalProject(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[]
+): boolean {
+  if (value === undefined) return true;
+  if (!isNonEmptyString(value)) {
+    pushIssue(issues, path, "if present, must be a non-empty string (a project id)");
+    return false;
+  }
+  return true;
+}
+
 // ============================================================
 // Source / SourcesConfig
 // ============================================================
@@ -76,7 +97,7 @@ function validateSource(
   // `category` is intentionally ignored: older sources.yaml files may
   // still carry it, but a source is a pure connector now — what it
   // feeds is chosen per entry by the typed surface the agent writes to.
-  const { id, name, config, setupFile, enabled } = raw;
+  const { id, name, config, setupFile, enabled, project } = raw;
   let valid = true;
 
   if (!isNonEmptyString(id)) {
@@ -107,6 +128,9 @@ function validateSource(
     pushIssue(issues, `${basePath}.enabled`, "must be a boolean");
     valid = false;
   }
+  if (!validateOptionalProject(project, `${basePath}.project`, issues)) {
+    valid = false;
+  }
 
   if (!valid) return null;
   const result: Source = {
@@ -116,6 +140,7 @@ function validateSource(
   };
   if (config !== undefined) result.config = config as Record<string, unknown>;
   if (setupFile !== undefined) result.setupFile = setupFile as string;
+  if (project !== undefined) result.project = project as string;
   return result;
 }
 
@@ -172,7 +197,7 @@ function validateRepo(
     return null;
   }
 
-  const { name, remote, localPath, description, enabled } = raw;
+  const { name, remote, localPath, description, enabled, project } = raw;
   let valid = true;
 
   if (!isNonEmptyString(name)) {
@@ -195,15 +220,20 @@ function validateRepo(
     pushIssue(issues, `${basePath}.enabled`, "must be a boolean");
     valid = false;
   }
+  if (!validateOptionalProject(project, `${basePath}.project`, issues)) {
+    valid = false;
+  }
 
   if (!valid) return null;
-  return {
+  const result: RegisteredRepo = {
     name: name as string,
     remote: remote as string,
     localPath: localPath as string | undefined,
     description: description as string | undefined,
     enabled: enabled as boolean,
   };
+  if (project !== undefined) result.project = project as string;
+  return result;
 }
 
 export function validateReposConfig(raw: unknown): ValidationResult<ReposConfig> {
@@ -467,7 +497,7 @@ export function validateFeatureFrontMatter(
     };
   }
 
-  const { id, name, description, status, codeRefs, docRefs, createdAt, updatedAt } = raw;
+  const { id, name, description, status, project, codeRefs, docRefs, createdAt, updatedAt } = raw;
 
   if (!isNonEmptyString(id)) {
     pushIssue(issues, "$.id", "must be a non-empty string");
@@ -497,6 +527,7 @@ export function validateFeatureFrontMatter(
   if (!isNonEmptyString(updatedAt)) {
     pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
   }
+  validateOptionalProject(project, "$.project", issues);
 
   // codeRefs and docRefs are arrays (may be empty).
   const codeRefsArr: FeatureCodeRef[] = [];
@@ -534,6 +565,7 @@ export function validateFeatureFrontMatter(
     updatedAt: updatedAt as string,
   };
   if (description !== undefined) value.description = description as string;
+  if (project !== undefined) value.project = project as string;
   return { ok: true, value, issues: [] };
 }
 
@@ -657,7 +689,7 @@ export function validateDesignArtifactFrontMatter(
   if (!isObject(raw)) {
     return { ok: false, issues: [{ path: "$", message: "expected an object at the top level" }] };
   }
-  const { discipline, id, title, overview, kind, link, app, fromSession, createdAt, updatedAt } = raw;
+  const { discipline, id, title, overview, kind, link, app, fromSession, project, createdAt, updatedAt } = raw;
 
   if (!isNonEmptyString(discipline)) {
     pushIssue(issues, "$.discipline", "must be a non-empty string");
@@ -685,6 +717,7 @@ export function validateDesignArtifactFrontMatter(
   if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
     pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
   }
+  validateOptionalProject(project, "$.project", issues);
   if (!isNonEmptyString(createdAt)) pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
   if (!isNonEmptyString(updatedAt)) pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
 
@@ -701,6 +734,7 @@ export function validateDesignArtifactFrontMatter(
   if (link !== undefined) value.link = link as string;
   if (app !== undefined) value.app = app as string;
   if (fromSession !== undefined) value.fromSession = fromSession as string;
+  if (project !== undefined) value.project = project as string;
   return { ok: true, value, issues: [] };
 }
 
@@ -1260,6 +1294,7 @@ export function validateSpecManifest(
     fromSession,
     fromTicket,
     dependsOn,
+    project,
     createdAt,
     updatedAt,
   } = raw;
@@ -1267,6 +1302,7 @@ export function validateSpecManifest(
   if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
     pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
   }
+  validateOptionalProject(project, "$.project", issues);
   if (fromTicket !== undefined && !isNonEmptyString(fromTicket)) {
     pushIssue(issues, "$.fromTicket", "if present, must be a non-empty string (<source>:<ticketId>)");
   }
@@ -1408,6 +1444,7 @@ export function validateSpecManifest(
   if (fromSession !== undefined) value.fromSession = fromSession as string;
   if (fromTicket !== undefined) value.fromTicket = fromTicket as string;
   if (dependsOnArr.length > 0) value.dependsOn = dependsOnArr;
+  if (project !== undefined) value.project = project as string;
   return { ok: true, value, issues: [] };
 }
 

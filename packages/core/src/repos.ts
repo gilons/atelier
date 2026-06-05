@@ -88,6 +88,11 @@ export interface AddRepoOptions {
   name?: string;
   /** Optional description stored in repos.yaml. */
   description?: string;
+  /**
+   * Project this repo belongs to (an id from `projects.yaml`).
+   * Omitted = global (shared across projects).
+   */
+  project?: string;
 }
 
 export interface AddRepoResult {
@@ -183,6 +188,7 @@ export async function addRepo(
     description: opts.description,
     enabled: true,
   };
+  if (opts.project !== undefined) repo.project = opts.project;
 
   // If this is the first repo and we can derive an org, set it on the config.
   let organizationSet: string | undefined;
