@@ -1348,10 +1348,100 @@ function withSelfImprovement(agents: BuiltinAgent[]): BuiltinAgent[] {
 }
 
 // ============================================================
+// Project scoping: make every agent multi-project aware
+// ============================================================
+
+/**
+ * Per-agent "what scoping means for you" line. Design disciplines and
+ * anything without an entry fall back to {@link PROJECT_SCOPE_GENERIC}.
+ */
+const PROJECT_SCOPE_NOTES: Record<string, string> = {
+  discovery:
+    "You set scoping up. If this workspace serves several clients or product " +
+    "lines, create a project per reality (`atelier project add \"<Name>\"`) and " +
+    "register each repo and source under it (`--project <id>`). Keep agency-wide " +
+    "or shared connectors (a shared component library, internal people, company " +
+    "standards) global. If you can't tell which project a repo or source belongs " +
+    "to, ask.",
+  spec:
+    "Anchor specs on the active project. A spec inherits the project of the " +
+    "feature or ticket it comes from; when you create one, pass `--project <id>` " +
+    "to match (or rely on the active pin). Cross-project or shared work stays " +
+    "global.",
+  planning:
+    "Plan within the active project's specs. `atelier spec list --feature` " +
+    "already scopes to the active project plus global, so the build order you " +
+    "read is the one for this project.",
+  "system-design":
+    "Tag each design with the project it belongs to (`--project <id>`, or the " +
+    "active pin). Shared architecture (a platform both clients build on, a " +
+    "house style) is global.",
+};
+
+const PROJECT_SCOPE_GENERIC =
+  "Tag what you create with the project it belongs to (`--project <id>`, or the " +
+  "active pin). Work shared across every project stays global.";
+
+/**
+ * A uniform unit that teaches an agent to work inside the right project.
+ * One workspace can hold several projects (an agency's clients, a
+ * company's product lines); untagged entries are global (shared).
+ */
+function projectScopingUnit(agentId: string): InstructionUnit {
+  const note = PROJECT_SCOPE_NOTES[agentId] ?? PROJECT_SCOPE_GENERIC;
+  return {
+    slug: "project-scope",
+    title: "Work inside the right project",
+    description: "One workspace can hold several projects; scope to the right one before you act.",
+    detail: `A workspace can hold several **projects** (an agency's clients, a
+company's product lines). Each project scopes its own sources, repos,
+features, designs, and specs. Entries with no project are **global**:
+shared across every project. So before you create, register, or read,
+know which reality you're in.
+
+**Orient first.** \`atelier project list\` shows the registered projects;
+the \`●\` marks the locally pinned active one. With no projects, or no pin,
+everything is one flat (global) workspace and you can ignore scoping.
+
+**Pin the project you're working in.** When the user names a client or
+product line, pin it for the session: \`atelier project use <id>\`. If they
+mention one that isn't registered yet, create it: \`atelier project add
+"<Name>"\`. A per-command \`--project <id>\` overrides the pin for one call;
+\`--project global\` forces a shared entry.
+
+**New entries follow the active project.** Creating a source / repo /
+feature / design / spec defaults it into the pinned project. Pass
+\`--project global\` for something genuinely shared. Docs and tickets
+inherit their project from their source, so register the source under the
+right project and they follow.
+
+**Reads are already scoped.** \`atelier map\`, \`atelier feature list\`,
+\`atelier spec list\`, and the other lists show the active project plus
+global by default. Use \`--project <id>\` to peek at another project, or
+\`--project all\` to see across everything.
+
+**When it's ambiguous, ask.** If more than one project exists and you
+can't tell which one the work belongs to, ask the user rather than
+guessing or defaulting to global.
+
+For you specifically: ${note}`,
+  };
+}
+
+/** Append the project-scoping unit to every agent that has a unit tree. */
+function withProjectScoping(agents: BuiltinAgent[]): BuiltinAgent[] {
+  return agents.map((b) =>
+    b.instructionUnits
+      ? { ...b, instructionUnits: [...b.instructionUnits, projectScopingUnit(b.meta.id)] }
+      : b
+  );
+}
+
+// ============================================================
 // Registry
 // ============================================================
 
-export const BUILTIN_AGENTS: readonly BuiltinAgent[] = withSelfImprovement([
+export const BUILTIN_AGENTS: readonly BuiltinAgent[] = withSelfImprovement(withProjectScoping([
   {
     meta: {
       id: "discovery",
@@ -1442,7 +1532,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = withSelfImprovement([
     },
     instructionUnits: PLANNING_UNITS,
   },
-]);
+]));
 
 /** Look up a built-in template by id. */
 export function findBuiltinAgent(id: string): BuiltinAgent | undefined {

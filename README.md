@@ -55,6 +55,19 @@ The agent playbooks are plain markdown (`atelier agent show <id>`), so they drop
 - **Agents that learn your codebase.** Atelier authors them, renders them into your tool, and they sharpen over time: each one proposes the patterns and standards it notices, and records them only with your sign-off, so you teach a convention once instead of every session.
 - **No lock-in, no black box.** Every fact is readable markdown and YAML you can diff and review. Atelier holds no credentials and fetches nothing; your agent does the I/O.
 
+## Multiple projects (agencies, product lines)
+
+One workspace can hold several **projects**, each with its own sources, repos, features, designs, and specs. An agency running many clients, or a company with several product lines, keeps them in one place without mixing realities. Entries with no project are **global**: shared across all of them (a component library, internal people, house standards).
+
+```bash
+atelier project add "Acme Corp" --id acme   # register a project
+atelier project use acme                     # pin it for this session (local, gitignored)
+atelier feature add "Dashboard"              # new entries default into the active project
+atelier feature add "Design tokens" --project global   # shared across every project
+```
+
+Commands and agents scope to the active project plus global by default. `--project <id>` peeks at another; `--project all` shows everything. `atelier map --project acme` renders just that client's world. The active project is pinned locally per developer, so teammates aren't forced into your context.
+
 ## Develop from source
 
 ```bash
