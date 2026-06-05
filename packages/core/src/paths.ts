@@ -39,6 +39,14 @@ export interface WorkspacePaths {
   sourcesConfig: string;
   /** `.atelier/repos.yaml` */
   reposConfig: string;
+  /** `.atelier/projects.yaml` — the project registry (committed, shared) */
+  projectsConfig: string;
+  /**
+   * `.atelier/.active-project` — the locally pinned active project id.
+   * Gitignored: which project a developer is working in is personal, not
+   * a shared decision.
+   */
+  activeProjectFile: string;
   /** `.atelier/features/` — feature map entries */
   features: string;
   /** `.atelier/sources/` — per-source setup runbooks (sources/<id>/setup.md) */
@@ -111,6 +119,8 @@ export function workspacePaths(
     workspaceConfig: path.join(atelier, "workspace.yaml"),
     sourcesConfig: path.join(atelier, "sources.yaml"),
     reposConfig: path.join(atelier, "repos.yaml"),
+    projectsConfig: path.join(atelier, "projects.yaml"),
+    activeProjectFile: path.join(atelier, ".active-project"),
     features: path.join(atelier, "features"),
     sources: path.join(atelier, "sources"),
     sessions: path.join(atelier, "sessions"),

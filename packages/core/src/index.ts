@@ -16,6 +16,7 @@ export * from "./workspace.js";
 export * from "./workspace-finder.js";
 export * from "./git.js";
 export * from "./repos.js";
+export * from "./projects.js";
 export * from "./git-hosts.js";
 export * from "./discovery.js";
 export * from "./project-inspect.js";

@@ -4,6 +4,7 @@ import { ATELIER_VERSION } from "@atelier/core";
 import { dispatch, type CommandRegistry } from "./command.js";
 import { initCommand } from "./commands/init.js";
 import { repoCommand } from "./commands/repo.js";
+import { projectCommand } from "./commands/project.js";
 import { sourceCommand } from "./commands/source.js";
 import { sessionCommand } from "./commands/session.js";
 import { featureCommand } from "./commands/feature.js";
@@ -21,6 +22,7 @@ const registry: CommandRegistry = {
   commands: [
     initCommand,
     repoCommand,
+    projectCommand,
     sourceCommand,
     sessionCommand,
     featureCommand,

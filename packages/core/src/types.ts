@@ -104,6 +104,41 @@ export interface ReposConfig {
 }
 
 // ============================================================
+// Projects
+//
+// One workspace can hold several projects (e.g. an agency's clients).
+// Each project scopes its own sources, repos, features, designs, specs,
+// and sessions; docs and tickets inherit their project from their
+// source. Entries with no `project` are GLOBAL: shared across every
+// project. The active project is pinned locally (per developer), so the
+// registry itself is shared but "which project am I in" is not.
+// ============================================================
+
+/** A project: a scope within the workspace. */
+export interface Project {
+  /** Stable slug id. Cited by every scopable entry's `project` field. */
+  id: string;
+  /** Human-readable name shown in the UI. */
+  name: string;
+  /** Optional client / account this project is for (agency use). */
+  client?: string;
+  /** Free-form status (e.g. "active", "paused", "archived"). */
+  status?: string;
+  /** ISO timestamp when the project was registered. */
+  createdAt: string;
+  /** ISO timestamp of the last update. */
+  updatedAt: string;
+}
+
+/** Top-level shape of `.atelier/projects.yaml`. */
+export interface ProjectsConfig {
+  /** Schema version for future migrations. */
+  version: 1;
+  /** All registered projects. */
+  projects: Project[];
+}
+
+// ============================================================
 // Workspace metadata
 // ============================================================
 

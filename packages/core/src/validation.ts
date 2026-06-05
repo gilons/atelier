@@ -1,6 +1,8 @@
 import type {
   Source,
   SourcesConfig,
+  Project,
+  ProjectsConfig,
   RegisteredRepo,
   ReposConfig,
   WorkspaceConfig,
@@ -244,6 +246,96 @@ export function validateReposConfig(raw: unknown): ValidationResult<ReposConfig>
     },
     issues: [],
   };
+}
+
+// ============================================================
+// ProjectsConfig
+// ============================================================
+
+const PROJECT_ID_SHAPE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+const PROJECT_RESERVED = new Set(["all", "global", "none"]);
+
+function validateProject(
+  raw: unknown,
+  pathPrefix: string,
+  issues: ValidationIssue[]
+): Project | null {
+  if (!isObject(raw)) {
+    pushIssue(issues, pathPrefix, "must be an object");
+    return null;
+  }
+  let ok = true;
+  if (!isNonEmptyString(raw.id)) {
+    pushIssue(issues, `${pathPrefix}.id`, "must be a non-empty string");
+    ok = false;
+  } else if (!PROJECT_ID_SHAPE.test(raw.id)) {
+    pushIssue(issues, `${pathPrefix}.id`, "must be a lowercase slug (letters, digits, hyphens; no edge dashes)");
+    ok = false;
+  } else if (PROJECT_RESERVED.has(raw.id)) {
+    pushIssue(issues, `${pathPrefix}.id`, `"${raw.id}" is a reserved keyword and cannot be a project id`);
+    ok = false;
+  }
+  if (!isNonEmptyString(raw.name)) {
+    pushIssue(issues, `${pathPrefix}.name`, "must be a non-empty string");
+    ok = false;
+  }
+  if (raw.client !== undefined && !isNonEmptyString(raw.client)) {
+    pushIssue(issues, `${pathPrefix}.client`, "if present, must be a non-empty string");
+    ok = false;
+  }
+  if (raw.status !== undefined && !isNonEmptyString(raw.status)) {
+    pushIssue(issues, `${pathPrefix}.status`, "if present, must be a non-empty string");
+    ok = false;
+  }
+  if (!isNonEmptyString(raw.createdAt)) {
+    pushIssue(issues, `${pathPrefix}.createdAt`, "must be a non-empty ISO timestamp string");
+    ok = false;
+  }
+  if (!isNonEmptyString(raw.updatedAt)) {
+    pushIssue(issues, `${pathPrefix}.updatedAt`, "must be a non-empty ISO timestamp string");
+    ok = false;
+  }
+  if (!ok) return null;
+  const project: Project = {
+    id: raw.id as string,
+    name: raw.name as string,
+    createdAt: raw.createdAt as string,
+    updatedAt: raw.updatedAt as string,
+  };
+  if (raw.client !== undefined) project.client = raw.client as string;
+  if (raw.status !== undefined) project.status = raw.status as string;
+  return project;
+}
+
+export function validateProjectsConfig(raw: unknown): ValidationResult<ProjectsConfig> {
+  const issues: ValidationIssue[] = [];
+  if (!isObject(raw)) {
+    return { ok: false, issues: [{ path: "$", message: "expected an object at the top level" }] };
+  }
+  if (raw.version !== 1) {
+    pushIssue(issues, "$.version", "must be the integer 1");
+  }
+  if (!Array.isArray(raw.projects)) {
+    pushIssue(issues, "$.projects", "must be an array (may be empty)");
+    return { ok: false, issues };
+  }
+
+  const ids = new Set<string>();
+  const projects: Project[] = [];
+  raw.projects.forEach((entry, idx) => {
+    const project = validateProject(entry, `$.projects[${idx}]`, issues);
+    if (project) {
+      if (ids.has(project.id)) {
+        pushIssue(issues, `$.projects[${idx}].id`, `duplicate project id "${project.id}"`);
+      } else {
+        ids.add(project.id);
+        projects.push(project);
+      }
+    }
+  });
+
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, value: { version: 1, projects }, issues: [] };
 }
 
 // ============================================================

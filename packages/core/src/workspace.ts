@@ -8,7 +8,7 @@ import {
   validateWorkspaceConfig,
   formatIssues,
 } from "./validation.js";
-import type { SourcesConfig, ReposConfig, WorkspaceConfig } from "./types.js";
+import type { SourcesConfig, ReposConfig, ProjectsConfig, WorkspaceConfig } from "./types.js";
 import { ATELIER_VERSION } from "./version.js";
 
 /**
@@ -109,6 +109,7 @@ export async function initWorkspace(
 
   const sources: SourcesConfig = { version: 3, sources: [] };
   const repos: ReposConfig = { version: 1, repos: [] };
+  const projects: ProjectsConfig = { version: 1, projects: [] };
 
   const created: string[] = [];
 
@@ -133,6 +134,13 @@ export async function initWorkspace(
   );
   created.push(paths.reposConfig);
 
+  await writeYamlFile(
+    paths.projectsConfig,
+    projects,
+    "Projects scope this workspace into separate realities (e.g. an agency's clients).\nUse `atelier project add` to register a project; entries with no project are global (shared)."
+  );
+  created.push(paths.projectsConfig);
+
   // Write the human-facing README that lives at .planning/README.md
   const readmeBody = renderWorkspaceReadme(opts.name, opts.description);
   await fs.writeFile(paths.readme, readmeBody, "utf8");
@@ -142,19 +150,23 @@ export async function initWorkspace(
   // per-workspace secrets stay out of git even if the parent repo
   // doesn't have its own .gitignore.
   const gitignore =
-    "# Local cache — every developer rebuilds from sources.\n" +
+    "# Local cache. Every developer rebuilds from sources.\n" +
     "cache/\n" +
     "\n" +
     "# Local secrets written by `atelier source onboard`. Never commit.\n" +
     ".env\n" +
     "\n" +
-    "# Private stakeholder notes — anywhere a stakeholder folder lives,\n" +
+    "# Private stakeholder notes. Anywhere a stakeholder folder lives,\n" +
     "# `private.md` is the user's personal layer. Never commit.\n" +
     "stakeholders/**/private.md\n" +
     "\n" +
-    "# Personal agent learnings — each developer's own layer. Promote to\n" +
+    "# Personal agent learnings: each developer's own layer. Promote to\n" +
     "# the shared learnings.md (committed) with `atelier agent promote`.\n" +
-    "agents/**/learnings.local.md\n";
+    "agents/**/learnings.local.md\n" +
+    "\n" +
+    "# Active project pin. Which project a developer is working in is\n" +
+    "# personal, not a shared decision. Set with `atelier project use <id>`.\n" +
+    ".active-project\n";
   await fs.writeFile(path.join(paths.atelier, ".gitignore"), gitignore, "utf8");
   created.push(path.join(paths.atelier, ".gitignore"));
 
@@ -205,7 +217,7 @@ export async function loadWorkspace(root: string): Promise<{
 
 function renderWorkspaceReadme(name: string, description?: string): string {
   const lines: string[] = [];
-  lines.push(`# ${name} — planning workspace`);
+  lines.push(`# ${name} planning workspace`);
   lines.push("");
   if (description) {
     lines.push(description);
@@ -215,19 +227,20 @@ function renderWorkspaceReadme(name: string, description?: string): string {
   lines.push("");
   lines.push("## Layout");
   lines.push("");
-  lines.push("- `workspace.yaml` — workspace metadata");
-  lines.push("- `sources.yaml` — registered connectors (Notion, Jira, Figma, …); agents fetch, atelier doesn't");
-  lines.push("- `repos.yaml` — code repositories registered with this workspace");
-  lines.push("- `features/` — the feature map (one markdown file per feature)");
-  lines.push("- `documentation/` — indexed doc summaries + links, nested by source");
-  lines.push("- `tickets/` — indexed tracker items (issues / epics), nested by source");
-  lines.push("- `designs/` — design artifacts, nested by discipline (system-design / ui-design / …)");
-  lines.push("- `sessions/` — recorded conversations (transcript + provenance)");
-  lines.push("- `stakeholders/` — people involved with the product");
-  lines.push("- `agents/` — agent definitions atelier authors (rendered into `.claude/`)");
-  lines.push("- `ui-adapters/` — bring-your-own UI framework adapters (YAML)");
-  lines.push("- `discrepancies.yaml` — log of doc-vs-code mismatches");
-  lines.push("- `cache/` — local cache (gitignored)");
+  lines.push("- `workspace.yaml`: workspace metadata");
+  lines.push("- `sources.yaml`: registered connectors (Notion, Jira, Figma, …); agents fetch, atelier doesn't");
+  lines.push("- `repos.yaml`: code repositories registered with this workspace");
+  lines.push("- `projects.yaml`: projects that scope this workspace (entries with no project are global)");
+  lines.push("- `features/`: the feature map (one markdown file per feature)");
+  lines.push("- `documentation/`: indexed doc summaries + links, nested by source");
+  lines.push("- `tickets/`: indexed tracker items (issues / epics), nested by source");
+  lines.push("- `designs/`: design artifacts, nested by discipline (system-design / ui-design / …)");
+  lines.push("- `sessions/`: recorded conversations (transcript + provenance)");
+  lines.push("- `stakeholders/`: people involved with the product");
+  lines.push("- `agents/`: agent definitions atelier authors (rendered into `.claude/`)");
+  lines.push("- `ui-adapters/`: bring-your-own UI framework adapters (YAML)");
+  lines.push("- `discrepancies.yaml`: log of doc-vs-code mismatches");
+  lines.push("- `cache/`: local cache (gitignored)");
   lines.push("");
   lines.push("## Next steps");
   lines.push("");

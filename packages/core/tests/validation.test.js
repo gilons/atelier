@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   validateSourcesConfig,
   validateReposConfig,
+  validateProjectsConfig,
   validateWorkspaceConfig,
 } from "../dist/index.js";
 
@@ -95,6 +96,61 @@ test("validateReposConfig rejects duplicate remotes", () => {
   });
   assert.equal(r.ok, false);
   assert.ok(r.issues.some((i) => i.message.includes("duplicate")));
+});
+
+test("validateProjectsConfig accepts an empty config", () => {
+  const r = validateProjectsConfig({ version: 1, projects: [] });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.value, { version: 1, projects: [] });
+});
+
+test("validateProjectsConfig accepts a valid project", () => {
+  const r = validateProjectsConfig({
+    version: 1,
+    projects: [
+      {
+        id: "acme",
+        name: "Acme Corp",
+        client: "Acme Inc",
+        status: "active",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.projects[0].client, "Acme Inc");
+});
+
+test("validateProjectsConfig rejects reserved and malformed ids", () => {
+  const r = validateProjectsConfig({
+    version: 1,
+    projects: [
+      { id: "all", name: "X", createdAt: "t", updatedAt: "t" },
+      { id: "Bad Id", name: "Y", createdAt: "t", updatedAt: "t" },
+    ],
+  });
+  assert.equal(r.ok, false);
+  assert.ok(r.issues.some((i) => i.message.includes("reserved")));
+  assert.ok(r.issues.some((i) => i.path === "$.projects[1].id"));
+});
+
+test("validateProjectsConfig rejects duplicate ids", () => {
+  const r = validateProjectsConfig({
+    version: 1,
+    projects: [
+      { id: "dup", name: "A", createdAt: "t", updatedAt: "t" },
+      { id: "dup", name: "B", createdAt: "t", updatedAt: "t" },
+    ],
+  });
+  assert.equal(r.ok, false);
+  assert.ok(r.issues.some((i) => i.message.includes("duplicate")));
+});
+
+test("validateProjectsConfig rejects a missing projects array", () => {
+  const r = validateProjectsConfig({ version: 1 });
+  assert.equal(r.ok, false);
+  assert.ok(r.issues.some((i) => i.path === "$.projects"));
 });
 
 test("validateWorkspaceConfig rejects missing required fields", () => {
