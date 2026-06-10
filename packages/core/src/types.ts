@@ -296,6 +296,13 @@ export interface DocFrontMatter {
   owner?: string;
   /** Session id this doc was captured from, when applicable. */
   fromSession?: string;
+  /**
+   * Project override (an id from `projects.yaml`). Normally a doc
+   * inherits its project from its source; set this only when a shared
+   * source feeds several projects and this entry belongs to one of
+   * them. Omitted means "inherit from the source". See `atelier project`.
+   */
+  project?: string;
   /** ISO timestamp when first indexed. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */
@@ -348,6 +355,13 @@ export interface TicketFrontMatter {
   parent?: string;
   /** Session id this ticket was raised in, when applicable. */
   fromSession?: string;
+  /**
+   * Project override (an id from `projects.yaml`). Normally a ticket
+   * inherits its project from its source; set this only when a shared
+   * tracker feeds several projects and this entry belongs to one of
+   * them. Omitted means "inherit from the source". See `atelier project`.
+   */
+  project?: string;
   /** ISO timestamp when first indexed. */
   createdAt: string;
   /** ISO timestamp of the most recent structural change. */
@@ -564,6 +578,13 @@ export interface StakeholderFrontMatter {
    * later.
    */
   fromSessions?: string[];
+  /**
+   * Project this person belongs to (an id from `projects.yaml`).
+   * Omitted means global: someone who spans projects (an internal
+   * teammate, a cross-client advisor). A client contact is tagged
+   * with their project. See `atelier project`.
+   */
+  project?: string;
   /** ISO timestamp — when atelier first registered this person. */
   createdAt: string;
   /** ISO timestamp — most recent structural change. */

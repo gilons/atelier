@@ -57,7 +57,7 @@ The agent playbooks are plain markdown (`atelier agent show <id>`), so they drop
 
 ## Multiple projects (agencies, product lines)
 
-One workspace can hold several **projects**, each with its own sources, repos, features, designs, and specs. An agency running many clients, or a company with several product lines, keeps them in one place without mixing realities. Entries with no project are **global**: shared across all of them (a component library, internal people, house standards).
+One workspace can hold several **projects**, each with its own sources, repos, features, designs, specs, and people. An agency running many clients, or a company with several product lines, keeps them in one place without mixing realities. Entries with no project are **global**: shared across all of them (a component library, internal teammates, house standards). Docs and tickets inherit their project from their source, with a per-entry override when one shared tracker spans clients.
 
 ```bash
 atelier project add "Acme Corp" --id acme   # register a project

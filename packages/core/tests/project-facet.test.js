@@ -20,6 +20,8 @@ import {
   loadSpec,
   addDoc,
   addTicket,
+  addStakeholder,
+  loadStakeholder,
   buildWorkspaceMap,
 } from "../dist/index.js";
 
@@ -117,6 +119,86 @@ test("spec project round-trips in the manifest", async () => {
     });
     assert.equal(manifest.project, "acme");
     assert.equal((await loadSpec(root, "2099-01-01-export")).project, "acme");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("stakeholder project round-trips; global default has no key", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    const tagged = await addStakeholder(root, { name: "Acme PM", id: "acme-pm", project: "acme" });
+    assert.equal(tagged.project, "acme");
+    assert.equal((await loadStakeholder(root, "acme-pm")).project, "acme");
+    const global = await addStakeholder(root, { name: "Internal Eng", id: "internal-eng" });
+    assert.equal(global.project, undefined);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("doc/ticket project override beats the source's project", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    // A shared (global) source.
+    await registerSource(root, { id: "shared-jira", name: "Shared Jira" });
+    // One ticket overridden to acme, one left to inherit (global).
+    const overridden = await addTicket(root, {
+      source: "shared-jira",
+      ticketId: "ACME-1",
+      title: "Acme ticket",
+      project: "acme",
+    });
+    assert.equal(overridden.project, "acme");
+    const inherited = await addTicket(root, {
+      source: "shared-jira",
+      ticketId: "GEN-1",
+      title: "General ticket",
+    });
+    assert.equal(inherited.project, undefined);
+    // Doc override too.
+    const doc = await addDoc(root, {
+      source: "shared-jira",
+      docId: "ACME-DOC",
+      title: "Acme doc",
+      project: "acme",
+    });
+    assert.equal(doc.project, "acme");
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("map scopes stakeholders, and doc/ticket overrides win over source", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await addStakeholder(root, { name: "Acme PM", id: "acme-pm", project: "acme" });
+    await addStakeholder(root, { name: "Internal Eng", id: "internal-eng" }); // global
+    await addStakeholder(root, { name: "Beta PM", id: "beta-pm", project: "beta" });
+
+    // Shared (global) source; one ticket overridden to acme.
+    await registerSource(root, { id: "shared-jira", name: "Shared Jira" });
+    await addTicket(root, { source: "shared-jira", ticketId: "ACME-1", title: "Acme ticket", project: "acme" });
+    await addTicket(root, { source: "shared-jira", ticketId: "GEN-1", title: "General ticket" }); // global
+
+    function section(map, dir) {
+      return (map.children ?? []).find((c) => c.relPath === dir);
+    }
+
+    const acme = await buildWorkspaceMap(root, { depth: 2, scope: { kind: "project", id: "acme" } });
+    // Stakeholders: acme PM + global internal eng, not beta PM.
+    const people = (section(acme, "stakeholders").children ?? []).map((c) => c.name).sort();
+    assert.deepEqual(people, ["Acme PM", "Internal Eng"]);
+    // Tickets: the acme-overridden one + the global one (both in acme scope).
+    const tix = (section(acme, "tickets").children ?? []).map((c) => c.name).sort();
+    assert.deepEqual(tix, ["shared-jira:ACME-1", "shared-jira:GEN-1"]);
+
+    // Beta scope: only the global ticket (acme override excluded), only global person.
+    const beta = await buildWorkspaceMap(root, { depth: 2, scope: { kind: "project", id: "beta" } });
+    const betaTix = (section(beta, "tickets").children ?? []).map((c) => c.name).sort();
+    assert.deepEqual(betaTix, ["shared-jira:GEN-1"]);
+    const betaPeople = (section(beta, "stakeholders").children ?? []).map((c) => c.name).sort();
+    assert.deepEqual(betaPeople, ["Beta PM", "Internal Eng"]);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }

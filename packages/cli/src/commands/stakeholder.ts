@@ -15,10 +15,12 @@ import {
   StakeholderAlreadyExistsError,
   StakeholderNotFoundError,
   StakeholderFileError,
+  ProjectNotFoundError,
   NotInsideWorkspaceError,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
 
 /**
  * `atelier stakeholder` — manage the workspace's people map.
@@ -106,6 +108,7 @@ const addCmd: Command = {
     own: { type: "string", multiple: true },
     summary: { type: "string", short: "s" },
     "from-session": { type: "string" },
+    ...PROJECT_OPTION,
   },
   positionals: ["name?"],
   prompts: [
@@ -146,6 +149,18 @@ const addCmd: Command = {
       throw err;
     }
 
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const fromSession = values["from-session"] as string | undefined;
       const stakeholder = await addStakeholder(workspaceRoot, {
@@ -158,10 +173,12 @@ const addCmd: Command = {
         ownerships: parseRepeatableString(values.own),
         summary: values.summary as string | undefined,
         fromSessions: fromSession ? [fromSession] : undefined,
+        project,
       });
       ui.success(`Added stakeholder ${ui.bold(stakeholder.id)}`);
       ui.blank();
       ui.print(`  ${ui.dim("Name:")}         ${stakeholder.name}`);
+      if (stakeholder.project) ui.print(`  ${ui.dim("Project:")}      ${stakeholder.project}`);
       if (stakeholder.role) ui.print(`  ${ui.dim("Role:")}         ${stakeholder.role}`);
       if (stakeholder.organization) {
         ui.print(`  ${ui.dim("Organization:")} ${stakeholder.organization}`);
@@ -205,9 +222,14 @@ const addCmd: Command = {
 const listCmd: Command = {
   name: "list",
   summary: "List every stakeholder in the workspace.",
+  description:
+    "Scoped to the active project plus global people (those who span\n" +
+    "projects). Pass `--project <id>` to view another project, or\n" +
+    "`--project all` for everyone.",
   options: {
     org: { type: "string", short: "o" },
     role: { type: "string", short: "r" },
+    ...PROJECT_OPTION,
   },
   async run({ values, cwd, mode }) {
     let workspaceRoot: string;
@@ -221,6 +243,7 @@ const listCmd: Command = {
       throw err;
     }
 
+    const scope = await readScope(workspaceRoot, values);
     const orgFilter = (values.org as string | undefined)?.trim().toLowerCase();
     const roleFilter = (values.role as string | undefined)?.trim().toLowerCase();
 
@@ -234,6 +257,7 @@ const listCmd: Command = {
     }
 
     const shown = stakeholders.filter(({ stakeholder }) => {
+      if (!inProjectScope(stakeholder.project, scope)) return false;
       if (orgFilter && (stakeholder.organization ?? "").toLowerCase() !== orgFilter) {
         return false;
       }
@@ -242,6 +266,12 @@ const listCmd: Command = {
       }
       return true;
     });
+
+    const banner = scopeBanner(scope);
+    if (banner) {
+      ui.print(`  ${banner}`);
+      ui.blank();
+    }
 
     if (shown.length === 0) {
       const filterLabel = [
@@ -263,7 +293,7 @@ const listCmd: Command = {
       for (const { stakeholder, hasPrivate } of shown) {
         const flag = hasPrivate ? ui.dim(" [private]") : "";
         ui.print(
-          `  ${ui.green("·")} ${stakeholder.id.padEnd(idWidth)}  ${stakeholder.name.padEnd(nameWidth)}  ${stakeholder.role ?? ui.dim("—")}  ${stakeholder.organization ?? ui.dim("—")}${flag}`
+          `  ${ui.green("·")} ${stakeholder.id.padEnd(idWidth)}  ${stakeholder.name.padEnd(nameWidth)}  ${stakeholder.role ?? ui.dim("-")}  ${stakeholder.organization ?? ui.dim("-")}${flag}${projectTag(stakeholder.project)}`
         );
       }
       ui.blank();
@@ -321,6 +351,7 @@ const showCmd: Command = {
       const s = await loadStakeholder(workspaceRoot, id, { includePrivate });
       ui.print(ui.bold(s.name));
       ui.print(`  ${ui.dim("id:")}           ${s.id}`);
+      ui.print(`  ${ui.dim("project:")}      ${s.project ?? "global"}`);
       if (s.role) ui.print(`  ${ui.dim("role:")}         ${s.role}`);
       if (s.organization) ui.print(`  ${ui.dim("organization:")} ${s.organization}`);
       if (s.email) ui.print(`  ${ui.dim("email:")}        ${s.email}`);

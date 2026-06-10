@@ -118,8 +118,9 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     description: "Indexed knowledge — PRDs, RFCs, runbooks, transcripts (agent-curated summaries).",
     async loadChildren(root, ctx) {
       const { docs } = await listDocs(root);
+      // A doc's project is its own override, else its source's project.
       return docs
-        .filter(({ doc }) => inProjectScope(ctx.sourceProject.get(doc.source), ctx.scope))
+        .filter(({ doc }) => inProjectScope(doc.project ?? ctx.sourceProject.get(doc.source), ctx.scope))
         .map(({ doc }) => ({
           path: `${doc.source}/`,
           title: `${doc.source}:${doc.docId}`,
@@ -134,8 +135,9 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     description: "Issues / epics / initiatives indexed from the planning tool.",
     async loadChildren(root, ctx) {
       const { tickets } = await listTickets(root);
+      // A ticket's project is its own override, else its source's project.
       return tickets
-        .filter(({ ticket }) => inProjectScope(ctx.sourceProject.get(ticket.source), ctx.scope))
+        .filter(({ ticket }) => inProjectScope(ticket.project ?? ctx.sourceProject.get(ticket.source), ctx.scope))
         .map(({ ticket }) => ({
           path: `${ticket.source}/`,
           title: `${ticket.source}:${ticket.ticketId}`,
@@ -195,19 +197,22 @@ export const WORKSPACE_SECTIONS: readonly SectionDef[] = [
     dir: "stakeholders",
     name: "Stakeholders",
     description: "People involved in the product (PMs, engineers, customers, …).",
-    async loadChildren(root) {
-      // Stakeholders are workspace-global.
+    async loadChildren(root, ctx) {
+      // Stakeholders carry an optional project; untagged people are
+      // global (they span projects) and show in every scope.
       const { stakeholders } = await listStakeholders(root);
-      return stakeholders.map(({ stakeholder }) => ({
-        path: `${stakeholder.id}/`,
-        title: stakeholder.name,
-        kind: "stakeholder",
-        description: truncate(
-          [stakeholder.role, stakeholder.organization, stakeholder.summary]
-            .filter(Boolean)
-            .join(" · ")
-        ),
-      }));
+      return stakeholders
+        .filter(({ stakeholder }) => inProjectScope(stakeholder.project, ctx.scope))
+        .map(({ stakeholder }) => ({
+          path: `${stakeholder.id}/`,
+          title: stakeholder.name,
+          kind: "stakeholder",
+          description: truncate(
+            [stakeholder.role, stakeholder.organization, stakeholder.summary]
+              .filter(Boolean)
+              .join(" · ")
+          ),
+        }));
     },
   },
 ];

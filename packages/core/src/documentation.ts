@@ -99,6 +99,7 @@ export function serializeDocFile(doc: Documentation): string {
   if (doc.link !== undefined) fm.link = doc.link;
   if (doc.owner !== undefined) fm.owner = doc.owner;
   if (doc.fromSession !== undefined) fm.fromSession = doc.fromSession;
+  if (doc.project !== undefined) fm.project = doc.project;
   fm.createdAt = doc.createdAt;
   fm.updatedAt = doc.updatedAt;
   return buildFrontMatterFile(fm, doc.body);
@@ -114,6 +115,7 @@ function toFrontMatter(doc: Documentation): DocFrontMatter {
     link: doc.link,
     owner: doc.owner,
     fromSession: doc.fromSession,
+    project: doc.project,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -132,6 +134,12 @@ export interface AddDocOptions {
   link?: string;
   owner?: string;
   fromSession?: string;
+  /**
+   * Project override. Normally a doc inherits its project from its
+   * source; set this only to pin a single entry from a shared source to
+   * one project. Omitted = inherit from the source.
+   */
+  project?: string;
   body?: string;
   /** Skip the check that `source` is registered in sources.yaml. */
   skipSourceValidation?: boolean;
@@ -169,6 +177,7 @@ export async function addDoc(workspaceRoot: string, opts: AddDocOptions): Promis
     link: opts.link,
     owner: opts.owner,
     fromSession: opts.fromSession,
+    project: opts.project,
     createdAt: now,
     updatedAt: now,
     body: opts.body ?? "",

@@ -54,7 +54,7 @@ The agent playbooks are plain markdown (`atelier agent show <id>`), so they drop
 - **Specs your agent can build from.** `atelier spec new "Add SSO"` scaffolds a change with context and a clean handoff prompt.
 - **Agents that learn your codebase.** Atelier authors them, renders them into your tool, and they get sharper over time: each one proposes the patterns and standards it notices, and records them only with your sign-off, so you teach a convention once instead of every session.
 - **No lock-in, no black box.** Every fact is readable markdown and YAML you can diff and review.
-- **Multiple projects in one workspace.** Agencies and multi-product teams scope each client or product line into its own project (`atelier project add`, `atelier project use`), with shared sources and components kept global. Commands and agents scope to the active project plus global; `--project all` shows everything.
+- **Multiple projects in one workspace.** Agencies and multi-product teams scope each client or product line into its own project (`atelier project add`, `atelier project use`): sources, repos, features, designs, specs, and people all carry it, with shared things kept global. Commands and agents scope to the active project plus global; `--project all` shows everything. The discovery agent detects your clients and sets the projects up, so you don't hand-create them.
 
 ## Learn more
 

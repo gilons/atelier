@@ -77,6 +77,7 @@ export function serializeTicketFile(t: Ticket): string {
   if (t.link !== undefined) fm.link = t.link;
   if (t.parent !== undefined) fm.parent = t.parent;
   if (t.fromSession !== undefined) fm.fromSession = t.fromSession;
+  if (t.project !== undefined) fm.project = t.project;
   fm.createdAt = t.createdAt;
   fm.updatedAt = t.updatedAt;
   return buildFrontMatterFile(fm, t.body);
@@ -93,6 +94,7 @@ function toFrontMatter(t: Ticket): TicketFrontMatter {
     link: t.link,
     parent: t.parent,
     fromSession: t.fromSession,
+    project: t.project,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   };
@@ -108,6 +110,12 @@ export interface AddTicketOptions {
   link?: string;
   parent?: string;
   fromSession?: string;
+  /**
+   * Project override. Normally a ticket inherits its project from its
+   * source; set this only to pin a single entry from a shared tracker to
+   * one project. Omitted = inherit from the source.
+   */
+  project?: string;
   body?: string;
   skipSourceValidation?: boolean;
 }
@@ -145,6 +153,7 @@ export async function addTicket(workspaceRoot: string, opts: AddTicketOptions): 
     link: opts.link,
     parent: opts.parent,
     fromSession: opts.fromSession,
+    project: opts.project,
     createdAt: now,
     updatedAt: now,
     body: opts.body ?? "",

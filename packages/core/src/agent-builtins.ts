@@ -177,6 +177,9 @@ const DISCOVERY_PEOPLE = `Register the key people (stakeholders).
 
 - As you go, you'll learn who owns what. Register the key people:
   \`atelier stakeholder add "Sarah Chen" --role PM --org "<Org>" --own <feature-or-source>\`
+  A client contact lands in the active project by default; pass
+  \`--project <id>\` to place them, or \`--project global\` for internal /
+  cross-client people who span projects.
 - Personal/sensitive observations go to the private layer (gitignored):
   \`atelier stakeholder note <id> --private "…"\``;
 

@@ -12,11 +12,12 @@ import {
   DocNotFoundError,
   DocFileError,
   DocReferenceValidationError,
+  ProjectNotFoundError,
   NotInsideWorkspaceError,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner, entryProjectOverride } from "../project-scope.js";
 
 /**
  * `atelier doc` — the documentation surface.
@@ -67,12 +68,14 @@ const addCmd: Command = {
     "body-text": { type: "string" },
     "body-file": { type: "string" },
     "no-validate-source": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const ref = parseRef(positionals[0] ?? "");
     if (!ref) {
       ui.error("Missing or malformed <source>:<docId>.");
       ui.print(`  ${ui.dim('Usage: atelier doc add notion:prd-123 --title "Onboarding PRD" --link <url>')}`);
+      ui.print(`  ${ui.dim("Docs inherit their source's project; pass --project <id> only to override for one entry.")}`);
       return 2;
     }
     const title = values.title as string | undefined;
@@ -94,6 +97,18 @@ const addCmd: Command = {
       }
     }
 
+    let project: string | undefined;
+    try {
+      project = await entryProjectOverride(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const doc = await addDoc(root, {
         source: ref.source,
@@ -104,6 +119,7 @@ const addCmd: Command = {
         link: values.link as string | undefined,
         owner: values.owner as string | undefined,
         fromSession: values["from-session"] as string | undefined,
+        project,
         body,
         skipSourceValidation: values["no-validate-source"] === true,
       });
@@ -111,6 +127,7 @@ const addCmd: Command = {
       ui.print(`  ${ui.dim("title:")} ${doc.title}`);
       if (doc.classification) ui.print(`  ${ui.dim("class:")} ${doc.classification}`);
       if (doc.owner) ui.print(`  ${ui.dim("owner:")} ${doc.owner}`);
+      if (doc.project) ui.print(`  ${ui.dim("project:")} ${doc.project} ${ui.dim("(override)")}`);
       return 0;
     } catch (err) {
       if (err instanceof DocAlreadyExistsError || err instanceof DocReferenceValidationError) {
@@ -141,8 +158,9 @@ const listCmd: Command = {
     const sourceProject = new Map((await listSources(root)).map((s) => [s.id, s.project]));
     const { docs, errors } = await listDocs(root, values.source as string | undefined);
     const classFilter = values.class as string | undefined;
+    // Effective project: the doc's own override, else its source's project.
     const shown = docs
-      .filter((d) => inProjectScope(sourceProject.get(d.doc.source), scope))
+      .filter((d) => inProjectScope(d.doc.project ?? sourceProject.get(d.doc.source), scope))
       .filter((d) => !classFilter || d.doc.classification === classFilter);
 
     if (docs.length === 0 && errors.length === 0) {
@@ -163,7 +181,7 @@ const listCmd: Command = {
     }
     for (const { doc } of shown) {
       const cls = doc.classification ? ` ${ui.dim("[" + doc.classification + "]")}` : "";
-      ui.print(`  ${ui.green("·")} ${doc.source}:${doc.docId}${cls}  ${doc.title}${projectTag(sourceProject.get(doc.source))}`);
+      ui.print(`  ${ui.green("·")} ${doc.source}:${doc.docId}${cls}  ${doc.title}${projectTag(doc.project ?? sourceProject.get(doc.source))}`);
     }
     ui.blank();
     if (errors.length > 0) {

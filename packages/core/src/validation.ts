@@ -583,7 +583,7 @@ export function validateDocFrontMatter(
       issues: [{ path: "$", message: "expected an object at the top level" }],
     };
   }
-  const { source, docId, title, overview, classification, link, owner, fromSession, createdAt, updatedAt } = raw;
+  const { source, docId, title, overview, classification, link, owner, fromSession, project, createdAt, updatedAt } = raw;
 
   if (!isNonEmptyString(source)) pushIssue(issues, "$.source", "must be a non-empty string");
   if (!isNonEmptyString(docId)) pushIssue(issues, "$.docId", "must be a non-empty string");
@@ -603,6 +603,7 @@ export function validateDocFrontMatter(
   if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
     pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
   }
+  validateOptionalProject(project, "$.project", issues);
   if (!isNonEmptyString(createdAt)) pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
   if (!isNonEmptyString(updatedAt)) pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
 
@@ -619,6 +620,7 @@ export function validateDocFrontMatter(
   if (link !== undefined) value.link = link as string;
   if (owner !== undefined) value.owner = owner as string;
   if (fromSession !== undefined) value.fromSession = fromSession as string;
+  if (project !== undefined) value.project = project as string;
   return { ok: true, value, issues: [] };
 }
 
@@ -633,7 +635,7 @@ export function validateTicketFrontMatter(
   if (!isObject(raw)) {
     return { ok: false, issues: [{ path: "$", message: "expected an object at the top level" }] };
   }
-  const { source, ticketId, title, overview, status, assignee, link, parent, fromSession, createdAt, updatedAt } = raw;
+  const { source, ticketId, title, overview, status, assignee, link, parent, fromSession, project, createdAt, updatedAt } = raw;
 
   if (!isNonEmptyString(source)) pushIssue(issues, "$.source", "must be a non-empty string");
   if (!isNonEmptyString(ticketId)) pushIssue(issues, "$.ticketId", "must be a non-empty string");
@@ -656,6 +658,7 @@ export function validateTicketFrontMatter(
   if (fromSession !== undefined && !isNonEmptyString(fromSession)) {
     pushIssue(issues, "$.fromSession", "if present, must be a non-empty string (session id)");
   }
+  validateOptionalProject(project, "$.project", issues);
   if (!isNonEmptyString(createdAt)) pushIssue(issues, "$.createdAt", "must be a non-empty ISO timestamp string");
   if (!isNonEmptyString(updatedAt)) pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
 
@@ -673,6 +676,7 @@ export function validateTicketFrontMatter(
   if (link !== undefined) value.link = link as string;
   if (parent !== undefined) value.parent = parent as string;
   if (fromSession !== undefined) value.fromSession = fromSession as string;
+  if (project !== undefined) value.project = project as string;
   return { ok: true, value, issues: [] };
 }
 
@@ -843,6 +847,7 @@ export function validateStakeholderFrontMatter(
     ownerships,
     summary,
     fromSessions,
+    project,
     createdAt,
     updatedAt,
   } = raw;
@@ -902,6 +907,7 @@ export function validateStakeholderFrontMatter(
   if (!isNonEmptyString(updatedAt)) {
     pushIssue(issues, "$.updatedAt", "must be a non-empty ISO timestamp string");
   }
+  validateOptionalProject(project, "$.project", issues);
 
   if (issues.length > 0) return { ok: false, issues };
   const value: StakeholderFrontMatter = {
@@ -919,6 +925,7 @@ export function validateStakeholderFrontMatter(
   if (Array.isArray(ownerships)) value.ownerships = ownerships as string[];
   if (summary !== undefined) value.summary = summary as string;
   if (Array.isArray(fromSessions)) value.fromSessions = fromSessions as string[];
+  if (project !== undefined) value.project = project as string;
   return { ok: true, value, issues: [] };
 }
 

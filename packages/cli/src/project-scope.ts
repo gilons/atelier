@@ -3,6 +3,7 @@ import {
   defaultProjectForNew,
   assertProjectExists,
   inProjectScope,
+  RESERVED_PROJECT_IDS,
   type ProjectScope,
 } from "@atelier/core";
 import { ui } from "./ui.js";
@@ -51,6 +52,26 @@ export async function newEntryProject(
   });
   if (project) await assertProjectExists(workspaceRoot, project);
   return project;
+}
+
+/**
+ * Project *override* for an entry that normally inherits its project from
+ * elsewhere (docs/tickets inherit from their source). Unlike
+ * {@link newEntryProject}, this does NOT fall back to the active pin:
+ * omitting `--project` means "inherit". Only an explicit, registered
+ * project id sets an override; reserved words (all/global/none) are
+ * treated as "no override".
+ */
+export async function entryProjectOverride(
+  workspaceRoot: string,
+  values: Record<string, unknown>
+): Promise<string | undefined> {
+  const p = (values.project as string | undefined)?.trim();
+  if (p && !RESERVED_PROJECT_IDS.has(p)) {
+    await assertProjectExists(workspaceRoot, p);
+    return p;
+  }
+  return undefined;
 }
 
 /**

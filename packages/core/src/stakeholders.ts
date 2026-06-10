@@ -166,6 +166,7 @@ export function serializeProfileFile(s: Stakeholder): string {
   if (s.fromSessions !== undefined && s.fromSessions.length > 0) {
     fm.fromSessions = s.fromSessions;
   }
+  if (s.project !== undefined) fm.project = s.project;
   fm.createdAt = s.createdAt;
   fm.updatedAt = s.updatedAt;
   return buildFrontMatterFile(fm, s.profileBody);
@@ -194,6 +195,11 @@ export interface AddStakeholderOptions {
   summary?: string;
   /** Session ids that surfaced this stakeholder. */
   fromSessions?: string[];
+  /**
+   * Project this person belongs to (an id from `projects.yaml`).
+   * Omitted = global (someone who spans projects).
+   */
+  project?: string;
   /** Markdown body for the shared profile.md (after front-matter). */
   profileBody?: string;
   /**
@@ -235,6 +241,7 @@ export async function addStakeholder(
     ownerships: opts.ownerships,
     summary: opts.summary,
     fromSessions: opts.fromSessions,
+    project: opts.project,
     createdAt: now,
     updatedAt: now,
     profileBody: opts.profileBody ?? "",
@@ -272,6 +279,7 @@ function toFrontMatter(s: Stakeholder): StakeholderFrontMatter {
     ownerships: s.ownerships,
     summary: s.summary,
     fromSessions: s.fromSessions,
+    project: s.project,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
   };

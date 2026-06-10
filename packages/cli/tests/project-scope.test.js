@@ -117,6 +117,54 @@ test("source list scopes to active project; docs inherit source project", async 
   }
 });
 
+test("stakeholder add defaults to active project; --project global stays global", async () => {
+  const root = await setup();
+  try {
+    assert.equal(runCli(["project", "use", "acme"], root).status, 0);
+    assert.equal(runCli(["stakeholder", "add", "Acme PM", "--id", "acme-pm"], root).status, 0);
+    assert.equal(
+      runCli(["stakeholder", "add", "Internal Eng", "--id", "internal-eng", "--project", "global"], root).status,
+      0
+    );
+    assert.equal(
+      runCli(["stakeholder", "add", "Beta PM", "--id", "beta-pm", "--project", "beta"], root).status,
+      0
+    );
+    // acme scope: acme PM + global internal eng, not beta.
+    const acme = runCli(["stakeholder", "list"], root);
+    assert.match(acme.stdout, /acme-pm/);
+    assert.match(acme.stdout, /internal-eng/);
+    assert.doesNotMatch(acme.stdout, /beta-pm/);
+    // all scope.
+    const all = runCli(["stakeholder", "list", "--project", "all"], root);
+    assert.match(all.stdout, /beta-pm/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ticket --project override scopes a shared source's entry", async () => {
+  const root = await setup();
+  try {
+    // A shared (global) source.
+    assert.equal(runCli(["source", "register", "jira", "--name", "Jira", "--project", "global"], root).status, 0);
+    // One ticket overridden to acme, one inheriting (global).
+    assert.equal(runCli(["ticket", "add", "jira:ACME-1", "--title", "Acme ticket", "--project", "acme"], root).status, 0);
+    assert.equal(runCli(["ticket", "add", "jira:GEN-1", "--title", "General ticket"], root).status, 0);
+
+    // acme scope: both (the override + the global one).
+    const acme = runCli(["ticket", "list", "--project", "acme"], root);
+    assert.match(acme.stdout, /ACME-1/);
+    assert.match(acme.stdout, /GEN-1/);
+    // beta scope: only the global one, the acme override is excluded.
+    const beta = runCli(["ticket", "list", "--project", "beta"], root);
+    assert.doesNotMatch(beta.stdout, /ACME-1/);
+    assert.match(beta.stdout, /GEN-1/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("map scopes to the active project", async () => {
   const root = await setup();
   try {

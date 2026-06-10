@@ -11,11 +11,12 @@ import {
   TicketNotFoundError,
   TicketFileError,
   TicketReferenceValidationError,
+  ProjectNotFoundError,
   NotInsideWorkspaceError,
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner, entryProjectOverride } from "../project-scope.js";
 
 /**
  * `atelier ticket` — the planning surface.
@@ -67,12 +68,14 @@ const addCmd: Command = {
     "body-text": { type: "string" },
     "body-file": { type: "string" },
     "no-validate-source": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const ref = parseRef(positionals[0] ?? "");
     if (!ref) {
       ui.error("Missing or malformed <source>:<ticketId>.");
       ui.print(`  ${ui.dim('Usage: atelier ticket add linear:ENG-1421 --title "..." --status in-progress')}`);
+      ui.print(`  ${ui.dim("Tickets inherit their source's project; pass --project <id> only to override for one entry.")}`);
       return 2;
     }
     const title = values.title as string | undefined;
@@ -94,6 +97,18 @@ const addCmd: Command = {
       }
     }
 
+    let project: string | undefined;
+    try {
+      project = await entryProjectOverride(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const t = await addTicket(root, {
         source: ref.source,
@@ -105,6 +120,7 @@ const addCmd: Command = {
         link: values.link as string | undefined,
         parent: values.parent as string | undefined,
         fromSession: values["from-session"] as string | undefined,
+        project,
         body,
         skipSourceValidation: values["no-validate-source"] === true,
       });
@@ -112,6 +128,7 @@ const addCmd: Command = {
       ui.print(`  ${ui.dim("title:")}  ${t.title}`);
       if (t.status) ui.print(`  ${ui.dim("status:")} ${t.status}`);
       if (t.assignee) ui.print(`  ${ui.dim("owner:")}  ${t.assignee}`);
+      if (t.project) ui.print(`  ${ui.dim("project:")} ${t.project} ${ui.dim("(override)")}`);
       return 0;
     } catch (err) {
       if (err instanceof TicketAlreadyExistsError || err instanceof TicketReferenceValidationError) {
@@ -142,8 +159,9 @@ const listCmd: Command = {
     const sourceProject = new Map((await listSources(root)).map((s) => [s.id, s.project]));
     const { tickets, errors } = await listTickets(root, values.source as string | undefined);
     const statusFilter = values.status as string | undefined;
+    // Effective project: the ticket's own override, else its source's project.
     const shown = tickets
-      .filter((t) => inProjectScope(sourceProject.get(t.ticket.source), scope))
+      .filter((t) => inProjectScope(t.ticket.project ?? sourceProject.get(t.ticket.source), scope))
       .filter((t) => !statusFilter || t.ticket.status === statusFilter);
 
     if (tickets.length === 0 && errors.length === 0) {
@@ -165,7 +183,7 @@ const listCmd: Command = {
     for (const { ticket } of shown) {
       const st = ticket.status ? ` ${ui.dim("[" + ticket.status + "]")}` : "";
       const who = ticket.assignee ? `  ${ui.dim("@" + ticket.assignee)}` : "";
-      ui.print(`  ${ui.green("·")} ${ticket.source}:${ticket.ticketId}${st}  ${ticket.title}${who}${projectTag(sourceProject.get(ticket.source))}`);
+      ui.print(`  ${ui.green("·")} ${ticket.source}:${ticket.ticketId}${st}  ${ticket.title}${who}${projectTag(ticket.project ?? sourceProject.get(ticket.source))}`);
     }
     ui.blank();
     if (errors.length > 0) {
