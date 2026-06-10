@@ -22,7 +22,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner, reassignProject } from "../project-scope.js";
 
 /**
  * `atelier spec` — create the scaffolded issue folder for a change,
@@ -422,6 +422,56 @@ const setStatusCmd: Command = {
   },
 };
 
+const setProjectCmd: Command = {
+  name: "set-project",
+  summary: "Reassign a spec's project (or clear it back to global).",
+  description:
+    "Move an existing spec into a project in place, keeping all its files.\n" +
+    "Pass a project id, or `global` to clear it.\n\n" +
+    "  atelier spec set-project <id> <project-id|global>",
+  positionals: ["id", "project"],
+  async run({ positionals, cwd }) {
+    const [id, project] = positionals;
+    if (!id || !project) {
+      ui.error("Usage: atelier spec set-project <id> <project-id|global>");
+      return 2;
+    }
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+    // Reuse the shared reassign semantics via a synthetic --project value.
+    let resolved: string | null | undefined;
+    try {
+      resolved = await reassignProject(workspaceRoot, { project });
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+    try {
+      const m = await updateSpec(workspaceRoot, id, { project: resolved ?? null });
+      ui.success(`Set ${ui.bold(m.id)} project → ${m.project ?? "global"}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof SpecNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
 const depsCmd: Command = {
   name: "deps",
   summary: "Set a spec's build dependencies (other specs that must land first).",
@@ -519,5 +569,5 @@ export const specCommand: Command = {
     "A spec is a folder under .planning/issues/<id>/ that bundles a\n" +
     "templated plan, curated context (related features, doc refs, code\n" +
     "refs), and a handoff prompt ready to feed to a coding agent.",
-  subcommands: [newCmd, listCmd, showCmd, setStatusCmd, depsCmd, removeCmd],
+  subcommands: [newCmd, listCmd, showCmd, setStatusCmd, setProjectCmd, depsCmd, removeCmd],
 };

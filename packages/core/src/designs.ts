@@ -216,6 +216,8 @@ export interface UpdateDesignOptions {
   kind?: string | null;
   link?: string;
   app?: string | null;
+  /** Reassign the project. A value sets it; `null` clears it to global. */
+  project?: string | null;
   body?: string;
 }
 
@@ -232,6 +234,7 @@ export async function updateDesign(
   if (patch.kind !== undefined) next.kind = patch.kind === null || patch.kind === "" ? undefined : patch.kind;
   if (patch.link !== undefined) next.link = patch.link === "" ? undefined : patch.link;
   if (patch.app !== undefined) next.app = patch.app === null || patch.app === "" ? undefined : patch.app;
+  if (patch.project !== undefined) next.project = patch.project === null || patch.project === "" ? undefined : patch.project;
   if (patch.body !== undefined) next.body = patch.body;
   next.updatedAt = new Date().toISOString();
 

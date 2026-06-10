@@ -75,6 +75,28 @@ export async function entryProjectOverride(
 }
 
 /**
+ * Resolve a `--project` value for an in-place reassign (an `update`).
+ * Returns one of:
+ *   - `undefined`  the flag was not passed  -> leave the project unchanged
+ *   - `null`       `--project global`/`none` -> clear back to global
+ *   - a string     a registered project id   -> set it (validated)
+ * Throws ProjectNotFoundError for an unknown id; throws for `all`.
+ */
+export async function reassignProject(
+  workspaceRoot: string,
+  values: Record<string, unknown>
+): Promise<string | null | undefined> {
+  const p = (values.project as string | undefined)?.trim();
+  if (p === undefined) return undefined;
+  if (p === "global" || p === "none" || p === "") return null;
+  if (p === "all") {
+    throw new Error('"all" is not a project. Use `--project global` to clear, or a project id.');
+  }
+  await assertProjectExists(workspaceRoot, p);
+  return p;
+}
+
+/**
  * A short dim tag for an entry's project, e.g. " (acme)" or " (global)".
  * Returns "" when not worth showing (scope is a single project and the
  * entry is in it). Used to annotate list rows.

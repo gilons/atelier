@@ -193,6 +193,25 @@ export async function updateSource(
 }
 
 /**
+ * Reassign a source's project in place. Pass a project id to set it, or
+ * `null` to clear it back to global. The source's docs and tickets
+ * inherit the new project (unless they carry their own override).
+ */
+export async function setSourceProject(
+  workspaceRoot: string,
+  id: string,
+  project: string | null
+): Promise<Source> {
+  const cfg = await loadSourcesConfig(workspaceRoot);
+  const source = cfg.sources.find((s) => s.id === id);
+  if (!source) throw new SourceNotFoundError(id);
+  if (project === null || project === "") delete source.project;
+  else source.project = project;
+  await saveSourcesConfig(workspaceRoot, cfg);
+  return source;
+}
+
+/**
  * Replace just the setup.md runbook for an existing source. The
  * source entry's setupFile pointer is added if it was previously
  * unset. Pass null to remove the runbook entirely.

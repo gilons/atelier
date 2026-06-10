@@ -16,7 +16,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner, entryProjectOverride } from "../project-scope.js";
+import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner, entryProjectOverride, reassignProject } from "../project-scope.js";
 
 /**
  * `atelier ticket` — the planning surface.
@@ -214,6 +214,7 @@ const showCmd: Command = {
       if (t.assignee) ui.print(`  ${ui.dim("owner:")}    ${t.assignee}`);
       if (t.parent) ui.print(`  ${ui.dim("parent:")}   ${t.parent}`);
       if (t.link) ui.print(`  ${ui.dim("link:")}     ${t.link}`);
+      if (t.project) ui.print(`  ${ui.dim("project:")}  ${t.project} ${ui.dim("(override)")}`);
       if (t.fromSession) ui.print(`  ${ui.dim("session:")}  ${t.fromSession}`);
       ui.print(`  ${ui.dim("updated:")}  ${t.updatedAt}`);
       ui.blank();
@@ -232,7 +233,10 @@ const showCmd: Command = {
 
 const updateCmd: Command = {
   name: "update",
-  summary: "Update a ticket's fields (e.g. status, assignee).",
+  summary: "Update a ticket's fields (status, assignee, project).",
+  description:
+    "Reassign a ticket's project override with `--project <id>`, or\n" +
+    "`--project global` to clear it (back to inheriting from its source).",
   positionals: ["ref"],
   options: {
     title: { type: "string", short: "t" },
@@ -244,15 +248,26 @@ const updateCmd: Command = {
     link: { type: "string", short: "l" },
     parent: { type: "string", short: "p" },
     "clear-parent": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const ref = parseRef(positionals[0] ?? "");
     if (!ref) {
-      ui.error("Usage: atelier ticket update <source>:<ticketId> [--status done]");
+      ui.error("Usage: atelier ticket update <source>:<ticketId> [--status done] [--project <id>]");
       return 2;
     }
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    let project: string | null | undefined;
+    try {
+      project = await reassignProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
     try {
       const next = await updateTicket(root, ref.source, ref.ticketId, {
         title: values.title as string | undefined,
@@ -261,8 +276,10 @@ const updateCmd: Command = {
         assignee: values["clear-assignee"] === true ? null : (values.assignee as string | undefined),
         link: values.link as string | undefined,
         parent: values["clear-parent"] === true ? null : (values.parent as string | undefined),
+        project,
       });
       ui.success(`Updated ${ui.bold(`${next.source}:${next.ticketId}`)}${next.status ? ` ${ui.dim("[" + next.status + "]")}` : ""}`);
+      if (project !== undefined) ui.print(`  ${ui.dim("project:")} ${next.project ?? "inherit from source"}`);
       return 0;
     } catch (err) {
       if (err instanceof TicketNotFoundError) {

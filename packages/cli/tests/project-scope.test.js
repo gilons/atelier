@@ -165,6 +165,59 @@ test("ticket --project override scopes a shared source's entry", async () => {
   }
 });
 
+test("in-place reassign: feature update --project moves it, --project global clears", async () => {
+  const root = await setup();
+  try {
+    assert.equal(runCli(["feature", "add", "Thing", "--id", "thing", "--project", "acme", "--no-validate-refs"], root).status, 0);
+    // Move acme -> beta in place.
+    const moved = runCli(["feature", "update", "thing", "--project", "beta"], root);
+    assert.equal(moved.status, 0, moved.stderr);
+    assert.match(moved.stdout, /Project: beta/);
+    // Now visible in beta scope, not acme.
+    assert.match(runCli(["feature", "list", "--project", "beta"], root).stdout, /thing/);
+    assert.doesNotMatch(runCli(["feature", "list", "--project", "acme"], root).stdout, /thing/);
+    // Clear to global.
+    const cleared = runCli(["feature", "update", "thing", "--project", "global"], root);
+    assert.match(cleared.stdout, /Project: global/);
+    // Global shows in every scope.
+    assert.match(runCli(["feature", "list", "--project", "acme"], root).stdout, /thing/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("in-place reassign: design artifact update --project and unknown id errors", async () => {
+  const root = await setup();
+  try {
+    runCli(["design", "artifact", "add", "ui-design:home", "--title", "Home", "--project", "acme"], root);
+    const moved = runCli(["design", "artifact", "update", "ui-design:home", "--project", "beta"], root);
+    assert.equal(moved.status, 0, moved.stderr);
+    assert.match(runCli(["design", "artifact", "list", "--project", "beta"], root).stdout, /ui-design:home/);
+    // Unknown project id is rejected.
+    const bad = runCli(["design", "artifact", "update", "ui-design:home", "--project", "ghost"], root);
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr + bad.stdout, /No project with id/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("in-place reassign: source update --project re-scopes its docs", async () => {
+  const root = await setup();
+  try {
+    runCli(["source", "register", "kb", "--name", "KB", "--project", "acme"], root);
+    runCli(["doc", "add", "kb:d1", "--title", "Doc one"], root); // inherits acme
+    assert.match(runCli(["doc", "list", "--project", "acme"], root).stdout, /kb:d1/);
+    // Re-scope the source to beta; the doc follows.
+    const moved = runCli(["source", "update", "kb", "--project", "beta"], root);
+    assert.equal(moved.status, 0, moved.stderr);
+    assert.match(runCli(["doc", "list", "--project", "beta"], root).stdout, /kb:d1/);
+    assert.doesNotMatch(runCli(["doc", "list", "--project", "acme"], root).stdout, /kb:d1/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("map scopes to the active project", async () => {
   const root = await setup();
   try {

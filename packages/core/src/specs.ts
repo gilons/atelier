@@ -666,8 +666,8 @@ export interface UpdateSpecOptions {
   title?: string;
   /** Replace the spec's dependencies (other spec ids that must build first). */
   dependsOn?: string[];
-  /** Retag the spec's project (an id from `projects.yaml`). */
-  project?: string;
+  /** Retag the spec's project. A value sets it; `null` clears it to global. */
+  project?: string | null;
 }
 
 /**
@@ -714,11 +714,18 @@ export async function updateSpec(
   patch: UpdateSpecOptions
 ): Promise<SpecManifest> {
   const current = await loadSpec(workspaceRoot, id);
+  // Pull `project` out of the spread: it's `string | null` on the patch
+  // (null = clear) but `string | undefined` on the manifest.
+  const { project: projectPatch, ...rest } = patch;
   const next: SpecManifest = {
     ...current,
-    ...patch,
+    ...rest,
     updatedAt: new Date().toISOString(),
   };
+  if (projectPatch !== undefined) {
+    if (projectPatch === null || projectPatch === "") delete next.project;
+    else next.project = projectPatch;
+  }
   const paths = specFiles(workspaceRoot, id);
   await fs.writeFile(paths.readme, renderReadme(next), "utf8");
   return next;

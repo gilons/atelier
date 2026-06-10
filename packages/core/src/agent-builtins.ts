@@ -1476,6 +1476,15 @@ right project and they follow.
 global by default. Use \`--project <id>\` to peek at another project, or
 \`--project all\` to see across everything.
 
+**Re-scope in place; never remove-and-re-add.** To move an existing entry
+between projects, retag it (this keeps its body and history):
+\`feature update <id> --project <id>\`, \`design artifact update
+<discipline>:<id> --project <id>\`, \`doc update\` / \`ticket update
+<source>:<id> --project <id>\`, \`stakeholder update <id> --project\`,
+\`source update <id> --project\` (its docs/tickets follow),
+\`spec set-project <id> <project>\`, \`repo set-project <name> <project>\`.
+Pass \`--project global\` to clear a tag back to global.
+
 **When it's ambiguous, ask.** If more than one project exists and you
 can't tell which one the work belongs to, ask the user rather than
 guessing or defaulting to global.

@@ -22,6 +22,8 @@ import {
   addTicket,
   addStakeholder,
   loadStakeholder,
+  updateFeature,
+  setSourceProject,
   buildWorkspaceMap,
 } from "../dist/index.js";
 
@@ -199,6 +201,37 @@ test("map scopes stakeholders, and doc/ticket overrides win over source", async 
     assert.deepEqual(betaTix, ["shared-jira:GEN-1"]);
     const betaPeople = (section(beta, "stakeholders").children ?? []).map((c) => c.name).sort();
     assert.deepEqual(betaPeople, ["Beta PM", "Internal Eng"]);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("updateFeature reassigns project in place and clears with null", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    const f = await addFeature(root, { name: "Thing", id: "thing", project: "acme", skipReferenceValidation: true });
+    assert.equal(f.project, "acme");
+    const moved = await updateFeature(root, "thing", { project: "beta" });
+    assert.equal(moved.project, "beta");
+    assert.equal((await loadFeature(root, "thing")).project, "beta");
+    const cleared = await updateFeature(root, "thing", { project: null });
+    assert.equal(cleared.project, undefined);
+    assert.equal((await loadFeature(root, "thing")).project, undefined);
+  } finally {
+    await fs.rm(umbrella, { recursive: true, force: true });
+  }
+});
+
+test("setSourceProject reassigns a source (docs inherit the new project)", async () => {
+  const { umbrella, root } = await workspace();
+  try {
+    await registerSource(root, { id: "kb", name: "KB", project: "acme" });
+    await addDoc(root, { source: "kb", docId: "d1", title: "Doc" }); // inherits acme
+    const moved = await setSourceProject(root, "kb", "beta");
+    assert.equal(moved.project, "beta");
+    // The doc has no override, so its effective project follows the source.
+    const cleared = await setSourceProject(root, "kb", null);
+    assert.equal(cleared.project, undefined);
   } finally {
     await fs.rm(umbrella, { recursive: true, force: true });
   }

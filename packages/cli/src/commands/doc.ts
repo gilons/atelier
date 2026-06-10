@@ -17,7 +17,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner, entryProjectOverride } from "../project-scope.js";
+import { PROJECT_OPTION, readScope, inProjectScope, projectTag, scopeBanner, entryProjectOverride, reassignProject } from "../project-scope.js";
 
 /**
  * `atelier doc` — the documentation surface.
@@ -211,6 +211,7 @@ const showCmd: Command = {
       if (doc.classification) ui.print(`  ${ui.dim("class:")}   ${doc.classification}`);
       if (doc.link) ui.print(`  ${ui.dim("link:")}    ${doc.link}`);
       if (doc.owner) ui.print(`  ${ui.dim("owner:")}   ${doc.owner}`);
+      if (doc.project) ui.print(`  ${ui.dim("project:")} ${doc.project} ${ui.dim("(override)")}`);
       if (doc.fromSession) ui.print(`  ${ui.dim("session:")} ${doc.fromSession}`);
       ui.print(`  ${ui.dim("updated:")} ${doc.updatedAt}`);
       ui.blank();
@@ -229,7 +230,10 @@ const showCmd: Command = {
 
 const updateCmd: Command = {
   name: "update",
-  summary: "Update a documentation entry's fields.",
+  summary: "Update a documentation entry's fields (including its project).",
+  description:
+    "Reassign a doc's project override with `--project <id>`, or\n" +
+    "`--project global` to clear it (back to inheriting from its source).",
   positionals: ["ref"],
   options: {
     title: { type: "string", short: "t" },
@@ -239,15 +243,26 @@ const updateCmd: Command = {
     link: { type: "string", short: "l" },
     owner: { type: "string" },
     "clear-owner": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const ref = parseRef(positionals[0] ?? "");
     if (!ref) {
-      ui.error("Usage: atelier doc update <source>:<docId> [--title ...]");
+      ui.error("Usage: atelier doc update <source>:<docId> [--title ...] [--project <id>]");
       return 2;
     }
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    let project: string | null | undefined;
+    try {
+      project = await reassignProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
     try {
       const next = await updateDoc(root, ref.source, ref.docId, {
         title: values.title as string | undefined,
@@ -255,8 +270,10 @@ const updateCmd: Command = {
         classification: values["clear-class"] === true ? null : (values.class as string | undefined),
         link: values.link as string | undefined,
         owner: values["clear-owner"] === true ? null : (values.owner as string | undefined),
+        project,
       });
       ui.success(`Updated ${ui.bold(`${next.source}:${next.docId}`)}`);
+      if (project !== undefined) ui.print(`  ${ui.dim("project:")} ${next.project ?? "inherit from source"}`);
       return 0;
     } catch (err) {
       if (err instanceof DocNotFoundError) {

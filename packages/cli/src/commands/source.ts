@@ -8,6 +8,7 @@ import {
   setSourceEnabled,
   readSourceSetup,
   updateSourceSetup,
+  setSourceProject,
   deriveSourceId,
   SourceAlreadyRegisteredError,
   SourceNotFoundError,
@@ -17,7 +18,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner, reassignProject } from "../project-scope.js";
 
 /**
  * `atelier source` — register and manage the workspace's documentation
@@ -333,44 +334,38 @@ const showCmd: Command = {
 
 const updateCmd: Command = {
   name: "update",
-  summary: "Replace a source's setup runbook (or clear it).",
+  summary: "Replace a source's setup runbook, or reassign its project.",
+  description:
+    "Update a source in place. Replace/clear the setup runbook with\n" +
+    "--setup-file / --setup-text / --clear. Reassign the project (which\n" +
+    "its docs and tickets inherit) with `--project <id>`, or\n" +
+    "`--project global` to clear it. You can do both at once.",
   positionals: ["id"],
   options: {
     "setup-file": { type: "string" },
     "setup-text": { type: "string" },
     clear: { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ positionals, values, cwd }) {
     const id = positionals[0];
     if (!id) {
-      ui.error("Usage: atelier source update <id> --setup-file <path>");
+      ui.error("Usage: atelier source update <id> [--setup-file <path>] [--project <id>]");
       return 2;
     }
     const clear = values.clear === true;
     const file = values["setup-file"] as string | undefined;
     const text = values["setup-text"] as string | undefined;
+    const hasProject = values.project !== undefined;
     if (clear && (file || text)) {
       ui.error("--clear can't be combined with --setup-file or --setup-text.");
       return 2;
     }
-    if (!clear && !file && !text) {
+    if (!clear && !file && !text && !hasProject) {
       ui.error(
-        "Pass --setup-file <path>, --setup-text <markdown>, or --clear."
+        "Pass --setup-file <path>, --setup-text <markdown>, --clear, or --project <id>."
       );
       return 2;
-    }
-    let next: string | null;
-    if (clear) {
-      next = null;
-    } else if (text) {
-      next = text;
-    } else {
-      try {
-        next = await fs.readFile(file!, "utf8");
-      } catch (err) {
-        ui.error(`Couldn't read ${file}: ${(err as Error).message}`);
-        return 1;
-      }
     }
 
     let workspaceRoot: string;
@@ -383,21 +378,63 @@ const updateCmd: Command = {
       }
       throw err;
     }
-    try {
-      const source = await updateSourceSetup(workspaceRoot, id, next);
-      ui.success(
-        clear
-          ? `Cleared setup runbook for ${ui.bold(source.id)}.`
-          : `Updated setup runbook for ${ui.bold(source.id)}.`
-      );
-      return 0;
-    } catch (err) {
-      if (err instanceof SourceNotFoundError) {
-        ui.error(err.message);
-        return 1;
+
+    // Reassign the project first (if requested), so an unknown id fails
+    // before we touch the runbook.
+    if (hasProject) {
+      let project: string | null | undefined;
+      try {
+        project = await reassignProject(workspaceRoot, values);
+      } catch (err) {
+        if (err instanceof ProjectNotFoundError) {
+          ui.error(err.message);
+          return 1;
+        }
+        throw err;
       }
-      throw err;
+      try {
+        const source = await setSourceProject(workspaceRoot, id, project ?? null);
+        ui.success(`Project for ${ui.bold(source.id)} → ${source.project ?? "global"}`);
+      } catch (err) {
+        if (err instanceof SourceNotFoundError) {
+          ui.error(err.message);
+          return 1;
+        }
+        throw err;
+      }
     }
+
+    // Setup-runbook change (if requested).
+    if (clear || file || text) {
+      let next: string | null;
+      if (clear) {
+        next = null;
+      } else if (text) {
+        next = text;
+      } else {
+        try {
+          next = await fs.readFile(file!, "utf8");
+        } catch (err) {
+          ui.error(`Couldn't read ${file}: ${(err as Error).message}`);
+          return 1;
+        }
+      }
+      try {
+        const source = await updateSourceSetup(workspaceRoot, id, next);
+        ui.success(
+          clear
+            ? `Cleared setup runbook for ${ui.bold(source.id)}.`
+            : `Updated setup runbook for ${ui.bold(source.id)}.`
+        );
+      } catch (err) {
+        if (err instanceof SourceNotFoundError) {
+          ui.error(err.message);
+          return 1;
+        }
+        throw err;
+      }
+    }
+    return 0;
   },
 };
 

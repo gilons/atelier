@@ -39,7 +39,7 @@ import {
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
 import { toolCommand } from "./design-tool.js";
-import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner, reassignProject } from "../project-scope.js";
 
 /** The agent's built-in default when no stability gate is configured. */
 const DEFAULT_STABILITY_CHUNKS = 2;
@@ -818,7 +818,11 @@ const artifactShowCmd: Command = {
 
 const artifactUpdateCmd: Command = {
   name: "update",
-  summary: "Update a design artifact's fields.",
+  summary: "Update a design artifact's fields (including its project).",
+  description:
+    "Change a design's fields in place. Reassign its project with\n" +
+    "`--project <id>` (or `--project global` to clear it); the artifact\n" +
+    "keeps its summary and link.",
   positionals: ["ref"],
   options: {
     title: { type: "string", short: "t" },
@@ -827,15 +831,26 @@ const artifactUpdateCmd: Command = {
     link: { type: "string", short: "l" },
     app: { type: "string" },
     "clear-app": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const ref = parseDesignRef(positionals[0] ?? "");
     if (!ref) {
-      ui.error("Usage: atelier design artifact update <discipline>:<id> [--title ...]");
+      ui.error("Usage: atelier design artifact update <discipline>:<id> [--title ...] [--project <id>]");
       return 2;
     }
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
+    let project: string | null | undefined;
+    try {
+      project = await reassignProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
     try {
       const next = await updateDesign(root, ref.discipline, ref.id, {
         title: values.title as string | undefined,
@@ -843,8 +858,10 @@ const artifactUpdateCmd: Command = {
         kind: values.kind as string | undefined,
         link: values.link as string | undefined,
         app: values["clear-app"] === true ? null : (values.app as string | undefined),
+        project,
       });
       ui.success(`Updated ${ui.bold(`${next.discipline}:${next.id}`)}`);
+      if (project !== undefined) ui.print(`  ${ui.dim("project:")} ${next.project ?? "global"}`);
       return 0;
     } catch (err) {
       if (err instanceof DesignNotFoundError) {

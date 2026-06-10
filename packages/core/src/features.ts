@@ -371,6 +371,44 @@ export async function listFeatures(workspaceRoot: string): Promise<{
   return { features, errors };
 }
 
+export interface UpdateFeatureOptions {
+  /** New lifecycle status. */
+  status?: FeatureStatus;
+  /** One-line summary; pass `""` to clear. */
+  description?: string | null;
+  /** Reassign the project. A value sets it; `null` clears it to global. */
+  project?: string | null;
+}
+
+/**
+ * Update a feature's structured fields in place (status, description,
+ * project), preserving its body. Only the fields present in `patch`
+ * change. Throws FeatureNotFoundError when the feature doesn't exist.
+ */
+export async function updateFeature(
+  workspaceRoot: string,
+  id: string,
+  patch: UpdateFeatureOptions
+): Promise<Feature> {
+  const existing = await loadFeature(workspaceRoot, id);
+  const next: Feature = { ...existing };
+  if (patch.status !== undefined) next.status = patch.status;
+  if (patch.description !== undefined) {
+    next.description = patch.description === null || patch.description === "" ? undefined : patch.description;
+  }
+  if (patch.project !== undefined) {
+    next.project = patch.project === null || patch.project === "" ? undefined : patch.project;
+  }
+  next.updatedAt = new Date().toISOString();
+
+  const fmCheck = validateFeatureFrontMatter(toFrontMatter(next));
+  if (!fmCheck.ok || !fmCheck.value) {
+    throw new WorkspaceValidationError(featureFilePath(workspaceRoot, id), formatIssues(fmCheck.issues));
+  }
+  await fs.writeFile(featureFilePath(workspaceRoot, id), serializeFeatureFile(next), "utf8");
+  return next;
+}
+
 /** Remove a feature by id. Returns the loaded entry that was removed. */
 export async function removeFeature(
   workspaceRoot: string,

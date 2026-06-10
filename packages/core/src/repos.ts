@@ -219,6 +219,24 @@ export async function removeRepo(
   return removed;
 }
 
+/**
+ * Reassign a repo's project in place. Pass a project id to set it, or
+ * `null` to clear it back to global.
+ */
+export async function setRepoProject(
+  workspaceRoot: string,
+  name: string,
+  project: string | null
+): Promise<RegisteredRepo> {
+  const cfg = await loadReposConfig(workspaceRoot);
+  const repo = cfg.repos.find((r) => r.name === name);
+  if (!repo) throw new RepoNameNotFoundError(name);
+  if (project === null || project === "") delete repo.project;
+  else repo.project = project;
+  await saveReposConfig(workspaceRoot, cfg);
+  return repo;
+}
+
 export interface RepoListing {
   repo: RegisteredRepo;
   /** Absolute path on this machine. */

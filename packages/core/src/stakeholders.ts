@@ -417,6 +417,8 @@ export interface UpdateStakeholderOptions {
   ownerships?: string[];
   /** Pass `""` to clear summary. */
   summary?: string;
+  /** Reassign the project. A value sets it; `null` clears it to global. */
+  project?: string | null;
   /** Replacement markdown for profile.md. */
   profileBody?: string;
 }
@@ -452,6 +454,9 @@ export async function updateStakeholder(
   }
   if (patch.summary !== undefined) {
     next.summary = patch.summary === "" ? undefined : patch.summary;
+  }
+  if (patch.project !== undefined) {
+    next.project = patch.project === null || patch.project === "" ? undefined : patch.project;
   }
   if (patch.profileBody !== undefined) next.profileBody = patch.profileBody;
   next.updatedAt = new Date().toISOString();

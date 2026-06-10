@@ -1,6 +1,6 @@
 {
   "name": "@gilons-ai/atelier",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "The planning companion for AI coding agents. Maps your product across code, docs, design, and conversations and hands production-grade specs to Claude Code, Codex, Cursor, or any agent. Deterministic; never calls an LLM itself. Auto-installs agents into Claude Code's .claude/.",
   "keywords": [
     "atelier",

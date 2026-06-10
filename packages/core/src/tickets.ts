@@ -238,6 +238,8 @@ export interface UpdateTicketOptions {
   assignee?: string | null;
   link?: string;
   parent?: string | null;
+  /** Reassign the project override. A value sets it; `null` clears it (back to inheriting from the source). */
+  project?: string | null;
   body?: string;
 }
 
@@ -255,6 +257,7 @@ export async function updateTicket(
   if (patch.assignee !== undefined) next.assignee = patch.assignee === null || patch.assignee === "" ? undefined : patch.assignee;
   if (patch.link !== undefined) next.link = patch.link === "" ? undefined : patch.link;
   if (patch.parent !== undefined) next.parent = patch.parent === null || patch.parent === "" ? undefined : patch.parent;
+  if (patch.project !== undefined) next.project = patch.project === null || patch.project === "" ? undefined : patch.project;
   if (patch.body !== undefined) next.body = patch.body;
   next.updatedAt = new Date().toISOString();
 

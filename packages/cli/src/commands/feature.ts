@@ -3,6 +3,7 @@ import {
   addFeature,
   listFeatures,
   loadFeature,
+  updateFeature,
   removeFeature,
   FEATURE_STATUSES,
   FeatureAlreadyExistsError,
@@ -17,7 +18,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner, reassignProject } from "../project-scope.js";
 
 /**
  * `--code` flag: `repo[:path]` — referenced repo, optionally a path
@@ -333,6 +334,76 @@ const showCmd: Command = {
   },
 };
 
+const updateCmd: Command = {
+  name: "update",
+  summary: "Update a feature's status, summary, or project (in place).",
+  description:
+    "Change a feature's structured fields without touching its body.\n" +
+    "Reassign its project with `--project <id>`, or `--project global`\n" +
+    "to clear it. Set status with --status, summary with --description.",
+  positionals: ["id"],
+  options: {
+    status: { type: "string", short: "s" },
+    description: { type: "string", short: "d" },
+    "clear-description": { type: "boolean" },
+    ...PROJECT_OPTION,
+  },
+  async run({ values, positionals, cwd }) {
+    const [id] = positionals;
+    if (!id) {
+      ui.error("Missing <id> argument.");
+      ui.print(`  ${ui.dim("Usage: atelier feature update <id> [--status <s>] [--project <id>]")}`);
+      return 2;
+    }
+    const status = values.status as FeatureStatus | undefined;
+    if (status !== undefined && !FEATURE_STATUSES.includes(status)) {
+      ui.error(`Invalid status "${status}". Valid: ${FEATURE_STATUSES.join(", ")}.`);
+      return 2;
+    }
+
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
+    let project: string | null | undefined;
+    try {
+      project = await reassignProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
+    try {
+      const next = await updateFeature(workspaceRoot, id, {
+        status,
+        description:
+          values["clear-description"] === true ? null : (values.description as string | undefined),
+        project,
+      });
+      ui.success(`Updated feature ${ui.bold(next.id)}`);
+      ui.print(`  ${ui.dim("Status:")}  ${next.status}`);
+      if (project !== undefined) ui.print(`  ${ui.dim("Project:")} ${next.project ?? "global"}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof FeatureNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+  },
+};
+
 const removeCmd: Command = {
   name: "remove",
   summary: "Delete a feature file.",
@@ -378,5 +449,5 @@ export const featureCommand: Command = {
     "is one markdown file under .planning/features/, with structured\n" +
     "fields in front-matter (status, code refs, doc refs) and free-form\n" +
     "prose below for journeys, states, edge cases.",
-  subcommands: [addCmd, listCmd, showCmd, removeCmd],
+  subcommands: [addCmd, listCmd, showCmd, updateCmd, removeCmd],
 };

@@ -3,6 +3,7 @@ import {
   requireWorkspaceRoot,
   addRepo,
   removeRepo,
+  setRepoProject,
   listRepos,
   loadReposConfig,
   discoverRepos,
@@ -21,7 +22,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner, reassignProject } from "../project-scope.js";
 
 const addCmd: Command = {
   name: "add",
@@ -194,6 +195,55 @@ const listCmd: Command = {
     }
     ui.blank();
     return 0;
+  },
+};
+
+const setProjectCmd: Command = {
+  name: "set-project",
+  summary: "Reassign a repo's project (or clear it back to global).",
+  description:
+    "Move a registered repo into a project in place. Pass a project id,\n" +
+    "or `global` to clear it.\n\n" +
+    "  atelier repo set-project <name> <project-id|global>",
+  positionals: ["name", "project"],
+  async run({ positionals, cwd }) {
+    const [name, project] = positionals;
+    if (!name || !project) {
+      ui.error("Usage: atelier repo set-project <name> <project-id|global>");
+      return 2;
+    }
+    let workspaceRoot: string;
+    try {
+      workspaceRoot = await requireWorkspaceRoot(cwd);
+    } catch (err) {
+      if (err instanceof NotInsideWorkspaceError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+    let resolved: string | null | undefined;
+    try {
+      resolved = await reassignProject(workspaceRoot, { project });
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        ui.print(`  ${ui.dim("List registered projects with `atelier project list`.")}`);
+        return 1;
+      }
+      throw err;
+    }
+    try {
+      const repo = await setRepoProject(workspaceRoot, name, resolved ?? null);
+      ui.success(`Project for ${ui.bold(repo.name)} → ${repo.project ?? "global"}`);
+      return 0;
+    } catch (err) {
+      if (err instanceof RepoNameNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
   },
 };
 
@@ -514,5 +564,5 @@ export const repoCommand: Command = {
     "Repositories represent the code your product lives in. They are\n" +
     "sibling directories under the workspace root. Atelier reads from\n" +
     "them and writes specs that reference paths inside them.",
-  subcommands: [addCmd, listCmd, removeCmd, discoverCmd, inspectCmd],
+  subcommands: [addCmd, listCmd, setProjectCmd, removeCmd, discoverCmd, inspectCmd],
 };

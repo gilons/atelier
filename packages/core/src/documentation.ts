@@ -265,6 +265,8 @@ export interface UpdateDocOptions {
   classification?: string | null;
   link?: string;
   owner?: string | null;
+  /** Reassign the project override. A value sets it; `null` clears it (back to inheriting from the source). */
+  project?: string | null;
   body?: string;
 }
 
@@ -281,6 +283,7 @@ export async function updateDoc(
   if (patch.classification !== undefined) next.classification = patch.classification === null ? undefined : patch.classification;
   if (patch.link !== undefined) next.link = patch.link === "" ? undefined : patch.link;
   if (patch.owner !== undefined) next.owner = patch.owner === null || patch.owner === "" ? undefined : patch.owner;
+  if (patch.project !== undefined) next.project = patch.project === null || patch.project === "" ? undefined : patch.project;
   if (patch.body !== undefined) next.body = patch.body;
   next.updatedAt = new Date().toISOString();
 

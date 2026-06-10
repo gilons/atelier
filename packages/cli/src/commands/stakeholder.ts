@@ -20,7 +20,7 @@ import {
 } from "@atelier/core";
 import type { Command } from "../command.js";
 import { ui } from "../ui.js";
-import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner } from "../project-scope.js";
+import { PROJECT_OPTION, newEntryProject, readScope, inProjectScope, projectTag, scopeBanner, reassignProject } from "../project-scope.js";
 
 /**
  * `atelier stakeholder` — manage the workspace's people map.
@@ -414,7 +414,8 @@ const updateCmd: Command = {
   description:
     "Use --clear-<field> to remove an optional field (role, org, email,\n" +
     "summary). --handle replaces the entire handle map; use the `handle`\n" +
-    "subcommand to add/remove one handle at a time.",
+    "subcommand to add/remove one handle at a time. Reassign the project\n" +
+    "with `--project <id>`, or `--project global` to clear it.",
   positionals: ["id"],
   options: {
     name: { type: "string", short: "n" },
@@ -427,6 +428,7 @@ const updateCmd: Command = {
     handle: { type: "string", multiple: true },
     summary: { type: "string", short: "s" },
     "clear-summary": { type: "boolean" },
+    ...PROJECT_OPTION,
   },
   async run({ values, positionals, cwd }) {
     const [id] = positionals;
@@ -455,6 +457,17 @@ const updateCmd: Command = {
       return 2;
     }
 
+    let project: string | null | undefined;
+    try {
+      project = await reassignProject(workspaceRoot, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
     try {
       const next = await updateStakeholder(workspaceRoot, id, {
         name: values.name as string | undefined,
@@ -466,8 +479,10 @@ const updateCmd: Command = {
         handles,
         summary:
           values["clear-summary"] === true ? "" : (values.summary as string | undefined),
+        project,
       });
       ui.success(`Updated ${ui.bold(next.id)}`);
+      if (project !== undefined) ui.print(`  ${ui.dim("project:")} ${next.project ?? "global"}`);
       return 0;
     } catch (err) {
       if (err instanceof StakeholderNotFoundError) {
