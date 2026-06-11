@@ -5,4 +5,4 @@
  * so future runs know which version of Atelier initialized a workspace
  * (useful for migrations).
  */
-export const ATELIER_VERSION = "0.0.12";
+export const ATELIER_VERSION = "0.0.13";

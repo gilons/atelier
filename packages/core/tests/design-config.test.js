@@ -7,6 +7,7 @@ import {
   initWorkspace,
   loadDesignConfig,
   loadDisciplineConfig,
+  resolveDisciplineConfig,
   setDesignTool,
   setLiveConfig,
   clearDesignTool,
@@ -127,4 +128,72 @@ test("back-compat: a flat design.yaml is read as the system-design discipline", 
   const d = await loadDisciplineConfig(workspaceRoot, "system-design");
   assert.equal(d.tool, "figma");
   assert.equal(d.sourceId, "legacy");
+});
+
+// ============================================================
+// Per-project design config (issue #1)
+// ============================================================
+
+test("project override wins over global; falls back when absent", async () => {
+  const { workspaceRoot } = await workspace();
+  // Global default for ui-design.
+  await setDesignTool(workspaceRoot, { tool: "excalidraw", discipline: "ui-design" });
+  // Acme overrides ui-design to figma.
+  await setDesignTool(workspaceRoot, { tool: "figma", discipline: "ui-design", project: "acme" });
+
+  // Resolve within acme -> figma (project scope).
+  const acme = await resolveDisciplineConfig(workspaceRoot, "ui-design", { project: "acme" });
+  assert.equal(acme.config.tool, "figma");
+  assert.equal(acme.scope, "project");
+
+  // Resolve within beta (no override) -> excalidraw (global fallback).
+  const beta = await resolveDisciplineConfig(workspaceRoot, "ui-design", { project: "beta" });
+  assert.equal(beta.config.tool, "excalidraw");
+  assert.equal(beta.scope, "global");
+
+  // No project -> global.
+  const global = await resolveDisciplineConfig(workspaceRoot, "ui-design");
+  assert.equal(global.config.tool, "excalidraw");
+  assert.equal(global.scope, "global");
+});
+
+test("project live tuning is independent from global", async () => {
+  const { workspaceRoot } = await workspace();
+  await setLiveConfig(workspaceRoot, { discipline: "ui-design", stabilityChunks: 2 });
+  await setDesignTool(workspaceRoot, { tool: "figma", discipline: "ui-design", project: "acme" });
+  await setLiveConfig(workspaceRoot, { discipline: "ui-design", stabilityChunks: 5, project: "acme" });
+
+  const acme = await loadDisciplineConfig(workspaceRoot, "ui-design", { project: "acme" });
+  assert.equal(acme.tool, "figma");
+  assert.equal(acme.live.stabilityChunks, 5);
+  // Global keeps its own.
+  const global = await loadDisciplineConfig(workspaceRoot, "ui-design");
+  assert.equal(global.live.stabilityChunks, 2);
+});
+
+test("clear scopes to a project; global survives", async () => {
+  const { workspaceRoot } = await workspace();
+  await setDesignTool(workspaceRoot, { tool: "excalidraw", discipline: "ui-design" });
+  await setDesignTool(workspaceRoot, { tool: "figma", discipline: "ui-design", project: "acme" });
+
+  const removed = await clearDesignTool(workspaceRoot, "ui-design", { project: "acme" });
+  assert.equal(removed, true);
+  // Acme now falls back to global.
+  const acme = await resolveDisciplineConfig(workspaceRoot, "ui-design", { project: "acme" });
+  assert.equal(acme.config.tool, "excalidraw");
+  assert.equal(acme.scope, "global");
+  // Clearing again is a no-op.
+  assert.equal(await clearDesignTool(workspaceRoot, "ui-design", { project: "acme" }), false);
+});
+
+test("per-project config round-trips through the YAML file", async () => {
+  const { workspaceRoot } = await workspace();
+  await setDesignTool(workspaceRoot, { tool: "figma", discipline: "ui-design", project: "acme", notes: "trivision-only" });
+  const cfg = await loadDesignConfig(workspaceRoot);
+  assert.equal(cfg.projects.acme["ui-design"].tool, "figma");
+  assert.equal(cfg.projects.acme["ui-design"].notes, "trivision-only");
+  // file on disk has a projects: block
+  const text = await fs.readFile(path.join(workspacePaths(workspaceRoot).atelier, "design.yaml"), "utf8");
+  assert.match(text, /^projects:/m);
+  assert.match(text, /acme:/);
 });

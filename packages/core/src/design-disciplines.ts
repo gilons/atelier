@@ -308,11 +308,16 @@ companion** on a call. Record durable facts with
 - **Check the explicit setting first:**
   \`atelier design tool show --discipline ${id}\`. If it names a tool,
   that's authoritative — use it (read its backing \`design\` source
-  runbook if linked).
+  runbook if linked). This resolves the **active project** then falls
+  back to the global default, so make sure the right project is pinned
+  (\`atelier project use <id>\`); different clients can drive different
+  tools.
 - Otherwise \`atelier source list\` for \`design\` sources, and re-read
   your learnings (\`atelier agent show ${id}\`).
 - If none exists, go to "Onboard a tool". Pin the choice once made:
-  \`atelier design tool set <tool> --discipline ${id} --source <id>\`.`;
+  \`atelier design tool set <tool> --discipline ${id} --source <id>\`.
+  Add \`--project <id>\` when a client uses a different tool than the
+  shared default (\`--project global\` sets that default).`;
 
   const onboardTool = `No tool is configured for ${spec.name}. Ask what the team uses
 (${spec.toolExamples}, or none → Markdown). To onboard one:

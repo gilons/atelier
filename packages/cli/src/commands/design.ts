@@ -20,6 +20,7 @@ import {
   DesignNotFoundError,
   DesignFileError,
   loadDisciplineConfig,
+  resolveDisciplineConfig,
   loadDesignConfig,
   setLiveConfig,
   listAgents,
@@ -432,15 +433,25 @@ const kitCmd: Command = {
 const liveShowCmd: Command = {
   name: "show",
   summary: "Show a discipline's live-companion tuning (stability gate, live STT model).",
-  options: { discipline: DISCIPLINE_OPT },
+  options: { discipline: DISCIPLINE_OPT, ...PROJECT_OPTION },
   async run({ values, cwd }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
     const discipline = disciplineOf(values);
-    const cfg = await loadDisciplineConfig(root, discipline);
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+    const cfg = await loadDisciplineConfig(root, discipline, { project });
     const live = cfg?.live;
     const chunks = live?.stabilityChunks ?? DEFAULT_STABILITY_CHUNKS;
-    ui.print(`  ${ui.dim("discipline:")}     ${discipline}`);
+    ui.print(`  ${ui.dim("discipline:")}     ${discipline}${project ? ui.dim(` (project ${project})`) : ""}`);
     ui.print(
       `  ${ui.dim("stability gate:")} ${chunks} chunk(s)${live?.stabilityChunks === undefined ? ui.dim(" (default)") : ""}`
     );
@@ -463,6 +474,7 @@ const liveSetCmd: Command = {
     "stability-chunks": { type: "string" },
     model: { type: "string", short: "m" },
     discipline: DISCIPLINE_OPT,
+    ...PROJECT_OPTION,
   },
   async run({ values, cwd }) {
     if (values["stability-chunks"] === undefined && values.model === undefined) {
@@ -472,6 +484,17 @@ const liveSetCmd: Command = {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
     const discipline = disciplineOf(values);
+
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
 
     let stabilityChunks: number | undefined;
     if (values["stability-chunks"] !== undefined) {
@@ -488,8 +511,9 @@ const liveSetCmd: Command = {
         discipline,
         stabilityChunks,
         model: values.model as string | undefined,
+        project,
       });
-      ui.success(`Updated ${ui.bold(discipline)} live tuning.`);
+      ui.success(`Updated ${ui.bold(discipline)} live tuning${project ? ` for project ${ui.bold(project)}` : " (global)"}.`);
       ui.print(`  ${ui.dim("stability gate:")} ${cfg.live?.stabilityChunks ?? DEFAULT_STABILITY_CHUNKS} chunk(s)`);
       if (cfg.live?.model) ui.print(`  ${ui.dim("live STT model:")} ${cfg.live.model}`);
       return 0;
@@ -529,24 +553,44 @@ async function customDisciplineIds(workspaceRoot: string): Promise<string[]> {
 const disciplineListCmd: Command = {
   name: "list",
   summary: "List design disciplines (built-in + custom) and their tool.",
-  async run({ cwd }) {
+  description:
+    "The TOOL column resolves for the active project (or `--project <id>`),\n" +
+    "falling back to the global default.",
+  options: { ...PROJECT_OPTION },
+  async run({ values, cwd }) {
     const root = await resolveRoot(cwd);
     if (typeof root === "number") return root;
 
-    const cfg = await loadDesignConfig(root).catch(() => null);
+    let project: string | undefined;
+    try {
+      project = await newEntryProject(root, values);
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) {
+        ui.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+
     const customIds = await customDisciplineIds(root);
     const rows: { id: string; name: string; builtin: boolean }[] = [
       ...BUILTIN_DISCIPLINES.map((d) => ({ id: d.id, name: d.name, builtin: true })),
       ...customIds.map((id) => ({ id, name: id, builtin: false })),
     ];
 
+    if (project) {
+      ui.print(`  ${ui.dim("Tools resolved for project")} ${ui.bold(project)} ${ui.dim("(falling back to global):")}`);
+      ui.blank();
+    }
     const idWidth = Math.max("ID".length, ...rows.map((r) => r.id.length));
     ui.print(`    ${ui.dim("ID".padEnd(idWidth))}  ${ui.dim("TOOL")}`);
     for (const r of rows) {
-      const tool = cfg?.disciplines[r.id]?.tool;
+      const { config, scope } = await resolveDisciplineConfig(root, r.id, { project });
+      const tool = config?.tool;
       const badge = r.builtin ? ui.dim(" [built-in]") : ui.dim(" [custom]");
+      const layer = tool && project && scope === "global" ? ui.dim(" (global)") : "";
       ui.print(
-        `  ${ui.green("·")} ${r.id.padEnd(idWidth)}  ${tool ?? ui.dim("(none — infers / Markdown)")}${badge}`
+        `  ${ui.green("·")} ${r.id.padEnd(idWidth)}  ${tool ?? ui.dim("(none — infers / Markdown)")}${layer}${badge}`
       );
     }
     ui.blank();
